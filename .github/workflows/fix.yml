@@ -23,6 +23,9 @@ on:
         required: false
         type: string
 
+# A second run on the same branch waits for the first rather than cancelling
+# it. If the first pushed, a second from /autofix then fails resolve's head-SHA
+# check, as the branch has moved on.
 concurrency:
   group: fix-${{ inputs.branch }}
 
@@ -119,10 +122,13 @@ jobs:
           fi
 
       # Keep version in step with pyproject.toml's [tool.uv] required-version.
+      # No cache: this run is on main, so a cache it saved would be in main's
+      # scope, and main's CI would restore what the branch's code put there.
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.3
         with:
           version: "0.13.6"
+          enable-cache: false
 
       # Keep just-version in step with the justfile's minimum-version.
       - name: Install just

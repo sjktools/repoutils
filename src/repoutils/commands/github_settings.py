@@ -97,7 +97,7 @@ def _token(token: str) -> Iterator[None]:
         yield
     finally:
         if old is None:
-            del os.environ["GITHUB_TOKEN"]
+            os.environ.pop("GITHUB_TOKEN", None)
         else:
             os.environ["GITHUB_TOKEN"] = old
 

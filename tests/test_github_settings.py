@@ -40,8 +40,14 @@ Calls = list[tuple[str, list[str], str | None]]
 
 
 @pytest.fixture
-def calls(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Calls:
-    """Replaces every command with one that records its arguments and GITHUB_TOKEN, and fails if its name is in FAIL."""
+def failing() -> set[str]:
+    """The names of the commands the calls fixture's fakes fail, which a test adds to."""
+    return set()
+
+
+@pytest.fixture
+def calls(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failing: set[str]) -> Calls:
+    """Replaces every command with one that records its arguments and GITHUB_TOKEN, and fails if it's in failing."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GITHUB_TOKEN", "tok")
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
@@ -50,7 +56,7 @@ def calls(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Calls:
     def fake(name: str) -> Callable[[list[str]], int]:
         def main(args: list[str]) -> int:
             recorded.append((name, args, os.environ.get("GITHUB_TOKEN")))
-            return 1 if name in os.environ.get("FAIL", "").split(",") else 0
+            return 1 if name in failing else 0
 
         return main
 
@@ -130,19 +136,19 @@ def test_bad_pyproject_fails(calls: Calls, capsys: pytest.CaptureFixture[str]) -
 
 
 def test_check_runs_every_command_and_fails_if_any_does(
-    calls: Calls, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    calls: Calls, failing: set[str], capsys: pytest.CaptureFixture[str]
 ) -> None:
     _write()
-    monkeypatch.setenv("FAIL", "rulesets,secrets")
+    failing.update({"rulesets", "secrets"})
     assert github_settings.main(["check", "--repo", "o/r"]) == 1
     assert [name for name, _, _ in calls] == ALL
     assert "Failed: rulesets, secrets." in capsys.readouterr().err
 
 
-def test_exit_zero_still_fails_on_an_error(calls: Calls, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_exit_zero_still_fails_on_an_error(calls: Calls, failing: set[str]) -> None:
     # A command given --exit-zero only fails if it couldn't check, so that must still fail the whole run.
     _write()
-    monkeypatch.setenv("FAIL", "environments")
+    failing.update({"environments"})
     assert github_settings.main(["check", "--repo", "o/r", "--exit-zero"]) == 1
 
 
@@ -154,22 +160,18 @@ def test_ensure_skips_secrets(calls: Calls, capsys: pytest.CaptureFixture[str]) 
     assert "Skipped secrets: it has no ensure." in capsys.readouterr().err
 
 
-def test_ensure_stops_at_the_first_failure(
-    calls: Calls, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_ensure_stops_at_the_first_failure(calls: Calls, failing: set[str], capsys: pytest.CaptureFixture[str]) -> None:
     _write()
-    monkeypatch.setenv("FAIL", "environments")
+    failing.update({"environments"})
     assert github_settings.main(["ensure", "--repo", "o/r"]) == 1
     assert [name for name, _, _ in calls] == ["labels", "repo-settings", "rulesets", "environments"]
     err = capsys.readouterr().err
     assert "without running actions-settings, deploy-keys, security-settings." in err
 
 
-def test_ensure_failing_last_stops_quietly(
-    calls: Calls, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_ensure_failing_last_stops_quietly(calls: Calls, failing: set[str], capsys: pytest.CaptureFixture[str]) -> None:
     _write()
-    monkeypatch.setenv("FAIL", "security-settings")
+    failing.update({"security-settings"})
     assert github_settings.main(["ensure", "--repo", "o/r"]) == 1
     assert "Stopped" not in capsys.readouterr().err
 

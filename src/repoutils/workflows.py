@@ -197,8 +197,11 @@ def _without_url(lines: list[str]) -> list[str]:
     without its url: a block mapping's url entry, or a flow mapping's."""
     key, *value = _split(lines[0], ":")
     flow = ":".join(value).strip()
-    if flow.startswith("{") and flow.endswith("}"):
-        entries = [entry for entry in _split(flow[1:-1], ",") if _unquote(_split(entry, ":")[0]) != "url"]
+    if flow.startswith("{"):
+        # A flow mapping, which may go on over the lines under the key.
+        flow = " ".join([flow, *(line.strip() for line in lines[1:])]).strip()
+        inner = flow[1:-1] if flow.endswith("}") else flow[1:]
+        entries = [entry for entry in _split(inner, ",") if _unquote(_split(entry, ":")[0]) != "url"]
         return [f"{key}: {{{','.join(entries)}}}"]
     nested = [line for line in lines[1:] if line.strip()]
     entry_indent = _indent(nested[0]) if nested else 0

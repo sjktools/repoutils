@@ -75,6 +75,9 @@ def test_jobs(text: str, jobs: list[tuple[str, str | None]]) -> None:
         ),
         ("jobs:\n  a:\n    environment: {name: '${{ vars.A }}', url: \"${{ vars.B }}\"}\n", {"A"}),
         ("jobs:\n  a:\n    environment: ${{ vars.A }}\n", {"A"}),
+        # A flow mapping may go on over several lines, with its url in any of them.
+        ("jobs:\n  a:\n    environment: {url: ${{ vars.B }},\n      name: ${{ vars.A }}}\n", {"A"}),
+        ("jobs:\n  a:\n    environment: {name: ${{ vars.A }},\n      url: ${{ vars.B }}}\n", {"A"}),
         # A block sequence may sit at its key's indent.
         ("jobs:\n  a:\n    runs-on:\n    - ${{ vars.A }}\n    steps:\n    - run: ${{ vars.B }}\n", {"A"}),
         ("jobs:\n  a:\n    steps:\n      - name: ${{ vars.A }}\n", set()),

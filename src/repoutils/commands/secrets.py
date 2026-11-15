@@ -32,6 +32,8 @@ environments hold without declaring one of them as its ``environment``.
 (``actions`` and ``other``, or ``environments.<name>`` with ``--environment``)
 it reports what it is: a GitHub token's type, owner, expiry and access, or an
 SSH key's fingerprint, never the value (see repoutils.secret_inspect).
+``export`` writes the same secrets' values as TOML encrypted with age, for a
+workflow to upload as a backup (see repoutils.secret_export).
 Stdlib-only, like every repoutils command."""
 
 import argparse
@@ -41,12 +43,12 @@ import subprocess
 import sys
 import urllib.error
 import urllib.parse
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from repoutils import config, github, secret_inspect, workflows
+from repoutils import config, github, secret_export, secret_inspect, workflows
 from repoutils.commands import environments as environments_command
 
 TABLE = "[tool.repoutils.secrets]"
@@ -91,45 +93,55 @@ class Listed:
         ]
 
 
-def _names(table: dict[str, Any], key: str, where: str) -> list[str]:
-    """``table[key]``, checked to be a list of distinct secret names."""
+def _names(table: dict[str, Any], key: str, where: str, noun: str) -> list[str]:
+    """``table[key]``, checked to be a list of distinct secret (or variable, as noun says) names."""
     names = config.string_list(table, key, [], where)
     seen: set[str] = set()
     for name in names:
         where_name = f"{where} {key} {name!r}"
         if not _NAME_RE.fullmatch(name) or name.upper().startswith("GITHUB_"):
             raise config.ConfigError(
-                f"{where_name} isn't a valid secret name: use letters, digits and underscores, "
+                f"{where_name} isn't a valid {noun} name: use letters, digits and underscores, "
                 "not starting with a digit or GITHUB_"
             )
         if name.upper() in seen:
-            raise config.ConfigError(f"{where_name} is listed twice (secret names ignore case)")
+            raise config.ConfigError(f"{where_name} is listed twice ({noun} names ignore case)")
         seen.add(name.upper())
     return names
 
 
-def _load(root: Path) -> Listed:
-    """What ``[tool.repoutils.secrets]`` in ``root/pyproject.toml`` lists."""
-    table = config.section("secrets", root)
-    keys = [*(kind.key for kind in KINDS), OTHER]
+def load_listed(section: str, keys: Iterable[str], noun: str, root: Path = Path()) -> Listed:
+    """What ``[tool.repoutils.<section>]`` in ``root/pyproject.toml`` lists: a
+    list of names under each of keys it has, and ``environments``. noun is what
+    the names are (secret or variable), for errors. `repoutils variables` shares this."""
+    table = config.section(section, root)
+    name = f"[tool.repoutils.{section}]"
+    keys = list(keys)
     unknown = sorted(set(table) - {*keys, ENVIRONMENTS})
     if unknown:
-        raise config.ConfigError(f"{TABLE} has unknown setting(s): {', '.join(unknown)}")
-    lists = {key: _names(table, key, TABLE) for key in keys if key in table}
+        raise config.ConfigError(f"{name} has unknown setting(s): {', '.join(unknown)}")
+    lists = {key: _names(table, key, name, noun) for key in keys if key in table}
     if ENVIRONMENTS not in table:
         return Listed(lists, None)
-    where = f"{TABLE[:-1]}.{ENVIRONMENTS}]"
+    where = f"{name[:-1]}.{ENVIRONMENTS}]"
     by_environment = table[ENVIRONMENTS]
     if not isinstance(by_environment, dict):
-        raise config.ConfigError(f"{TABLE} {ENVIRONMENTS} must be a table of each environment's secrets")
+        raise config.ConfigError(f"{name} {ENVIRONMENTS} must be a table of each environment's {noun}s")
     environments: dict[str, list[str]] = {}
     seen: set[str] = set()
-    for name in by_environment:
-        if name.lower() in seen:
-            raise config.ConfigError(f"{where} {config.toml_key(name)} is listed twice (environment names ignore case)")
-        seen.add(name.lower())
-        environments[name] = _names(by_environment, name, where)
+    for environment in by_environment:
+        if environment.lower() in seen:
+            raise config.ConfigError(
+                f"{where} {config.toml_key(environment)} is listed twice (environment names ignore case)"
+            )
+        seen.add(environment.lower())
+        environments[environment] = _names(by_environment, environment, where, noun)
     return Listed(lists, environments)
+
+
+def _load(root: Path) -> Listed:
+    """What ``[tool.repoutils.secrets]`` in ``root/pyproject.toml`` lists."""
+    return load_listed("secrets", [*(kind.key for kind in KINDS), OTHER], "secret", root)
 
 
 def load_secrets(root: Path = Path()) -> dict[str, list[str]]:
@@ -144,9 +156,14 @@ def load_environment_secrets(root: Path = Path()) -> dict[str, list[str]] | None
     return _load(root).environments
 
 
-def undeclared_environments(listed: Listed, jobs: Iterable[workflows.Job]) -> list[str]:
-    """A line for each secret a job uses that only environments hold, without
-    declaring one of them. A job whose environment an expression gives is skipped."""
+def undeclared_environments(
+    listed: Listed,
+    jobs: Iterable[workflows.Job],
+    used: Callable[[workflows.Job], frozenset[str]] = lambda job: job.secrets,
+) -> list[str]:
+    """A line for each name a job uses (its secrets, or what used gives) that only
+    environments hold, without declaring one of them. A job whose environment an
+    expression gives is skipped."""
     repository = {name.upper() for names in listed.lists.values() for name in names}
     holders: dict[str, list[str]] = {}
     for environment, names in (listed.environments or {}).items():
@@ -157,7 +174,7 @@ def undeclared_environments(listed: Listed, jobs: Iterable[workflows.Job]) -> li
     for job in jobs:
         if job.environment == workflows.UNKNOWN:
             continue
-        for name in sorted(job.secrets & holders.keys()):
+        for name in sorted(used(job) & holders.keys()):
             environments = holders[name]
             if job.environment is None or job.environment.lower() not in {env.lower() for env in environments}:
                 declared = f"declares environment {job.environment}" if job.environment else "declares no environment"
@@ -229,28 +246,28 @@ def repo_environments(repo: str, token: str) -> list[str]:
     return [env["name"] for env in environments_command.repo_environments(repo, token)]
 
 
-def missing_secrets(names: Iterable[str], existing: Iterable[str]) -> list[str]:
+def missing_names(names: Iterable[str], existing: Iterable[str]) -> list[str]:
     """The names in names that existing lacks, ignoring case."""
     theirs = {name.upper() for name in existing}
     return [name for name in names if name.upper() not in theirs]
 
 
-def _toml_list(key: str, names: list[str]) -> list[str]:
+def toml_list(key: str, names: list[str]) -> list[str]:
     if not names:
         return [f"{key} = []"]
     return [f"{key} = [", *(f"    {config.toml_string(name)}," for name in sorted(names)), "]"]
 
 
-def dump_toml(existing: dict[str, list[str]], environments: dict[str, list[str]]) -> str:
-    """The secret names of each kind as TABLE, with every kind, sorted, and then
-    each environment's (``environments = {}`` if there are none)."""
-    lines = [TABLE]
+def dump_toml(existing: dict[str, list[str]], environments: dict[str, list[str]], table: str = TABLE) -> str:
+    """The names of each kind as table (TABLE by default), with every kind,
+    sorted, and then each environment's (``environments = {}`` if there are none)."""
+    lines = [table]
     for key, names in existing.items():
-        lines += _toml_list(key, names)
+        lines += toml_list(key, names)
     if not environments:
         lines.append(f"{ENVIRONMENTS} = {{}}")
     for name in sorted(environments, key=str.lower):
-        lines += _toml_list(f"{ENVIRONMENTS}.{config.toml_key(name)}", environments[name])
+        lines += toml_list(f"{ENVIRONMENTS}.{config.toml_key(name)}", environments[name])
     return "".join(f"{line}\n" for line in lines)
 
 
@@ -276,8 +293,8 @@ def check(
             continue
         names = wanted[kind.key]
         existing = repo_secrets(repo, token, kind)
-        missing = missing_secrets(names, existing)
-        unexpected = missing_secrets(existing, names) if fail_on_unexpected else []
+        missing = missing_names(names, existing)
+        unexpected = missing_names(existing, names) if fail_on_unexpected else []
         for name in missing:
             print(f"{kind.title} secret {name}: missing")
         for name in unexpected:
@@ -300,8 +317,8 @@ def check(
                 missing_count += len(names)
                 continue
             existing = environment_secrets(repo, token, actual)
-            missing = missing_secrets(names, existing)
-            unexpected = missing_secrets(existing, names) if fail_on_unexpected else []
+            missing = missing_names(names, existing)
+            unexpected = missing_names(existing, names) if fail_on_unexpected else []
             for secret in missing:
                 print(f"Environment {actual} secret {secret}: missing")
             for secret in unexpected:
@@ -334,31 +351,27 @@ def check(
     return 0
 
 
-def inspect(listed: Listed, environment: str | None, *, within: int, exit_zero: bool, summary: Path | None) -> int:
+def selected(listed: Listed, environment: str | None, keys: tuple[str, ...], verb: str) -> list[str]:
+    """The names in the lists keys gives, or environment's list if it isn't None."""
     if environment is None:
-        if "actions" not in listed.lists and OTHER not in listed.lists:
-            raise config.ConfigError(f"{TABLE} lists no actions or {OTHER} secrets to inspect")
-        title = "Repository secrets"
-        wanted = [*listed.lists.get("actions", []), *listed.lists.get(OTHER, [])]
-    else:
-        environments = {name.lower(): names for name, names in (listed.environments or {}).items()}
-        if environment.lower() not in environments:
-            raise config.ConfigError(f"{TABLE} lists no secrets for environment {environment}")
-        title = f"Environment {environment}'s secrets"
-        wanted = environments[environment.lower()]
+        if not any(key in listed.lists for key in keys):
+            raise config.ConfigError(f"{TABLE} lists no {' or '.join(keys)} secrets to {verb}")
+        return [name for key in keys for name in listed.lists.get(key, [])]
+    environments = {name.lower(): names for name, names in (listed.environments or {}).items()}
+    if environment.lower() not in environments:
+        raise config.ConfigError(f"{TABLE} lists no secrets for environment {environment}")
+    return environments[environment.lower()]
+
+
+def inspect(listed: Listed, environment: str | None, *, within: int, exit_zero: bool, summary: Path | None) -> int:
+    wanted = selected(listed, environment, ("actions", OTHER), "inspect")
+    title = "Repository secrets" if environment is None else f"Environment {environment}'s secrets"
     secrets_json = os.environ.get(secret_inspect.ENV_VAR)
     if secrets_json is None:
         raise ValueError(f"${secret_inspect.ENV_VAR} isn't set: set it to ${{{{ toJSON(secrets) }}}} in the workflow")
     return secret_inspect.inspect(
         title, wanted, listed.all_names(), secrets_json, within=within, exit_zero=exit_zero, summary=summary
     )
-
-
-def _days(text: str) -> int:
-    days = int(text)
-    if days < 0:
-        raise argparse.ArgumentTypeError("must be 0 or more")
-    return days
 
 
 def main(argv: list[str]) -> int:
@@ -370,7 +383,9 @@ def main(argv: list[str]) -> int:
         "and Actions and Environments read for environment secrets. "
         "Organization secrets don't count.",
     )
-    subparsers = parser.add_subparsers(dest="mode", required=True, metavar="{check,dump,check-workflows,inspect}")
+    subparsers = parser.add_subparsers(
+        dest="mode", required=True, metavar="{check,dump,check-workflows,inspect,export}"
+    )
     check_parser = subparsers.add_parser(
         "check",
         help="fail if a secret pyproject.toml lists is missing",
@@ -388,37 +403,8 @@ def main(argv: list[str]) -> int:
         "or pyproject.toml lists one no workflow uses, "
         "or a job uses an environment's secret without deploying to that environment. Needs no token.",
     )
-    inspect_parser = subparsers.add_parser(
-        "inspect",
-        help="report what each secret a workflow passes in $SECRETS_JSON is, never its value",
-        description="Report what each secret pyproject.toml lists is, from the values a workflow passes "
-        f"as ${{{{ toJSON(secrets) }}}} in ${secret_inspect.ENV_VAR}: each GitHub token's type, owner, expiry "
-        "and access, from requests made with it, and each SSH key's fingerprint. Never shows a value. "
-        "Fails if GitHub rejects a token or it expires soon.",
-    )
-    inspect_parser.add_argument(
-        "--environment",
-        help=f"inspect the secrets pyproject.toml lists for this environment (default: the actions and {OTHER} lists)",
-    )
-    inspect_parser.add_argument(
-        "--expires-within",
-        type=_days,
-        default=14,
-        metavar="DAYS",
-        help="fail if a token expires in fewer than this many days (default: 14)",
-    )
-    inspect_parser.add_argument(
-        "--summary",
-        type=Path,
-        default=os.environ.get("GITHUB_STEP_SUMMARY") or None,
-        help="append a Markdown report to this file (default: $GITHUB_STEP_SUMMARY)",
-    )
-    inspect_parser.add_argument(
-        "--exit-zero",
-        action="store_true",
-        help="exit 0 even if a token is rejected or expires soon "
-        "(still exit 1 if one can't be inspected, unlike `|| true`)",
-    )
+    secret_inspect.add_parser(subparsers)
+    secret_export.add_parser(subparsers)
     for sub in (check_parser, dump_parser):
         sub.add_argument(
             "--repo",
@@ -446,6 +432,19 @@ def main(argv: list[str]) -> int:
                 args.environment,
                 within=args.expires_within,
                 exit_zero=args.exit_zero,
+                summary=args.summary,
+            )
+        if args.mode == "export":
+            listed = _load(Path())
+            return secret_export.export(
+                selected(listed, args.environment, ("actions",), "export"),
+                listed.all_names(),
+                args.environment,
+                recipients=args.recipient,
+                github_keys=args.github_key,
+                output=args.output,
+                age=args.age,
+                armor=args.armor,
                 summary=args.summary,
             )
         # dump doesn't read pyproject.toml, so it works before there are any secrets there.

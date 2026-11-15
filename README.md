@@ -55,12 +55,13 @@ That installs only repoutils, hash-checked against `uv.lock`, and not the projec
 | `rulesets` | Checks, creates or updates the branch and tag rulesets `pyproject.toml` defines, or prints the ones the repository has. |
 | `environments` | Checks, creates or updates the deployment environments `pyproject.toml` defines, or prints the ones the repository has. |
 | `actions-settings` | Checks or changes the Actions settings `pyproject.toml` gives, or prints the ones the repository has. |
-| `secrets` | Checks the repository has the Actions, Dependabot and environment secrets `pyproject.toml` names, or prints the names it has. Also checks the workflows use exactly those secrets, and in a workflow reports what each token secret is. |
+| `secrets` | Checks the repository has the Actions, Dependabot and environment secrets `pyproject.toml` names, or prints the names it has. Also checks the workflows use exactly those secrets. In a workflow, it reports what each token secret is, or backs up their values encrypted with age. |
+| `variables` | Checks the repository has the Actions and environment variables `pyproject.toml` names, each with a value, or prints the names it has. Also checks the workflows use exactly those variables. |
 | `deploy-keys` | Checks or creates the deploy keys `pyproject.toml` declares, and the secrets that hold their private halves, or prints the keys the repository has. |
 | `security-settings` | Checks or changes the security settings `pyproject.toml` gives, such as secret protection, or prints the ones the repository has. |
 | `check-attestations` | Fails unless every distribution in `dist/` has a PEP 740 publish attestation. |
 
-The commands that post to a PR need a GitHub token, and so do `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `deploy-keys` and `security-settings`.
+The commands that post to a PR need a GitHub token, and so do `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys` and `security-settings`.
 They read `$GITHUB_TOKEN`, and fall back to `gh auth token`.
 
 ## Configuration
@@ -168,6 +169,11 @@ actions = []
 dependabot = ["DEPENDABOT_FIX_TOKEN"]
 environments.release = ["RELEASE_TOKEN"]
 other = ["ORG_DEPLOY_KEY"]
+
+# The names (never the values) of the variables `repoutils variables` checks the repository has; see below.
+[tool.repoutils.variables]
+actions = ["DEPLOY_URL", "NEXT_RELEASE_URL"]
+unused = ["NEXT_RELEASE_URL"]
 
 # The security settings that `repoutils security-settings` checks or changes; see below.
 [tool.repoutils.security-settings]
@@ -316,7 +322,7 @@ It says which commands it skips, and fails if it skips them all.
 It runs every command it doesn't skip, and fails if any of them fails.
 It passes `--repo` and `--exit-zero` on to each command, and `--fail-on-unexpected` to the commands that have it.
 
-`repoutils github-settings ensure` runs `ensure` in the same way, leaving out `secrets`, which has no `ensure`.
+`repoutils github-settings ensure` runs `ensure` in the same way, leaving out `secrets` and `variables`, which have no `ensure`.
 It stops at the first command that fails.
 So a deploy key's secret isn't set in an environment whose protection didn't apply.
 
@@ -639,6 +645,54 @@ It writes a table to `$GITHUB_STEP_SUMMARY` (or `--summary FILE`), which is as p
 
 It fails if GitHub rejects a token, if a token expires in fewer than 14 days (`--expires-within DAYS`), or if a token has whitespace around it.
 `--exit-zero` forgives those, but a request that fails for any other reason, or an expiry it can't read, still fails the command.
+
+`repoutils secrets export` also runs in a workflow, and backs up the secrets' values, encrypted with [age](https://age-encryption.org).
+The workflow passes it the job's secrets in `SECRETS_JSON`, as for `inspect`.
+It exports the `actions` list, or with `--environment NAME` the list for that environment, and fails if the job lacks any of them.
+It doesn't export `other`, as those secrets aren't the repository's.
+It writes them as TOML, as an `[actions]` or `[environments.NAME]` table, and passes that to `age` on its standard input.
+So the plaintext is never written to disk, and only the encrypted file (`--output FILE`) is.
+
+Each `--recipient` is an age recipient (`age1...`) or an SSH public key, passed to `age` as it is.
+`--github-key USER/SHA256:...` encrypts to the SSH key of a GitHub user's that has that fingerprint, as `ssh-keygen -l` prints it.
+It fetches the user's keys from `https://github.com/USER.keys`, and fails if none has the fingerprint.
+age can only encrypt to `ssh-ed25519` and `ssh-rsa` keys, and only decrypts with a private key in a file.
+So a key held in a security key or a password manager's agent won't do, and a dedicated `age-keygen` key is an alternative.
+`--armor` makes `age` write ASCII text rather than binary, which `age --decrypt` reads all the same.
+`--age PATH` names the `age` program if it isn't on the `PATH`.
+It writes the names it exported, and the command that decrypts the file, to `$GITHUB_STEP_SUMMARY` (or `--summary FILE`).
+
+The workflow then uploads the file as an artifact.
+Anyone signed in to GitHub can download a public repository's artifacts, so give it a short `retention-days`, and delete it once downloaded.
+Otherwise a later leak of the private key would expose every export still around.
+
+### Variables
+
+`[tool.repoutils.variables]` names the Actions variables a repository's workflows need, in the same way as `[tool.repoutils.secrets]`.
+`actions` lists the repository's own variables, and `environments.<name>` lists those of the environment called `<name>`.
+`other` lists the variables workflows use that the repository doesn't hold, such as an organization's, and only `check-workflows` reads it.
+The table only ever holds names, never values, so there's no `ensure`.
+Set a missing variable with `gh variable set NAME`, adding `--env ENVIRONMENT` for an environment's, or on the repository's settings page.
+
+`repoutils variables check` fails if the repository lacks a variable the table names, or one of its environments.
+Unlike a secret, a variable's value can be read, so `check` also fails on one whose value is empty or only whitespace.
+`--exit-zero` and `--fail-on-unexpected` work as they do for `secrets check`.
+
+`check` needs a token with the Variables read permission.
+Environment variables need the Actions and Environments read permissions too.
+GitHub Actions' `GITHUB_TOKEN` can't be given them.
+
+`repoutils variables dump` prints the name of every variable the repository has, as `[tool.repoutils.variables]`.
+It leaves out their values, though it reads them.
+
+`repoutils variables check-workflows` needs no token, like `secrets check-workflows`.
+It reads the workflows for the variables they use, as `vars.NAME` or `vars['NAME']`.
+It fails if a workflow uses a variable that none of the lists names, or a list names one that no workflow uses.
+A variable that no workflow uses yet on purpose, such as one set up ahead of the workflow that will read it, can go under `unused` as well as its own list.
+`check-workflows` then doesn't report it, but fails once a workflow does use it, so the mark is removed when it's no longer true.
+It also fails if a job uses a variable that only environments hold, without naming one of them as its `environment`.
+GitHub evaluates a job's `if`, `runs-on`, `name` and its environment's name before the job enters its environment, so an environment's variables are always empty there ([actions/runner#2472](https://github.com/actions/runner/issues/2472)).
+So `check-workflows` also fails if one of those keys uses a variable that only environments hold, even in a job that deploys to one of them.
 
 ### Deploy keys
 

@@ -78,3 +78,27 @@ jobs:
             echo "::warning::Couldn't react to the comment."
           fi
           echo "Started PR Fixes on $branch."
+
+      # If PR Fixes didn't start (the PR isn't one it can fix, or the dispatch
+      # failed), say so on the PR, in the comment fix-push.yml reports in.
+      - name: Checkout repoutils' source
+        if: failure() && steps.check-comment.outputs.matched == 'true'
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /src/repoutils/
+            /pyproject.toml
+          sparse-checkout-cone-mode: false
+
+      - name: Report on the pull request
+        if: failure() && steps.check-comment.outputs.matched == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          body="$RUNNER_TEMP/autofix.md"
+          echo "/autofix [couldn't start PR Fixes]($RUN_URL)." > "$body"
+          PYTHONPATH=src python3 -m repoutils post-comment "$NUMBER" "$body" \
+            --name autofix --author "github-actions[bot]"

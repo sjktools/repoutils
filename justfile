@@ -169,6 +169,10 @@ check-checkout-credentials:
 secrets-workflows-check:
     uv run repoutils secrets check-workflows
 
+# Check that the workflows use exactly the variables pyproject.toml lists
+variables-workflows-check:
+    uv run repoutils variables check-workflows
+
 # Check that uv.lock only has wheels for supported OS/CPU combinations
 lock-platforms-check:
     uv run repoutils check-lock-platforms
@@ -186,7 +190,7 @@ dependabot-relock base:
     {{ repoutils }} dependabot-relock {{ base }}
 
 # Run all checks, without fixing anything or running tests
-check: lint fmt-check just-fmt-check mypy lint-workflows whitespace-check sentence-per-line-check prose-check check-pins check-checkout-credentials secrets-workflows-check lock-platforms-check requirements-check
+check: lint fmt-check just-fmt-check mypy lint-workflows whitespace-check sentence-per-line-check prose-check check-pins check-checkout-credentials secrets-workflows-check variables-workflows-check lock-platforms-check requirements-check
 
 # Formatting first fixes the long lines it can, so lint-fix stops only on
 # findings that need a hand edit.

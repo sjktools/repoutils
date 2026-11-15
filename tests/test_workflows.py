@@ -61,3 +61,36 @@ from repoutils import workflows
 def test_jobs(text: str, jobs: list[tuple[str, str | None]]) -> None:
     lines = [workflows.without_comment(line) for line in text.splitlines()]
     assert [(job.id, job.environment) for job in workflows.jobs("w.yml", lines)] == jobs
+
+
+@pytest.mark.parametrize(
+    ("text", "job_level"),
+    [
+        ("jobs:\n  a:\n    if: vars.A\n    steps:\n      - if: vars.B\n", {"A"}),
+        ("jobs:\n  a:\n    runs-on: >-\n      ${{ vars.A }}\n    env:\n      X: ${{ vars.B }}\n", {"A"}),
+        # Only an environment's name counts, not its url, which is evaluated when the job ends.
+        (
+            "jobs:\n  a:\n    environment:\n      url: >-\n        ${{ vars.B }}\n      name: ${{ vars.A }}\n",
+            {"A"},
+        ),
+        ("jobs:\n  a:\n    environment: {name: '${{ vars.A }}', url: \"${{ vars.B }}\"}\n", {"A"}),
+        ("jobs:\n  a:\n    environment: ${{ vars.A }}\n", {"A"}),
+        # A flow mapping may go on over several lines, with its url in any of them.
+        ("jobs:\n  a:\n    environment: {url: ${{ vars.B }},\n      name: ${{ vars.A }}}\n", {"A"}),
+        ("jobs:\n  a:\n    environment: {name: ${{ vars.A }},\n      url: ${{ vars.B }}}\n", {"A"}),
+        # A block sequence may sit at its key's indent.
+        ("jobs:\n  a:\n    runs-on:\n    - ${{ vars.A }}\n    steps:\n    - run: ${{ vars.B }}\n", {"A"}),
+        ("jobs:\n  a:\n    steps:\n      - name: ${{ vars.A }}\n", set()),
+        ("jobs:\n  a: {if: vars.A}\n", set()),
+    ],
+)
+def test_job_level_variables(text: str, job_level: set[str]) -> None:
+    lines = [workflows.without_comment(line) for line in text.splitlines()]
+    (job,) = workflows.jobs("w.yml", lines)
+    assert job.job_level_variables == job_level
+
+
+def test_job_level_uses_name_the_key() -> None:
+    text = "jobs:\n  a:\n    if: vars.A\n    name: ${{ vars.A }} ${{ vars.B }}\n"
+    (job,) = workflows.jobs("w.yml", text.splitlines())
+    assert job.job_level_uses == {("if", "A"), ("name", "A"), ("name", "B")}

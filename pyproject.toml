@@ -116,6 +116,12 @@ environments.release = ["GH_ACTIONS_TOKEN", "RELEASE_DEPLOY_KEY"]
 # fix.yml's push job pushes /autofix's commits to a PR's branch with this.
 environments.autofix = ["AUTOFIX_TOKEN"]
 
+# The variables `repoutils variables` checks the repository has, names only.
+# SECRETS_EXPORT_KEY is the key export-secrets.yml encrypts to (and ci.yml's
+# secrets-export job checks), as USER/SHA256:fingerprint.
+[tool.repoutils.variables]
+actions = ["SECRETS_EXPORT_KEY"]
+
 # The deployment environments `repoutils environments` checks or creates.
 # Only main can deploy to release, which holds the secrets that can tag a
 # release or push a branch (ci.yml's release job and bump-version.yml), so a

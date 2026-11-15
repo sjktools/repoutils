@@ -9,10 +9,12 @@ private key gives its public key's fingerprint, as GitHub's deploy key page
 shows it. Anything else is reported by name only.
 Stdlib-only, like every repoutils module."""
 
+import argparse
 import base64
 import binascii
 import hashlib
 import json
+import os
 import re
 import struct
 import sys
@@ -192,6 +194,11 @@ def _read_string(data: bytes, offset: int) -> tuple[bytes, int]:
     return data[offset + 4 : end], end
 
 
+def fingerprint(blob: bytes) -> str:
+    """An SSH public key blob's SHA256 fingerprint, as ``ssh-keygen -l`` and GitHub show it."""
+    return "SHA256:" + base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
+
+
 def ssh_public_key(value: str) -> tuple[str, str, bool] | None:
     """The key type, the public key's SHA256 fingerprint and whether a
     passphrase protects it, for an OpenSSH private key; None for anything else.
@@ -212,8 +219,7 @@ def ssh_public_key(value: str) -> tuple[str, str, bool] | None:
         key_type, _ = _read_string(blob, 0)
     except (binascii.Error, ValueError, struct.error):
         return None
-    fingerprint = base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
-    return key_type.decode(errors="replace"), f"SHA256:{fingerprint}", cipher != b"none"
+    return key_type.decode(errors="replace"), fingerprint(blob), cipher != b"none"
 
 
 def describe(name: str, value: str, now: datetime, within: int) -> Finding:
@@ -331,3 +337,45 @@ def inspect(
         return 0 if exit_zero else 1
     print(f"Inspected {len(findings)} secret(s), with no problems.")
     return 0
+
+
+def _days(text: str) -> int:
+    days = int(text)
+    if days < 0:
+        raise argparse.ArgumentTypeError("must be 0 or more")
+    return days
+
+
+def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    """Add the inspect subcommand and its options."""
+    inspect_parser = subparsers.add_parser(
+        "inspect",
+        help="report what each secret a workflow passes in $SECRETS_JSON is, never its value",
+        description="Report what each secret pyproject.toml lists is, from the values a workflow passes "
+        f"as ${{{{ toJSON(secrets) }}}} in ${ENV_VAR}: each GitHub token's type, owner, expiry "
+        "and access, from requests made with it, and each SSH key's fingerprint. Never shows a value. "
+        "Fails if GitHub rejects a token or it expires soon.",
+    )
+    inspect_parser.add_argument(
+        "--environment",
+        help="inspect the secrets pyproject.toml lists for this environment (default: the actions and other lists)",
+    )
+    inspect_parser.add_argument(
+        "--expires-within",
+        type=_days,
+        default=14,
+        metavar="DAYS",
+        help="fail if a token expires in fewer than this many days (default: 14)",
+    )
+    inspect_parser.add_argument(
+        "--summary",
+        type=Path,
+        default=os.environ.get("GITHUB_STEP_SUMMARY") or None,
+        help="append a Markdown report to this file (default: $GITHUB_STEP_SUMMARY)",
+    )
+    inspect_parser.add_argument(
+        "--exit-zero",
+        action="store_true",
+        help="exit 0 even if a token is rejected or expires soon "
+        "(still exit 1 if one can't be inspected, unlike `|| true`)",
+    )

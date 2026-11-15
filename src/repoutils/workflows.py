@@ -1,5 +1,5 @@
-"""Reading GitHub Actions workflows for the secrets they use, and each job's
-environment, without a YAML parser. Stdlib-only, like every repoutils module."""
+"""Reading GitHub Actions workflows for the secrets and variables they use, and
+each job's environment, without a YAML parser. Stdlib-only, like every repoutils module."""
 
 import json
 import re
@@ -7,8 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 WORKFLOWS = Path(".github") / "workflows"
-# A workflow's use of a secret: secrets.NAME, secrets['NAME'] or secrets["NAME"].
-_USE_RE = re.compile(r"\bsecrets\s*(?:\.|\[\s*['\"])\s*([A-Za-z_][A-Za-z0-9_]*)")
+# The contexts that hold secrets and variables.
+SECRETS = "secrets"
+VARS = "vars"
+# A workflow's use of a secret or variable: secrets.NAME, secrets['NAME'] or
+# secrets["NAME"], and vars likewise.
+_USE_RES = {
+    context: re.compile(rf"\b{context}\s*(?:\.|\[\s*['\"])\s*([A-Za-z_][A-Za-z0-9_]*)") for context in (SECRETS, VARS)
+}
 # The token GitHub gives every workflow run, which is no one's to set.
 _BUILT_IN = "GITHUB_TOKEN"
 # A workflow's top-level jobs key, and a key (such as a job's id) that starts a block.
@@ -20,6 +26,11 @@ _ANCHORS_AND_TAGS_RE = re.compile(r"^(?:[&!]\S*\s*)+")
 _ENVIRONMENT_RE = re.compile(r"environment\s*:\s*(.*)")
 # A job's environment that only an expression gives, so it can't be known.
 UNKNOWN = "${{ }}"
+# The keys of a job that GitHub evaluates before the job reaches a runner and
+# enters its environment, so an environment's variables are empty in them
+# (actions/runner#2472). Of environment, only its name counts: its url is
+# evaluated when the job ends.
+JOB_LEVEL_KEYS = ("if", "runs-on", "environment", "name")
 
 
 def without_comment(line: str) -> str:
@@ -90,20 +101,30 @@ def workflow_lines(root: Path) -> list[tuple[str, list[str]]]:
     ]
 
 
-def uses(lines: list[str]) -> set[str]:
-    """The secrets lines use, other than GITHUB_TOKEN, in upper case."""
-    return {match.upper() for match in _USE_RE.findall("\n".join(lines))} - {_BUILT_IN}
+def uses(lines: list[str], context: str = SECRETS) -> set[str]:
+    """The names lines use from context (SECRETS or VARS), in upper case, other than GITHUB_TOKEN."""
+    return {match.upper() for match in _USE_RES[context].findall("\n".join(lines))} - {_BUILT_IN}
+
+
+def workflow_uses(root: Path, context: str) -> dict[str, list[str]]:
+    """The names the workflows in ``root/.github/workflows`` use from context
+    (SECRETS or VARS), other than GITHUB_TOKEN: each name in upper case, with
+    the names of the files that use it. Comments don't count."""
+    used: dict[str, list[str]] = {}
+    for file, lines in workflow_lines(root):
+        for name in sorted(uses(lines, context)):
+            used.setdefault(name, []).append(file)
+    return used
 
 
 def workflow_secrets(root: Path = Path()) -> dict[str, list[str]]:
-    """The secrets the workflows in ``root/.github/workflows`` use, other than
-    GITHUB_TOKEN: each name in upper case, with the names of the files that use it.
-    Comments don't count."""
-    used: dict[str, list[str]] = {}
-    for file, lines in workflow_lines(root):
-        for name in sorted(uses(lines)):
-            used.setdefault(name, []).append(file)
-    return used
+    """The secrets the workflows in ``root/.github/workflows`` use (see workflow_uses)."""
+    return workflow_uses(root, SECRETS)
+
+
+def workflow_variables(root: Path = Path()) -> dict[str, list[str]]:
+    """The variables the workflows in ``root/.github/workflows`` use (see workflow_uses)."""
+    return workflow_uses(root, VARS)
 
 
 @dataclass(frozen=True)
@@ -116,6 +137,15 @@ class Job:
     environment: str | None
     # The secrets it uses, other than GITHUB_TOKEN, in upper case.
     secrets: frozenset[str]
+    # The variables it uses, in upper case.
+    variables: frozenset[str] = frozenset()
+    # Each of its variables it uses in one of JOB_LEVEL_KEYS, as (key, name).
+    job_level_uses: frozenset[tuple[str, str]] = frozenset()
+
+    @property
+    def job_level_variables(self) -> frozenset[str]:
+        """The variables it uses in one of JOB_LEVEL_KEYS."""
+        return frozenset(name for _, name in self.job_level_uses)
 
 
 def _indent(line: str) -> int:
@@ -162,6 +192,51 @@ def _environment(body: list[str]) -> str | None:
     return None
 
 
+def _without_url(lines: list[str]) -> list[str]:
+    """An environment's lines (its key's line, and those indented under it)
+    without its url: a block mapping's url entry, or a flow mapping's."""
+    key, *value = _split(lines[0], ":")
+    flow = ":".join(value).strip()
+    if flow.startswith("{"):
+        # A flow mapping, which may go on over the lines under the key.
+        flow = " ".join([flow, *(line.strip() for line in lines[1:])]).strip()
+        inner = flow[1:-1] if flow.endswith("}") else flow[1:]
+        entries = [entry for entry in _split(inner, ",") if _unquote(_split(entry, ":")[0]) != "url"]
+        return [f"{key}: {{{','.join(entries)}}}"]
+    nested = [line for line in lines[1:] if line.strip()]
+    entry_indent = _indent(nested[0]) if nested else 0
+    kept = [lines[0]]
+    in_url = False
+    for line in nested:
+        if _indent(line) == entry_indent:
+            match = _BLOCK_KEY_RE.fullmatch(line.strip())
+            in_url = match is not None and match[2] == "url"
+        if not in_url:
+            kept.append(line)
+    return kept
+
+
+def _job_level_lines(body: list[str]) -> dict[str, list[str]]:
+    """The lines of a job's body (the lines under its id) that give each of
+    JOB_LEVEL_KEYS it has: the key's own line, and the lines indented under it
+    (or the block sequence entries at its indent), leaving out environment's url."""
+    indent = min((_indent(line) for line in body if line.strip()), default=0)
+    found: dict[str, list[str]] = {}
+    key: str | None = None
+    lines: list[str] = []
+    for line in [*body, "end:"]:
+        # A sequence entry at the key's own indent is still its value.
+        if line.strip() and _indent(line) <= indent and not line.lstrip().startswith("- "):
+            if key is not None:
+                found[key] = _without_url(lines) if key == "environment" else lines
+            match = _BLOCK_KEY_RE.fullmatch(line.strip())
+            key = match[2] if match is not None and _indent(line) == indent and match[2] in JOB_LEVEL_KEYS else None
+            lines = []
+        if key is not None:
+            lines.append(line)
+    return found
+
+
 def jobs(file: str, lines: list[str]) -> list[Job]:
     """The jobs in a workflow's lines (without comments), read by indentation, as
     YAML's block style lays them out. A workflow written another way has none."""
@@ -186,7 +261,18 @@ def jobs(file: str, lines: list[str]) -> list[Job]:
         elif bodies:
             bodies[-1][1].append(line)
     return [
-        Job(file, job_id, UNKNOWN if flow else _environment(body[1:]), frozenset(uses(body)))
+        Job(
+            file,
+            job_id,
+            UNKNOWN if flow else _environment(body[1:]),
+            frozenset(uses(body, SECRETS)),
+            frozenset(uses(body, VARS)),
+            frozenset()
+            if flow
+            else frozenset(
+                (key, name) for key, lines in _job_level_lines(body[1:]).items() for name in uses(lines, VARS)
+            ),
+        )
         for job_id, body, flow in bodies
     ]
 

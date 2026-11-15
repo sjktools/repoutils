@@ -17,6 +17,7 @@ from tests import (
     test_rulesets,
     test_secrets,
     test_security_settings,
+    test_variables,
 )
 
 ALL = [command.name for command in github_settings.COMMANDS]
@@ -34,6 +35,9 @@ name = "bug"
 
 [tool.repoutils.secrets]
 actions = ["TOKEN"]
+
+[tool.repoutils.variables]
+actions = ["KEY"]
 """
 
 Calls = list[tuple[str, list[str], str | None]]
@@ -86,17 +90,21 @@ def test_check_forwards_fail_on_unexpected_where_supported(calls: Calls) -> None
     _write()
     assert github_settings.main(["check", "--repo", "o/r", "--fail-on-unexpected"]) == 0
     with_option = [name for name, args, _ in calls if "--fail-on-unexpected" in args]
-    assert with_option == ["labels", "rulesets", "environments", "secrets", "deploy-keys"]
+    assert with_option == ["labels", "rulesets", "environments", "secrets", "variables", "deploy-keys"]
 
 
 def test_check_skips_unconfigured_commands(calls: Calls, capsys: pytest.CaptureFixture[str]) -> None:
-    # Secrets that only check-workflows reads don't count.
-    _write('[tool.repoutils.repo-settings]\n[tool.repoutils.secrets]\nother = ["ORG"]\n')
+    # Secrets and variables that only check-workflows reads don't count.
+    _write(
+        '[tool.repoutils.repo-settings]\n[tool.repoutils.secrets]\nother = ["ORG"]\n'
+        '[tool.repoutils.variables]\nother = ["ORG"]\n'
+    )
     assert github_settings.main(["check", "--repo", "o/r"]) == 0
     assert [name for name, _, _ in calls] == ["repo-settings"]
     err = capsys.readouterr().err
     assert "Skipped labels: pyproject.toml doesn't configure it." in err
     assert "Skipped secrets: pyproject.toml doesn't configure it." in err
+    assert "Skipped variables: pyproject.toml doesn't configure it." in err
 
 
 def test_empty_deploy_keys_table_counts_as_configured(calls: Calls) -> None:
@@ -128,6 +136,19 @@ def test_bad_secrets_table_fails_rather_than_being_skipped(
     assert "secrets" in capsys.readouterr().err
 
 
+def test_bad_variables_table_fails_rather_than_being_skipped(calls: Calls, capsys: pytest.CaptureFixture[str]) -> None:
+    _write('[tool.repoutils.variables]\nactions = "KEY"\n')
+    assert github_settings.main(["check", "--repo", "o/r", "--exit-zero"]) == 1
+    assert calls == []
+    assert "variables" in capsys.readouterr().err
+
+
+def test_environments_alone_configure_variables(calls: Calls) -> None:
+    _write("[tool.repoutils.variables]\nenvironments = {}\n")
+    assert github_settings.main(["check", "--repo", "o/r"]) == 0
+    assert [name for name, _, _ in calls] == ["variables"]
+
+
 def test_bad_pyproject_fails(calls: Calls, capsys: pytest.CaptureFixture[str]) -> None:
     _write("[tool.repoutils\n")
     assert github_settings.main(["check", "--repo", "o/r"]) == 1
@@ -152,12 +173,14 @@ def test_exit_zero_still_fails_on_an_error(calls: Calls, failing: set[str]) -> N
     assert github_settings.main(["check", "--repo", "o/r", "--exit-zero"]) == 1
 
 
-def test_ensure_skips_secrets(calls: Calls, capsys: pytest.CaptureFixture[str]) -> None:
+def test_ensure_skips_secrets_and_variables(calls: Calls, capsys: pytest.CaptureFixture[str]) -> None:
     _write()
     assert github_settings.main(["ensure", "--repo", "o/r"]) == 0
-    assert [name for name, _, _ in calls] == [name for name in ALL if name != "secrets"]
+    assert [name for name, _, _ in calls] == [name for name in ALL if name not in {"secrets", "variables"}]
     assert all(args == ["ensure", "--repo", "o/r"] for _, args, _ in calls)
-    assert "Skipped secrets: it has no ensure." in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "Skipped secrets: it has no ensure." in err
+    assert "Skipped variables: it has no ensure." in err
 
 
 def test_ensure_stops_at_the_first_failure(calls: Calls, failing: set[str], capsys: pytest.CaptureFixture[str]) -> None:
@@ -231,6 +254,7 @@ def test_real_dumps_join_into_valid_toml(
         "environments": test_environments.FakeGitHub([test_environments._env("pypi", wait=10)]),
         "actions-settings": test_actions_settings.FakeGitHub(test_actions_settings.EVERYTHING),
         "secrets": test_secrets.FakeGitHub(["ALPHA"], [], {"pypi": ["TOKEN"]}),
+        "variables": test_variables.FakeGitHub({"KEY": "value"}, {"pypi": {"URL": "u"}}),
         "deploy-keys": test_deploy_keys.FakeGitHub([test_deploy_keys._key(1, "release", write=True)]),
         "security-settings": test_security_settings.FakeGitHub(test_security_settings.MATCHING),
     }

@@ -173,6 +173,38 @@ secrets-workflows-check:
 variables-workflows-check:
     uv run repoutils variables check-workflows
 
+# Check `secrets export` round-trips made-up secrets through age (on the PATH), also encrypting to the GitHub key given as USER/SHA256:FINGERPRINT
+secrets-export-test $SECRETS_EXPORT_KEY='':
+    #!/usr/bin/env -S uv run --no-project python
+    # Made-up values for the secrets pyproject.toml lists, never real ones, with
+    # the characters TOML must escape. The plaintext only ever reaches age on
+    # its standard input, as in export-secrets.yml.
+    import base64, json, os, subprocess, sys, tempfile, tomllib
+    from pathlib import Path
+
+    names = tomllib.loads(Path("pyproject.toml").read_text())["tool"]["repoutils"]["secrets"]["actions"]
+    values = {name: f'made-up {name}, with "quotes", a \\ and\na second line\n' for name in names}
+    key = os.environ["SECRETS_EXPORT_KEY"]
+    with tempfile.TemporaryDirectory() as tmp:
+        identity, output = Path(tmp, "identity"), Path(tmp, "secrets.toml.age")
+        subprocess.run(["age-keygen", "-o", identity], check=True, capture_output=True)
+        recipient = subprocess.run(["age-keygen", "-y", identity], check=True, capture_output=True, text=True).stdout
+        args = ["--recipient", recipient.strip(), *(["--github-key", key] if key else [])]
+        env = {**os.environ, "SECRETS_JSON": json.dumps(values), "PYTHONPATH": "src"}
+        export = [sys.executable, "-m", "repoutils", "secrets", "export", "--armor", *args]
+        subprocess.run([*export, "--output", output, "--summary", os.devnull], check=True, env=env)
+        armored = output.read_text()
+        if not armored.startswith("-----BEGIN AGE ENCRYPTED FILE-----"):
+            sys.exit("the export isn't ASCII-armored")
+        # age's header names each recipient's type, as "-> X25519 ..." lines.
+        header = base64.b64decode("".join(armored.splitlines()[1:-1]))
+        if key and not any(f"\n-> {kind} ".encode() in header for kind in ("ssh-ed25519", "ssh-rsa")):
+            sys.exit(f"the export isn't encrypted to {key}")
+        plaintext = subprocess.run(["age", "--decrypt", "--identity", identity, output], check=True, capture_output=True)
+        if tomllib.loads(plaintext.stdout.decode()) != {"actions": values}:
+            sys.exit("the decrypted secrets differ from the made-up ones")
+    print(f"Exported and decrypted {len(values)} made-up secret(s)" + (f", also encrypted to {key}" if key else ""))
+
 # Check that uv.lock only has wheels for supported OS/CPU combinations
 lock-platforms-check:
     uv run repoutils check-lock-platforms

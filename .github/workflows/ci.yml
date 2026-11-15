@@ -397,6 +397,53 @@ jobs:
         # GITHUB_TOKEN can't look up its own login, so name it.
         run: just added-strings --base "$BASE" --commit "$HEAD_SHA" --post "$PR_NUMBER" --author 'github-actions[bot]'
 
+  # Checks that the Export Secrets workflow's export still works, so a broken age pin,
+  # a change to `secrets export` or a wrong or replaced SECRETS_EXPORT_KEY shows
+  # up here rather than in a backup run. It round-trips made-up secrets (never
+  # real ones) through the pinned age, encrypting to a throwaway age key and to
+  # the GitHub key SECRETS_EXPORT_KEY names. It references no secrets.
+  secrets-export:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # Keep version in step with pyproject.toml's [tool.uv] required-version.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.6"
+
+      # Keep just-version in step with the justfile's minimum-version.
+      - name: Install just
+        uses: extractions/setup-just@v4.0.0
+        with:
+          just-version: "1.58.0"
+
+      # The same pinned age the Export Secrets workflow installs.
+      - name: Install age
+        uses: $/.github/actions/install-age
+
+      # A fork's or Dependabot's run may not get the repository's variables, so
+      # only main's runs and this repository's own PRs need the key.
+      - name: Round-trip made-up secrets through secrets export
+        env:
+          SECRETS_EXPORT_KEY: ${{ vars.SECRETS_EXPORT_KEY }}
+          NEEDS_KEY: ${{ github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
+        run: |
+          if [ -z "$SECRETS_EXPORT_KEY" ]; then
+            if [ "$NEEDS_KEY" = true ]; then
+              echo "::error::Set the SECRETS_EXPORT_KEY variable to USER/SHA256:FINGERPRINT, the GitHub key the Export Secrets workflow encrypts to."
+              exit 1
+            fi
+            echo "::warning::SECRETS_EXPORT_KEY isn't set in this run, so only the throwaway key is tested."
+          fi
+          just secrets-export-test "$SECRETS_EXPORT_KEY"
+
   # Checks .github/workflows/actions.lock, which pins every action the
   # workflows use, transitive ones included, to a commit. Generate it with
   # `gh actions-lock` (github/gh-actions-lock) after changing any `uses:`.

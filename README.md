@@ -55,7 +55,7 @@ That installs only repoutils, hash-checked against `uv.lock`, and not the projec
 | `rulesets` | Checks, creates or updates the branch and tag rulesets `pyproject.toml` defines, or prints the ones the repository has. |
 | `environments` | Checks, creates or updates the deployment environments `pyproject.toml` defines, or prints the ones the repository has. |
 | `actions-settings` | Checks or changes the Actions settings `pyproject.toml` gives, or prints the ones the repository has. |
-| `secrets` | Checks the repository has the Actions, Dependabot and environment secrets `pyproject.toml` names, or prints the names it has. Also checks the workflows use exactly those secrets. |
+| `secrets` | Checks the repository has the Actions, Dependabot and environment secrets `pyproject.toml` names, or prints the names it has. Also checks the workflows use exactly those secrets, and in a workflow reports what each token secret is. |
 | `deploy-keys` | Checks or creates the deploy keys `pyproject.toml` declares, and the secrets that hold their private halves, or prints the keys the repository has. |
 | `security-settings` | Checks or changes the security settings `pyproject.toml` gives, such as secret protection, or prints the ones the repository has. |
 | `check-attestations` | Fails unless every distribution in `dist/` has a PEP 740 publish attestation. |
@@ -621,6 +621,23 @@ A job gets an environment's secrets only if it names that environment as its `en
 So `check-workflows` also fails if a job uses a secret that only environments hold, without naming one of them.
 It can't tell a job's environment when an expression gives it, so it doesn't check that job.
 It skips `GITHUB_TOKEN`, which GitHub provides, and anything in a comment.
+
+`repoutils secrets inspect` runs in a workflow, and reports what each secret is without ever showing a value.
+It's for finding the token on GitHub's settings pages that a secret holds, and for noticing when one is about to expire.
+The workflow passes it the job's secrets as `SECRETS_JSON: ${{ toJSON(secrets) }}`.
+It inspects the `actions` and `other` lists, or with `--environment NAME` the list for that environment.
+A job gets an environment's secrets only if it deploys to it, so each environment needs a job of its own.
+Dependabot secrets can't be inspected, as only Dependabot's runs get them.
+
+For a value that looks like a GitHub token, it makes a request with that token.
+It reports the token's type (from its prefix), its owner, and its expiry.
+It also reports the scopes of a classic token, and the repositories a fine-grained or app installation token can reach.
+For an OpenSSH private key, it reports the public key's fingerprint, which GitHub's deploy key page shows too.
+Anything else is reported by name only.
+It writes a table to `$GITHUB_STEP_SUMMARY` (or `--summary FILE`), which is as public as the run's logs.
+
+It fails if GitHub rejects a token, if a token expires in fewer than 14 days (`--expires-within DAYS`), or if a token has whitespace around it.
+`--exit-zero` forgives those, but a request that fails for any other reason still fails the command.
 
 ### Deploy keys
 

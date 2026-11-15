@@ -55,7 +55,7 @@ That installs only repoutils, hash-checked against `uv.lock`, and not the projec
 | `rulesets` | Checks, creates or updates the branch and tag rulesets `pyproject.toml` defines, or prints the ones the repository has. |
 | `environments` | Checks, creates or updates the deployment environments `pyproject.toml` defines, or prints the ones the repository has. |
 | `actions-settings` | Checks or changes the Actions settings `pyproject.toml` gives, or prints the ones the repository has. |
-| `secrets` | Checks the repository has the Actions, Dependabot and environment secrets `pyproject.toml` names, or prints the names it has. Also checks the workflows use exactly those secrets, and in a workflow reports what each token secret is. |
+| `secrets` | Checks the repository has the Actions, Dependabot and environment secrets `pyproject.toml` names, or prints the names it has. Also checks the workflows use exactly those secrets. In a workflow, it reports what each token secret is, or backs up their values encrypted with age. |
 | `deploy-keys` | Checks or creates the deploy keys `pyproject.toml` declares, and the secrets that hold their private halves, or prints the keys the repository has. |
 | `security-settings` | Checks or changes the security settings `pyproject.toml` gives, such as secret protection, or prints the ones the repository has. |
 | `check-attestations` | Fails unless every distribution in `dist/` has a PEP 740 publish attestation. |
@@ -639,6 +639,25 @@ It writes a table to `$GITHUB_STEP_SUMMARY` (or `--summary FILE`), which is as p
 
 It fails if GitHub rejects a token, if a token expires in fewer than 14 days (`--expires-within DAYS`), or if a token has whitespace around it.
 `--exit-zero` forgives those, but a request that fails for any other reason, or an expiry it can't read, still fails the command.
+
+`repoutils secrets export` also runs in a workflow, and backs up the secrets' values, encrypted with [age](https://age-encryption.org).
+The workflow passes it the job's secrets in `SECRETS_JSON`, as for `inspect`.
+It exports the `actions` list, or with `--environment NAME` the list for that environment, and fails if the job lacks any of them.
+It doesn't export `other`, as those secrets aren't the repository's.
+It writes them as TOML, as an `[actions]` or `[environments.NAME]` table, and passes that to `age` on its standard input.
+So the plaintext is never written to disk, and only the encrypted file (`--output FILE`) is.
+
+Each `--recipient` is an age recipient (`age1...`) or an SSH public key, passed to `age` as it is.
+`--github-key USER/SHA256:...` encrypts to the SSH key of a GitHub user's that has that fingerprint, as `ssh-keygen -l` prints it.
+It fetches the user's keys from `https://github.com/USER.keys`, and fails if none has the fingerprint.
+age can only encrypt to `ssh-ed25519` and `ssh-rsa` keys, and only decrypts with a private key in a file.
+So a key held in a security key or a password manager's agent won't do, and a dedicated `age-keygen` key is an alternative.
+`--age PATH` names the `age` program if it isn't on the `PATH`.
+It writes the names it exported, and the command that decrypts the file, to `$GITHUB_STEP_SUMMARY` (or `--summary FILE`).
+
+The workflow then uploads the file as an artifact.
+Anyone signed in to GitHub can download a public repository's artifacts, so give it a short `retention-days`, and delete it once downloaded.
+Otherwise a later leak of the private key would expose every export still around.
 
 ### Deploy keys
 

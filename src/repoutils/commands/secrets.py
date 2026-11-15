@@ -32,6 +32,8 @@ environments hold without declaring one of them as its ``environment``.
 (``actions`` and ``other``, or ``environments.<name>`` with ``--environment``)
 it reports what it is: a GitHub token's type, owner, expiry and access, or an
 SSH key's fingerprint, never the value (see repoutils.secret_inspect).
+``export`` writes the same secrets' values as TOML encrypted with age, for a
+workflow to upload as a backup (see repoutils.secret_export).
 Stdlib-only, like every repoutils command."""
 
 import argparse
@@ -46,7 +48,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from repoutils import config, github, secret_inspect, workflows
+from repoutils import config, github, secret_export, secret_inspect, workflows
 from repoutils.commands import environments as environments_command
 
 TABLE = "[tool.repoutils.secrets]"
@@ -334,31 +336,27 @@ def check(
     return 0
 
 
-def inspect(listed: Listed, environment: str | None, *, within: int, exit_zero: bool, summary: Path | None) -> int:
+def selected(listed: Listed, environment: str | None, keys: tuple[str, ...], verb: str) -> list[str]:
+    """The names in the lists keys gives, or environment's list if it isn't None."""
     if environment is None:
-        if "actions" not in listed.lists and OTHER not in listed.lists:
-            raise config.ConfigError(f"{TABLE} lists no actions or {OTHER} secrets to inspect")
-        title = "Repository secrets"
-        wanted = [*listed.lists.get("actions", []), *listed.lists.get(OTHER, [])]
-    else:
-        environments = {name.lower(): names for name, names in (listed.environments or {}).items()}
-        if environment.lower() not in environments:
-            raise config.ConfigError(f"{TABLE} lists no secrets for environment {environment}")
-        title = f"Environment {environment}'s secrets"
-        wanted = environments[environment.lower()]
+        if not any(key in listed.lists for key in keys):
+            raise config.ConfigError(f"{TABLE} lists no {' or '.join(keys)} secrets to {verb}")
+        return [name for key in keys for name in listed.lists.get(key, [])]
+    environments = {name.lower(): names for name, names in (listed.environments or {}).items()}
+    if environment.lower() not in environments:
+        raise config.ConfigError(f"{TABLE} lists no secrets for environment {environment}")
+    return environments[environment.lower()]
+
+
+def inspect(listed: Listed, environment: str | None, *, within: int, exit_zero: bool, summary: Path | None) -> int:
+    wanted = selected(listed, environment, ("actions", OTHER), "inspect")
+    title = "Repository secrets" if environment is None else f"Environment {environment}'s secrets"
     secrets_json = os.environ.get(secret_inspect.ENV_VAR)
     if secrets_json is None:
         raise ValueError(f"${secret_inspect.ENV_VAR} isn't set: set it to ${{{{ toJSON(secrets) }}}} in the workflow")
     return secret_inspect.inspect(
         title, wanted, listed.all_names(), secrets_json, within=within, exit_zero=exit_zero, summary=summary
     )
-
-
-def _days(text: str) -> int:
-    days = int(text)
-    if days < 0:
-        raise argparse.ArgumentTypeError("must be 0 or more")
-    return days
 
 
 def main(argv: list[str]) -> int:
@@ -370,7 +368,9 @@ def main(argv: list[str]) -> int:
         "and Actions and Environments read for environment secrets. "
         "Organization secrets don't count.",
     )
-    subparsers = parser.add_subparsers(dest="mode", required=True, metavar="{check,dump,check-workflows,inspect}")
+    subparsers = parser.add_subparsers(
+        dest="mode", required=True, metavar="{check,dump,check-workflows,inspect,export}"
+    )
     check_parser = subparsers.add_parser(
         "check",
         help="fail if a secret pyproject.toml lists is missing",
@@ -388,37 +388,8 @@ def main(argv: list[str]) -> int:
         "or pyproject.toml lists one no workflow uses, "
         "or a job uses an environment's secret without deploying to that environment. Needs no token.",
     )
-    inspect_parser = subparsers.add_parser(
-        "inspect",
-        help="report what each secret a workflow passes in $SECRETS_JSON is, never its value",
-        description="Report what each secret pyproject.toml lists is, from the values a workflow passes "
-        f"as ${{{{ toJSON(secrets) }}}} in ${secret_inspect.ENV_VAR}: each GitHub token's type, owner, expiry "
-        "and access, from requests made with it, and each SSH key's fingerprint. Never shows a value. "
-        "Fails if GitHub rejects a token or it expires soon.",
-    )
-    inspect_parser.add_argument(
-        "--environment",
-        help=f"inspect the secrets pyproject.toml lists for this environment (default: the actions and {OTHER} lists)",
-    )
-    inspect_parser.add_argument(
-        "--expires-within",
-        type=_days,
-        default=14,
-        metavar="DAYS",
-        help="fail if a token expires in fewer than this many days (default: 14)",
-    )
-    inspect_parser.add_argument(
-        "--summary",
-        type=Path,
-        default=os.environ.get("GITHUB_STEP_SUMMARY") or None,
-        help="append a Markdown report to this file (default: $GITHUB_STEP_SUMMARY)",
-    )
-    inspect_parser.add_argument(
-        "--exit-zero",
-        action="store_true",
-        help="exit 0 even if a token is rejected or expires soon "
-        "(still exit 1 if one can't be inspected, unlike `|| true`)",
-    )
+    secret_inspect.add_parser(subparsers)
+    secret_export.add_parser(subparsers)
     for sub in (check_parser, dump_parser):
         sub.add_argument(
             "--repo",
@@ -446,6 +417,18 @@ def main(argv: list[str]) -> int:
                 args.environment,
                 within=args.expires_within,
                 exit_zero=args.exit_zero,
+                summary=args.summary,
+            )
+        if args.mode == "export":
+            listed = _load(Path())
+            return secret_export.export(
+                selected(listed, args.environment, ("actions",), "export"),
+                listed.all_names(),
+                args.environment,
+                recipients=args.recipient,
+                github_keys=args.github_key,
+                output=args.output,
+                age=args.age,
                 summary=args.summary,
             )
         # dump doesn't read pyproject.toml, so it works before there are any secrets there.

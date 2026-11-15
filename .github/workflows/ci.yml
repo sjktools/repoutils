@@ -77,7 +77,15 @@ jobs:
       - name: Install dependencies
         run: just sync
 
+      # For `just check`'s actions-lock-check.
+      - name: Install gh-actions-lock
+        uses: $/.github/actions/install-gh-actions-lock
+
+      # GH_TOKEN is the job's read-only token, which is all gh actions-lock
+      # needs to verify each locked commit against the action's repository.
       - name: Run checks
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: just check
 
       - name: Build package
@@ -444,29 +452,6 @@ jobs:
           fi
           just secrets-export-test "$SECRETS_EXPORT_KEY"
 
-  # Checks .github/workflows/actions.lock, which pins every action the
-  # workflows use, transitive ones included, to a commit. Generate it with
-  # `gh actions-lock` (github/gh-actions-lock) after changing any `uses:`.
-  actions-lock:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install gh-actions-lock
-        uses: $/.github/actions/install-gh-actions-lock
-
-      # Fails if actions.lock is missing an action a workflow uses, or a
-      # locked commit no longer verifies upstream.
-      - name: Verify actions.lock
-        run: gh actions-lock --verify
-
   # Runs on a Dependabot branch, whose bumped dependency we don't trust:
   # checkout doesn't persist credentials, and nothing installs the project or
   # its dependencies (the recipes run repoutils from source with the standard
@@ -623,7 +608,7 @@ jobs:
   # another branch, can tag a release. A deploy key's push triggers workflows,
   # so the tag push still starts publish-pypi.yml.
   release:
-    needs: [build, coverage, actions-lock]
+    needs: [build, coverage]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: release

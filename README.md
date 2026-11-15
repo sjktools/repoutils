@@ -172,7 +172,8 @@ other = ["ORG_DEPLOY_KEY"]
 
 # The names (never the values) of the variables `repoutils variables` checks the repository has; see below.
 [tool.repoutils.variables]
-actions = ["DEPLOY_URL"]
+actions = ["DEPLOY_URL", "NEXT_RELEASE_URL"]
+unused = ["NEXT_RELEASE_URL"]
 
 # The security settings that `repoutils security-settings` checks or changes; see below.
 [tool.repoutils.security-settings]
@@ -667,6 +668,8 @@ It leaves out their values, though it reads them.
 `repoutils variables check-workflows` needs no token, like `secrets check-workflows`.
 It reads the workflows for the variables they use, as `vars.NAME` or `vars['NAME']`.
 It fails if a workflow uses a variable that none of the lists names, or a list names one that no workflow uses.
+A variable that no workflow uses yet on purpose, such as one set up ahead of the workflow that will read it, can go under `unused` as well as its own list.
+`check-workflows` then doesn't report it, but fails once a workflow does use it, so the mark is removed when it's no longer true.
 It also fails if a job uses a variable that only environments hold, without naming one of them as its `environment`.
 GitHub evaluates a job's `if`, `runs-on`, `environment` and `name` before the job enters its environment, so an environment's variables are always empty there ([actions/runner#2472](https://github.com/actions/runner/issues/2472)).
 So `check-workflows` also fails if one of those keys uses a variable that only environments hold, even in a job that deploys to one of them.

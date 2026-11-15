@@ -27,7 +27,10 @@ variable that only environments hold without declaring one of them as its
 its environment (``if``, ``runs-on``, ``environment`` or ``name``), where it's
 always empty. ``other`` lists the variables workflows use that the
 repository doesn't hold (such as an organization's), which ``check`` doesn't
-look for.
+look for. ``unused`` lists variables, from the other lists, that no workflow
+uses yet on purpose (such as one set up ahead of the workflow that will read
+it): ``check-workflows`` doesn't report them as unused, and fails if a
+workflow does use one, so the mark can't outlive its reason.
 
 This shares its table's format, and most of its workings, with
 ``repoutils secrets``. Stdlib-only, like every repoutils command."""
@@ -41,21 +44,38 @@ import urllib.parse
 from collections.abc import Iterable
 from pathlib import Path
 
-from repoutils import github, workflows
+from repoutils import config, github, workflows
 from repoutils.commands import secrets
 
 SECTION = "variables"
 TABLE = f"[tool.repoutils.{SECTION}]"
 # The key in TABLE for the repository's own variables.
 ACTIONS = "actions"
+# The key in TABLE for the variables, listed elsewhere in it, that no workflow uses on purpose.
+UNUSED = "unused"
 # Variables per page of the list (GitHub's most, lower than for secrets).
 PER_PAGE = 30
 
 
+def load_with_unused(root: Path = Path()) -> tuple[secrets.Listed, list[str]]:
+    """What ``[tool.repoutils.variables]`` in ``root/pyproject.toml`` lists, and
+    its ``unused`` list apart; raising config.ConfigError (a ValueError) if
+    it's malformed, or ``unused`` names a variable no other list does."""
+    listed = secrets.load_listed(SECTION, [ACTIONS, secrets.OTHER, UNUSED], "variable", root)
+    unused = listed.lists.pop(UNUSED, [])
+    elsewhere = {name.upper() for name in listed.all_names()}
+    for name in unused:
+        if name.upper() not in elsewhere:
+            raise config.ConfigError(
+                f"{TABLE} {UNUSED} {name!r} isn't listed under {ACTIONS}, environments or {secrets.OTHER}"
+            )
+    return listed, unused
+
+
 def load(root: Path = Path()) -> secrets.Listed:
-    """What ``[tool.repoutils.variables]`` in ``root/pyproject.toml`` lists;
-    raising config.ConfigError (a ValueError) if it's malformed."""
-    return secrets.load_listed(SECTION, [ACTIONS, secrets.OTHER], "variable", root)
+    """What ``[tool.repoutils.variables]`` in ``root/pyproject.toml`` lists,
+    without ``unused``; raising config.ConfigError (a ValueError) if it's malformed."""
+    return load_with_unused(root)[0]
 
 
 def checks_anything(listed: secrets.Listed) -> bool:
@@ -78,13 +98,15 @@ def job_level_uses(listed: secrets.Listed, jobs: Iterable[workflows.Job]) -> lis
 
 
 def check_workflows(root: Path = Path()) -> int:
-    loaded = load(root)
+    loaded, marked = load_with_unused(root)
     listed: dict[str, str] = {}
     for name in loaded.all_names():
         listed.setdefault(name.upper(), name)
     used = workflows.workflow_variables(root)
+    unused_on_purpose = {name.upper() for name in marked}
     unlisted = sorted(set(used) - set(listed))
-    unused = sorted(listed[name] for name in set(listed) - set(used))
+    unused = sorted(listed[name] for name in set(listed) - set(used) - unused_on_purpose)
+    used_after_all = [name for name in marked if name.upper() in used]
     jobs = workflows.workflow_jobs(root)
     job_level = job_level_uses(loaded, jobs)
     # A job-level use is reported as such, whatever environment the job declares.
@@ -93,6 +115,8 @@ def check_workflows(root: Path = Path()) -> int:
         print(f"{name}: used by {', '.join(used[name])}, but not listed in pyproject.toml")
     for name in unused:
         print(f"{name}: listed in pyproject.toml, but no workflow uses it")
+    for name in used_after_all:
+        print(f"{name}: listed as {UNUSED} in pyproject.toml, but used by {', '.join(used[name.upper()])}")
     for line in [*undeclared, *job_level]:
         print(line)
     if unlisted:
@@ -101,7 +125,15 @@ def check_workflows(root: Path = Path()) -> int:
             f"under {ACTIONS} or environments.<name>, or under {secrets.OTHER} if the repository doesn't hold it."
         )
     if unused:
-        print(f"{len(unused)} variable(s) pyproject.toml lists aren't used by any workflow: remove them from {TABLE}.")
+        print(
+            f"{len(unused)} variable(s) pyproject.toml lists aren't used by any workflow: remove them from {TABLE}, "
+            f"or list them under {UNUSED} too if that's on purpose."
+        )
+    if used_after_all:
+        print(
+            f"{len(used_after_all)} variable(s) pyproject.toml lists as {UNUSED} are used by a workflow: "
+            f"remove them from {UNUSED} in {TABLE}."
+        )
     if undeclared:
         print(
             f"{len(undeclared)} use(s) of an environment's variable are in a job that doesn't deploy to it, "
@@ -113,7 +145,7 @@ def check_workflows(root: Path = Path()) -> int:
             f"{', '.join(workflows.JOB_LEVEL_KEYS)}, which GitHub evaluates before the job enters its environment: "
             f"make it a repository variable (under {ACTIONS}) or move the use into a step."
         )
-    if unlisted or unused or undeclared or job_level:
+    if unlisted or unused or used_after_all or undeclared or job_level:
         return 1
     print(f"The workflows use exactly the {len(listed)} variable(s) pyproject.toml lists.")
     return 0

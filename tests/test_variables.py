@@ -292,7 +292,8 @@ def test_check_workflows_reports_unlisted_and_unused(
         "UNUSED: listed in pyproject.toml, but no workflow uses it\n"
         "1 variable(s) the workflows use aren't listed in pyproject.toml: add each to [tool.repoutils.variables], "
         "under actions or environments.<name>, or under other if the repository doesn't hold it.\n"
-        "1 variable(s) pyproject.toml lists aren't used by any workflow: remove them from [tool.repoutils.variables].\n"
+        "1 variable(s) pyproject.toml lists aren't used by any workflow: remove them from [tool.repoutils.variables], "
+        "or list them under unused too if that's on purpose.\n"
     )
 
 
@@ -381,3 +382,38 @@ def test_job_level_use_is_reported_once_without_an_environment(
     out = capsys.readouterr().out
     assert "ENABLED: used by job a in ci.yml in its if" in out
     assert "doesn't deploy to it" not in out
+
+
+def test_check_workflows_accepts_unused_on_purpose(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_text = CONFIG + 'other = ["ORG_VAR"]\nenvironments.release = ["LATER"]\nunused = ["later"]\n'
+    assert _workflows(tmp_path, monkeypatch, config_text, ci_yml=WORKFLOW) == 0
+    assert capsys.readouterr().out == "The workflows use exactly the 4 variable(s) pyproject.toml lists.\n"
+
+
+def test_check_workflows_fails_if_unused_on_purpose_is_used(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_text = CONFIG + 'other = ["ORG_VAR"]\nunused = ["mode"]\n'
+    assert _workflows(tmp_path, monkeypatch, config_text, ci_yml=WORKFLOW, b_yml="env:\n  M: ${{ vars.MODE }}\n") == 1
+    assert capsys.readouterr().out == (
+        "mode: listed as unused in pyproject.toml, but used by b.yml, ci.yml\n"
+        "1 variable(s) pyproject.toml lists as unused are used by a workflow: "
+        "remove them from unused in [tool.repoutils.variables].\n"
+    )
+
+
+def test_unused_must_be_listed_elsewhere(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[tool.repoutils.variables]\nactions = ["A"]\nunused = ["B"]\n')
+    with pytest.raises(
+        config.ConfigError, match=re.escape("unused 'B' isn't listed under actions, environments or other")
+    ):
+        variables.load(tmp_path)
+
+
+def test_unused_alone_is_not_enough_for_check(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[tool.repoutils.variables]\nother = ["A"]\nunused = ["A"]\n')
+    listed = variables.load(tmp_path)
+    assert listed.lists == {"other": ["A"]}
+    assert not variables.checks_anything(listed)

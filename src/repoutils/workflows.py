@@ -1,5 +1,5 @@
-"""Reading GitHub Actions workflows for the secrets they use, and each job's
-environment, without a YAML parser. Stdlib-only, like every repoutils module."""
+"""Reading GitHub Actions workflows for the secrets and variables they use, and
+each job's environment, without a YAML parser. Stdlib-only, like every repoutils module."""
 
 import json
 import re
@@ -7,8 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 WORKFLOWS = Path(".github") / "workflows"
-# A workflow's use of a secret: secrets.NAME, secrets['NAME'] or secrets["NAME"].
-_USE_RE = re.compile(r"\bsecrets\s*(?:\.|\[\s*['\"])\s*([A-Za-z_][A-Za-z0-9_]*)")
+# The contexts that hold secrets and variables.
+SECRETS = "secrets"
+VARS = "vars"
+# A workflow's use of a secret or variable: secrets.NAME, secrets['NAME'] or
+# secrets["NAME"], and vars likewise.
+_USE_RES = {
+    context: re.compile(rf"\b{context}\s*(?:\.|\[\s*['\"])\s*([A-Za-z_][A-Za-z0-9_]*)") for context in (SECRETS, VARS)
+}
 # The token GitHub gives every workflow run, which is no one's to set.
 _BUILT_IN = "GITHUB_TOKEN"
 # A workflow's top-level jobs key, and a key (such as a job's id) that starts a block.
@@ -90,20 +96,30 @@ def workflow_lines(root: Path) -> list[tuple[str, list[str]]]:
     ]
 
 
-def uses(lines: list[str]) -> set[str]:
-    """The secrets lines use, other than GITHUB_TOKEN, in upper case."""
-    return {match.upper() for match in _USE_RE.findall("\n".join(lines))} - {_BUILT_IN}
+def uses(lines: list[str], context: str = SECRETS) -> set[str]:
+    """The names lines use from context (SECRETS or VARS), in upper case, other than GITHUB_TOKEN."""
+    return {match.upper() for match in _USE_RES[context].findall("\n".join(lines))} - {_BUILT_IN}
+
+
+def workflow_uses(root: Path, context: str) -> dict[str, list[str]]:
+    """The names the workflows in ``root/.github/workflows`` use from context
+    (SECRETS or VARS), other than GITHUB_TOKEN: each name in upper case, with
+    the names of the files that use it. Comments don't count."""
+    used: dict[str, list[str]] = {}
+    for file, lines in workflow_lines(root):
+        for name in sorted(uses(lines, context)):
+            used.setdefault(name, []).append(file)
+    return used
 
 
 def workflow_secrets(root: Path = Path()) -> dict[str, list[str]]:
-    """The secrets the workflows in ``root/.github/workflows`` use, other than
-    GITHUB_TOKEN: each name in upper case, with the names of the files that use it.
-    Comments don't count."""
-    used: dict[str, list[str]] = {}
-    for file, lines in workflow_lines(root):
-        for name in sorted(uses(lines)):
-            used.setdefault(name, []).append(file)
-    return used
+    """The secrets the workflows in ``root/.github/workflows`` use (see workflow_uses)."""
+    return workflow_uses(root, SECRETS)
+
+
+def workflow_variables(root: Path = Path()) -> dict[str, list[str]]:
+    """The variables the workflows in ``root/.github/workflows`` use (see workflow_uses)."""
+    return workflow_uses(root, VARS)
 
 
 @dataclass(frozen=True)
@@ -116,6 +132,8 @@ class Job:
     environment: str | None
     # The secrets it uses, other than GITHUB_TOKEN, in upper case.
     secrets: frozenset[str]
+    # The variables it uses, in upper case.
+    variables: frozenset[str] = frozenset()
 
 
 def _indent(line: str) -> int:
@@ -186,7 +204,13 @@ def jobs(file: str, lines: list[str]) -> list[Job]:
         elif bodies:
             bodies[-1][1].append(line)
     return [
-        Job(file, job_id, UNKNOWN if flow else _environment(body[1:]), frozenset(uses(body)))
+        Job(
+            file,
+            job_id,
+            UNKNOWN if flow else _environment(body[1:]),
+            frozenset(uses(body, SECRETS)),
+            frozenset(uses(body, VARS)),
+        )
         for job_id, body, flow in bodies
     ]
 

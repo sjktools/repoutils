@@ -4,8 +4,8 @@
 ``pyproject.toml`` has, and say which they skip.
 ``dump`` runs every command, as dump doesn't read ``pyproject.toml``.
 
-``secrets`` has no ``ensure`` mode, as repoutils can't know secret values, so
-``ensure`` skips it.
+``secrets`` and ``variables`` have no ``ensure`` mode, as ``pyproject.toml``
+holds no values, so ``ensure`` skips them.
 ``ensure`` stops at the first command that fails, so that, for example, a
 deploy key's secret isn't set in an environment whose protection didn't apply.
 Stdlib-only, like every repoutils command."""
@@ -29,6 +29,7 @@ from repoutils.commands import (
     rulesets,
     secrets,
     security_settings,
+    variables,
 )
 
 
@@ -42,6 +43,11 @@ def _has_secrets(table: dict[str, Any]) -> bool:
     if "secrets" not in table:
         return False
     return bool(secrets.load_secrets()) or secrets.load_environment_secrets() is not None
+
+
+def _has_variables(table: dict[str, Any]) -> bool:
+    # As for secrets: `other` alone is for check-workflows, and a malformed table raises ConfigError.
+    return "variables" in table and variables.checks_anything(variables.load())
 
 
 @dataclass(frozen=True)
@@ -62,6 +68,7 @@ COMMANDS = [
     Command("environments", environments.main, _has_table("environments"), has_fail_on_unexpected=True),
     Command("actions-settings", actions_settings.main, _has_table("actions-settings")),
     Command("secrets", secrets.main, _has_secrets, has_ensure=False, has_fail_on_unexpected=True),
+    Command("variables", variables.main, _has_variables, has_ensure=False, has_fail_on_unexpected=True),
     Command("deploy-keys", deploy_keys.main, _has_table("deploy-keys"), has_fail_on_unexpected=True),
     Command("security-settings", security_settings.main, _has_table("security-settings")),
 ]
@@ -139,8 +146,9 @@ def main(argv: list[str]) -> int:
     )
     subparsers.add_parser(
         "ensure",
-        help="run the ensure of every GitHub settings command pyproject.toml configures, except secrets",
-        description="Run the ensure of every GitHub settings command pyproject.toml configures, except secrets, "
+        help="run the ensure of every GitHub settings command pyproject.toml configures, except secrets and variables",
+        description="Run the ensure of every GitHub settings command pyproject.toml configures, "
+        "except secrets and variables, "
         "stopping at the first that fails.",
     )
     subparsers.add_parser(

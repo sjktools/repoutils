@@ -118,6 +118,7 @@ def test_check_screenshots_dir(monkeypatch: pytest.MonkeyPatch, capsys: pytest.C
         (["github-settings"], "{check,ensure,dump}"),
         (["repo-settings"], "{check,ensure,dump}"),
         (["secrets"], "{check,dump,check-workflows,inspect}"),
+        (["variables"], "{check,dump,check-workflows}"),
         (["environments"], "{check,ensure,dump}"),
         (["deploy-keys"], "{check,ensure,dump}"),
         (["rulesets"], "{check,ensure,dump}"),
@@ -332,6 +333,21 @@ def test_this_repos_secrets_match_its_workflows(
     assert cli.main(["secrets", "check-workflows"]) == 0
     assert "The workflows use exactly the" in capsys.readouterr().out
     assert load_secrets(ROOT)["dependabot"] == ["DEPENDABOT_FIX_TOKEN"]
+
+
+def test_variables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    # A project with no variables listed fails before anything talks to GitHub.
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["variables", "check"]) == 1
+    assert "No variables are listed" in capsys.readouterr().err
+
+
+def test_this_repos_variables_match_its_workflows(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(ROOT)
+    assert cli.main(["variables", "check-workflows"]) == 0
+    assert "The workflows use exactly the" in capsys.readouterr().out
 
 
 def test_environments(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

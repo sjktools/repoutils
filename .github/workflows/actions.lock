@@ -29,9 +29,11 @@ workflows:
     '.github/workflows/export-secrets.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/upload-artifact@v7.0.2'
-    '.github/workflows/fix.yml':
+    '.github/workflows/fix-push.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/download-artifact@v8.0.2'
+    '.github/workflows/fix.yml':
+        - 'actions/checkout@v7.0.1'
         - 'actions/upload-artifact@v7.0.2'
         - 'astral-sh/setup-uv@v10.3.3'
         - 'extractions/setup-just@v4.0.0'

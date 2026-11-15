@@ -114,6 +114,13 @@ dependabot = ["DEPENDABOT_FIX_TOKEN"]
 # with the deploy key, and bump-version.yml uses GH_ACTIONS_TOKEN.
 environments.release = ["GH_ACTIONS_TOKEN", "RELEASE_DEPLOY_KEY"]
 
+# The variables `repoutils variables` checks the repository has, names only.
+# SECRETS_EXPORT_KEY is the key export-secrets.yml (#63) will encrypt to, as
+# USER/SHA256:fingerprint; it's unused until that workflow reads it.
+[tool.repoutils.variables]
+actions = ["SECRETS_EXPORT_KEY"]
+unused = ["SECRETS_EXPORT_KEY"]
+
 # The deployment environments `repoutils environments` checks or creates.
 # Only main can deploy to release, which holds the secrets that can tag a
 # release or push a branch (ci.yml's release job and bump-version.yml), so a

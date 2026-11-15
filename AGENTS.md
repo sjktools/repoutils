@@ -31,8 +31,9 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
 - `src/repoutils/github.py` holds the GitHub API helpers the posting commands share.
   They are a request function that never follows a redirect with the token to another host, paginated comment listing, `upsert_comment` and `hide_comments`.
 - `src/repoutils/secret_inspect.py` is `secrets inspect`, which reports what each secret a workflow passes it is, kept apart from the command for length.
-- `src/repoutils/workflows.py` reads the workflows in `.github/workflows` for the secrets they use and each job's environment, without a YAML parser.
-  `secrets check-workflows` uses it.
+- `src/repoutils/workflows.py` reads the workflows in `.github/workflows` for the secrets and variables they use and each job's environment, without a YAML parser.
+  `secrets check-workflows` and `variables check-workflows` use it.
+- `src/repoutils/commands/variables.py` shares its table format, and most of its workings, with `secrets.py`.
 - `src/repoutils/markdown.py` holds the Markdown reading that `check-sentence-per-line` and `check-prose` share.
   It skips code fences and splits a document's prose into sentences.
 - `tests/test_<module>.py` tests each module, and `tests/test_cli.py` runs every command through `cli.main()`.
@@ -116,6 +117,7 @@ The commenter's author association must be `OWNER` or `MEMBER`, so outside colla
 Their `route` jobs run `repoutils claude-route` from a sparse checkout of `src/repoutils/` with the runner's `python3`, installing nothing.
 `[tool.repoutils.secrets]` in `pyproject.toml` lists the secrets these workflows use, which `repoutils secrets check` confirms the repository has.
 Update it when a workflow starts or stops using one, as `just secrets-workflows-check` fails if the two differ.
+A workflow that uses an Actions variable (`vars.NAME`) needs it listed in `[tool.repoutils.variables]` in the same way, which `just variables-workflows-check` checks.
 `inspect-secrets.yml`, run by hand from `main`, reports what each of them is with `repoutils secrets inspect`, with a job for each environment that holds secrets.
 
 ## Issue labels

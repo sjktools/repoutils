@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from repoutils import config
+from repoutils.docstrings import summary
 
 
 def _normalize_package_name(name: str) -> str:
@@ -163,6 +164,6 @@ def main(mode: str) -> int:
 
 
 def run(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="repoutils requirements-min-versions", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="repoutils requirements-min-versions", description=summary(__doc__))
     parser.add_argument("mode", choices=["check", "fix"], help="check fails on a mismatch; fix rewrites pyproject.toml")
     return main(parser.parse_args(argv).mode)

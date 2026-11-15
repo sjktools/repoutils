@@ -24,6 +24,7 @@ from typing import Any
 
 from repoutils import config as repoutils_config
 from repoutils import github as github_comments
+from repoutils.docstrings import summary
 
 # Marks the comment this posts, so the next run can find and edit it. This is
 # the marker with the default comment-prefix; main() uses the configured one.
@@ -299,7 +300,7 @@ def _post(args: argparse.Namespace, repo: str, findings: list[Finding], body: st
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="repoutils added-strings",
-        description=__doc__.splitlines()[0],
+        description=summary(__doc__),
         epilog="Prints the report, or with --post comments it with $GITHUB_TOKEN (default `gh auth token`). "
         "Always exits 0 when it could check, whatever it finds.",
     )

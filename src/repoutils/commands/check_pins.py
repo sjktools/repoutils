@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from repoutils import config
+from repoutils.docstrings import summary
 
 # (action, the `with:` input that pins its version)
 UV = ("astral-sh/setup-uv", "version")
@@ -177,5 +178,5 @@ def main(root: Path = Path()) -> int:
 
 
 def run(argv: list[str]) -> int:
-    argparse.ArgumentParser(prog="repoutils check-pins", description=__doc__.splitlines()[0]).parse_args(argv)
+    argparse.ArgumentParser(prog="repoutils check-pins", description=summary(__doc__)).parse_args(argv)
     return main()

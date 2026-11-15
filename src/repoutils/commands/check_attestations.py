@@ -14,6 +14,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from repoutils.docstrings import summary
+
 SUFFIX = ".publish.attestation"
 
 
@@ -54,6 +56,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def run(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="repoutils check-attestations", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="repoutils check-attestations", description=summary(__doc__))
     parser.add_argument("dist", nargs="?", default="dist", help="directory of distributions (default: dist)")
     return main([parser.parse_args(argv).dist])

@@ -377,7 +377,7 @@ def test_unexpected_responses_fail(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     path: str,
-    response: dict[str, Any],
+    response: dict[str, object],
     message: str,
 ) -> None:
     gh = FakeGitHub(ALL_OFF)

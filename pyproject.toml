@@ -328,6 +328,7 @@ mypy_path = "src"
 explicit_package_bases = true
 warn_unreachable = true
 disallow_any_unimported = true
+disallow_any_decorated = true
 enable_error_code = [
     "deprecated",
     "exhaustive-match",
@@ -341,6 +342,18 @@ enable_error_code = [
     "unused-awaitable",
     "explicit-override",
 ]
+
+# For editors that run pyright (such as VS Code's Pylance); CI runs only mypy.
+# Strict, but without the checks for partially unknown types, which flag code
+# mypy infers fully, such as `field(default_factory=list)` for a `list[str]`.
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+# Not part of strict; matches mypy's explicit-override error code.
+reportImplicitOverride = "error"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+extraPaths = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

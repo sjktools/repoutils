@@ -46,6 +46,7 @@ from pathlib import Path
 
 from repoutils import config, github, workflows
 from repoutils.commands import secrets
+from repoutils.docstrings import summary
 
 SECTION = "variables"
 TABLE = f"[tool.repoutils.{SECTION}]"
@@ -264,7 +265,7 @@ def check(
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="repoutils variables",
-        description=__doc__.split("\n\n")[0].replace("\n", " "),
+        description=summary(__doc__),
         epilog="check and dump read variables with $GITHUB_TOKEN, defaulting to `gh auth token`; "
         "it needs the Variables read permission, and Actions and Environments read for environment variables. "
         "dump prints names only, never values. Organization variables don't count.",

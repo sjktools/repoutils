@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Literal
 
 from repoutils import config
+from repoutils.docstrings import summary
 from repoutils.markdown import Sentence, UnreadableError, prose_sentences, read_text, words
 
 WHERE = "[tool.repoutils.prose]"
@@ -227,7 +228,7 @@ def main(paths: list[str] | None = None, *, exit_zero: bool = False, show_stats:
 
 
 def run(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="repoutils check-prose", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="repoutils check-prose", description=summary(__doc__))
     parser.add_argument("files", nargs="*", metavar="FILE", help=f"files to check (default: {WHERE}'s files)")
     parser.add_argument(
         "--exit-zero",

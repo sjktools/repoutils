@@ -15,6 +15,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from repoutils.docstrings import summary
+
 IGNORE_REVS = Path(".git-blame-ignore-revs")
 HASH_RE = re.compile(r"[0-9a-f]{40}")
 
@@ -64,6 +66,6 @@ def main(target: str = "HEAD") -> int:
 
 
 def run(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="repoutils check-blame-ignore-revs", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="repoutils check-blame-ignore-revs", description=summary(__doc__))
     parser.add_argument("target", nargs="?", default="HEAD", help="the commit every entry must be an ancestor of")
     return main(parser.parse_args(argv).target)

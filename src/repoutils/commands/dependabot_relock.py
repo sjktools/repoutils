@@ -20,6 +20,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+from repoutils.docstrings import summary
+
 LOCK_PATH = Path("uv.lock")
 
 
@@ -84,6 +86,6 @@ def main(base_ref: str) -> int:
 
 
 def run(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="repoutils dependabot-relock", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="repoutils dependabot-relock", description=summary(__doc__))
     parser.add_argument("base_ref", metavar="base-ref", help="the PR's base branch, already fetched, e.g. origin/main")
     return main(parser.parse_args(argv).base_ref)

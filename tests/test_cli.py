@@ -3,6 +3,7 @@ it returns rather than exits, and which need no network and change nothing, so
 every command's ``run()`` is covered and a mistake in it (e.g. dropping the
 exit code) fails a test."""
 
+import importlib
 import io
 import json
 import subprocess
@@ -58,6 +59,18 @@ def test_every_command_module_has_run() -> None:
 
 @pytest.mark.parametrize("name", sorted(cli.COMMANDS))
 def test_every_command_has_help(name: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main([name, "--help"])
+    assert exit_info.value.code == 0
+    assert f"usage: repoutils {name}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("name", sorted(cli.COMMANDS))
+def test_every_command_has_help_without_docstrings(
+    name: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # As under python -OO, which strips docstrings.
+    monkeypatch.setattr(importlib.import_module(f"repoutils.commands.{cli.COMMANDS[name].module}"), "__doc__", None)
     with pytest.raises(SystemExit) as exit_info:
         cli.main([name, "--help"])
     assert exit_info.value.code == 0

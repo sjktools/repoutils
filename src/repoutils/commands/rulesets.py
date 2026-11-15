@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from repoutils import github
+from repoutils.docstrings import summary
 from repoutils.ruleset_format import (
     TABLE,
     Names,
@@ -279,7 +280,7 @@ def ensure(repo: str, token: str, rulesets: dict[str, dict[str, Any]]) -> int:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="repoutils rulesets",
-        description=__doc__.split("\n\n")[0].replace("\n", " "),
+        description=summary(__doc__),
         epilog="Uses $GITHUB_TOKEN, defaulting to `gh auth token`, which must be able to administer the "
         "repository (Actions' GITHUB_TOKEN can't be given that): GitHub shows a ruleset's bypass list only "
         "to a token that can edit it.",

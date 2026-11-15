@@ -37,6 +37,7 @@ import urllib.request
 from collections.abc import Callable
 
 from repoutils import coverage_status
+from repoutils.docstrings import summary
 from repoutils.github import no_redirect_opener
 
 GITHUB_API = "https://api.github.com"
@@ -117,7 +118,7 @@ def _positive(value: str) -> float:
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="repoutils wait-for-base-coverage", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="repoutils wait-for-base-coverage", description=summary(__doc__))
     parser.add_argument("repo", help="the repository, as owner/name")
     parser.add_argument("sha", help="the PR's base commit")
     parser.add_argument(

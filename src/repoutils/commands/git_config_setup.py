@@ -20,6 +20,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from repoutils.docstrings import summary
+
 IGNORE_REVS = ".git-blame-ignore-revs"
 OPTIONAL_PREFIX_VERSION = (2, 53)
 
@@ -68,5 +70,5 @@ def main(cwd: Path = Path()) -> int:
 
 
 def run(argv: list[str]) -> int:
-    argparse.ArgumentParser(prog="repoutils git-config-setup", description=__doc__.splitlines()[0]).parse_args(argv)
+    argparse.ArgumentParser(prog="repoutils git-config-setup", description=summary(__doc__)).parse_args(argv)
     return main()

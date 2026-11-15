@@ -141,9 +141,11 @@ jobs:
       - name: Install dependencies
         run: just sync
 
-      # main's copy of the action, from this workflow's own commit, not the branch's.
+      # The branch's copy of the action, from the merged tree (so it's there even
+      # if the branch predates it), so it installs the extension version the
+      # branch's justfile expects. This job runs the branch's code anyway.
       - name: Install gh-actions-lock
-        uses: $/.github/actions/install-gh-actions-lock
+        uses: ./.github/actions/install-gh-actions-lock
 
       - name: Run fixes
         env:

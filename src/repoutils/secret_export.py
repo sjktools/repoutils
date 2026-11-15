@@ -77,12 +77,14 @@ def export_toml(table: str, values: dict[str, str], header: Iterable[str]) -> st
     return "".join(f"{line}\n" for line in lines)
 
 
-def encrypt(age: str, recipients: list[str], plaintext: bytes, output: Path) -> None:
+def encrypt(age: str, recipients: list[str], plaintext: bytes, output: Path, *, armor: bool = False) -> None:
     """Encrypt plaintext with age to each recipient, into output, passing it on
     age's standard input. age writes to a new temporary file beside output, which
     replaces output only once age succeeds, so a failure leaves any earlier file
-    as it was, and two exports to the same output never share a temporary file."""
-    args = [age, "--encrypt", *(arg for recipient in recipients for arg in ("--recipient", recipient))]
+    as it was, and two exports to the same output never share a temporary file.
+    With armor, age writes PEM-style text rather than binary."""
+    args = [age, "--encrypt", *(["--armor"] if armor else [])]
+    args += [arg for recipient in recipients for arg in ("--recipient", recipient)]
     fd, name = tempfile.mkstemp(dir=output.parent, prefix=f".{output.name}.", suffix=".partial")
     os.close(fd)
     partial = Path(name)
@@ -133,6 +135,7 @@ def export(
     github_keys: list[tuple[str, str]],
     output: Path,
     age: str = "age",
+    armor: bool = False,
     summary: Path | None = None,
     secrets_json: str | None = None,
     now: datetime | None = None,
@@ -165,7 +168,7 @@ def export(
     if run_url:
         header.append(f"From {run_url}")
     plaintext = export_toml(table, {name: values[name.upper()] for name in wanted}, header)
-    encrypt(age, recipients, plaintext.encode(), output)
+    encrypt(age, recipients, plaintext.encode(), output, armor=armor)
     known = {name.upper() for name in listed} | {"GITHUB_TOKEN"}
     unlisted = sorted(name for name in values if name not in known)
     print(f"Exported {len(wanted)} secret(s) to {output}, encrypted to {', '.join(shown)}: {', '.join(wanted)}")
@@ -207,6 +210,9 @@ def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]"
     )
     parser.add_argument("--output", type=Path, required=True, help="the encrypted file to write")
     parser.add_argument("--age", default="age", help="the age program to run (default: age)")
+    parser.add_argument(
+        "--armor", action="store_true", help="write the encrypted file as ASCII text rather than binary"
+    )
     parser.add_argument(
         "--summary",
         type=Path,

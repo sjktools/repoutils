@@ -270,3 +270,11 @@ def test_export_age_failure(
     assert secrets.main(["export", "--recipient", "nope", "--output", "out.age"]) == 1
     assert "age failed (exit 1)" in capsys.readouterr().err
     assert not (tmp_path / "out.age").exists()
+
+
+def test_export_armor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, age: FakeAge) -> None:
+    _project(tmp_path, monkeypatch)
+    assert secrets.main(["export", "--armor", "--recipient", "age1abc", "--output", "out.age"]) == 0
+    assert age.args[:3] == ["age", "--encrypt", "--armor"]
+    assert secrets.main(["export", "--recipient", "age1abc", "--output", "out.age"]) == 0
+    assert "--armor" not in age.args

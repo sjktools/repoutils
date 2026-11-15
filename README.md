@@ -658,6 +658,7 @@ Each `--recipient` is an age recipient (`age1...`) or an SSH public key, passed 
 It fetches the user's keys from `https://github.com/USER.keys`, and fails if none has the fingerprint.
 age can only encrypt to `ssh-ed25519` and `ssh-rsa` keys, and only decrypts with a private key in a file.
 So a key held in a security key or a password manager's agent won't do, and a dedicated `age-keygen` key is an alternative.
+`--armor` makes `age` write ASCII text rather than binary, which `age --decrypt` reads all the same.
 `--age PATH` names the `age` program if it isn't on the `PATH`.
 It writes the names it exported, and the command that decrypts the file, to `$GITHUB_STEP_SUMMARY` (or `--summary FILE`).
 

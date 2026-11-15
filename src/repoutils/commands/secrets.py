@@ -444,6 +444,7 @@ def main(argv: list[str]) -> int:
                 github_keys=args.github_key,
                 output=args.output,
                 age=args.age,
+                armor=args.armor,
                 summary=args.summary,
             )
         # dump doesn't read pyproject.toml, so it works before there are any secrets there.

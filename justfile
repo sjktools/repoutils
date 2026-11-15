@@ -192,7 +192,13 @@ check: lint fmt-check just-fmt-check mypy lint-workflows whitespace-check senten
 # findings that need a hand edit.
 
 # Reformat code and autofix lint issues
-fix: fmt just-fmt lint-fix
+#
+# Regenerate .github/workflows/actions.lock after any uses: changes
+actions-lock:
+    gh actions-lock
+
+# Reformat code, autofix lint issues and refresh the actions lockfile
+fix: fmt just-fmt lint-fix actions-lock
 
 # Run everything CI's build, test and coverage jobs run (except the PR-only patch coverage), on this machine's Python and OS
 ci: lock-check sync check coverage build smoke

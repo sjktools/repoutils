@@ -133,8 +133,12 @@ def test_encrypt(tmp_path: Path, age: FakeAge) -> None:
         "--recipient",
         "ssh-ed25519 AAAA",
         "--output",
-        str(tmp_path / ".out.age.partial"),
+        age.args[-1],
     ]
+    partial = Path(age.args[-1])
+    assert partial.parent == tmp_path
+    assert partial.name.startswith(".out.age.")
+    assert partial.name.endswith(".partial")
     assert age.input == b"plain"
     assert output.read_bytes().startswith(b"age-encryption.org")
     assert list(tmp_path.iterdir()) == [output]
@@ -153,6 +157,16 @@ def test_encrypt_failure_keeps_an_earlier_file(tmp_path: Path, monkeypatch: pyte
 def test_encrypt_without_age(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="can't run .*missing-age: install age"):
         secret_export.encrypt(str(tmp_path / "missing-age"), ["age1abc"], b"plain", tmp_path / "out.age")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_encrypt_uses_a_new_temporary_file_each_time(tmp_path: Path, age: FakeAge) -> None:
+    output = tmp_path / "out.age"
+    secret_export.encrypt("age", ["age1abc"], b"one", output)
+    first = age.args[-1]
+    secret_export.encrypt("age", ["age1abc"], b"two", output)
+    assert age.args[-1] != first
+    assert list(tmp_path.iterdir()) == [output]
 
 
 def test_export_repository(

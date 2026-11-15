@@ -16,6 +16,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.parse
 import urllib.request
 from collections.abc import Iterable
@@ -78,18 +79,23 @@ def export_toml(table: str, values: dict[str, str], header: Iterable[str]) -> st
 
 def encrypt(age: str, recipients: list[str], plaintext: bytes, output: Path) -> None:
     """Encrypt plaintext with age to each recipient, into output, passing it on
-    age's standard input. age writes to a file beside output, which replaces
-    output only once age succeeds, so a failure leaves any earlier file as it was."""
+    age's standard input. age writes to a new temporary file beside output, which
+    replaces output only once age succeeds, so a failure leaves any earlier file
+    as it was, and two exports to the same output never share a temporary file."""
     args = [age, "--encrypt", *(arg for recipient in recipients for arg in ("--recipient", recipient))]
-    partial = output.with_name(f".{output.name}.partial")
+    fd, name = tempfile.mkstemp(dir=output.parent, prefix=f".{output.name}.", suffix=".partial")
+    os.close(fd)
+    partial = Path(name)
     try:
-        result = subprocess.run([*args, "--output", str(partial)], input=plaintext, capture_output=True, check=False)
-    except FileNotFoundError:
-        raise ValueError(f"can't run {age}: install age, or give its path with --age") from None
-    if result.returncode:
+        try:
+            result = subprocess.run([*args, "--output", name], input=plaintext, capture_output=True, check=False)
+        except FileNotFoundError:
+            raise ValueError(f"can't run {age}: install age, or give its path with --age") from None
+        if result.returncode:
+            raise RuntimeError(f"age failed (exit {result.returncode}):\n{result.stderr.decode(errors='replace')}")
+        partial.replace(output)
+    finally:
         partial.unlink(missing_ok=True)
-        raise RuntimeError(f"age failed (exit {result.returncode}):\n{result.stderr.decode(errors='replace')}")
-    partial.replace(output)
 
 
 def _run_url() -> str | None:

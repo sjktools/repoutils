@@ -139,8 +139,13 @@ class Job:
     secrets: frozenset[str]
     # The variables it uses, in upper case.
     variables: frozenset[str] = frozenset()
-    # Those of its variables it uses in one of JOB_LEVEL_KEYS.
-    job_level_variables: frozenset[str] = frozenset()
+    # Each of its variables it uses in one of JOB_LEVEL_KEYS, as (key, name).
+    job_level_uses: frozenset[tuple[str, str]] = frozenset()
+
+    @property
+    def job_level_variables(self) -> frozenset[str]:
+        """The variables it uses in one of JOB_LEVEL_KEYS."""
+        return frozenset(name for _, name in self.job_level_uses)
 
 
 def _indent(line: str) -> int:
@@ -208,19 +213,19 @@ def _without_url(lines: list[str]) -> list[str]:
     return kept
 
 
-def _job_level_lines(body: list[str]) -> list[str]:
-    """The lines of a job's body (the lines under its id) that give one of
-    JOB_LEVEL_KEYS: the key's own line, and the lines indented under it (or
-    the block sequence entries at its indent), leaving out environment's url."""
+def _job_level_lines(body: list[str]) -> dict[str, list[str]]:
+    """The lines of a job's body (the lines under its id) that give each of
+    JOB_LEVEL_KEYS it has: the key's own line, and the lines indented under it
+    (or the block sequence entries at its indent), leaving out environment's url."""
     indent = min((_indent(line) for line in body if line.strip()), default=0)
-    found: list[str] = []
+    found: dict[str, list[str]] = {}
     key: str | None = None
     lines: list[str] = []
     for line in [*body, "end:"]:
         # A sequence entry at the key's own indent is still its value.
         if line.strip() and _indent(line) <= indent and not line.lstrip().startswith("- "):
             if key is not None:
-                found += _without_url(lines) if key == "environment" else lines
+                found[key] = _without_url(lines) if key == "environment" else lines
             match = _BLOCK_KEY_RE.fullmatch(line.strip())
             key = match[2] if match is not None and _indent(line) == indent and match[2] in JOB_LEVEL_KEYS else None
             lines = []
@@ -259,7 +264,11 @@ def jobs(file: str, lines: list[str]) -> list[Job]:
             UNKNOWN if flow else _environment(body[1:]),
             frozenset(uses(body, SECRETS)),
             frozenset(uses(body, VARS)),
-            frozenset() if flow else frozenset(uses(_job_level_lines(body[1:]), VARS)),
+            frozenset()
+            if flow
+            else frozenset(
+                (key, name) for key, lines in _job_level_lines(body[1:]).items() for name in uses(lines, VARS)
+            ),
         )
         for job_id, body, flow in bodies
     ]

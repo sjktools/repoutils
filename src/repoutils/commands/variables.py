@@ -90,10 +90,10 @@ def job_level_uses(listed: secrets.Listed, jobs: Iterable[workflows.Job]) -> lis
     repository = {name.upper() for names in listed.lists.values() for name in names}
     environment_only = {name.upper() for names in (listed.environments or {}).values() for name in names} - repository
     return [
-        f"{name}: used by job {job.id} in {job.file} in its {', '.join(workflows.JOB_LEVEL_KEYS)}, "
-        "where an environment's variables are empty"
+        f"{name}: used by job {job.id} in {job.file} in its {key}, where an environment's variables are empty"
         for job in jobs
-        for name in sorted(job.job_level_variables & environment_only)
+        for key, name in sorted(job.job_level_uses)
+        if name in environment_only
     ]
 
 

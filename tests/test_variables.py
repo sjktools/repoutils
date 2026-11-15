@@ -363,10 +363,8 @@ jobs:
     )
     assert _workflows(tmp_path, monkeypatch, config_text, ci_yml=workflow) == 1
     assert capsys.readouterr().out == (
-        "ENABLED: used by job gated in ci.yml in its if, runs-on, environment, name, "
-        "where an environment's variables are empty\n"
-        "RUNNER: used by job runner in ci.yml in its if, runs-on, environment, name, "
-        "where an environment's variables are empty\n"
+        "ENABLED: used by job gated in ci.yml in its if, where an environment's variables are empty\n"
+        "RUNNER: used by job runner in ci.yml in its runs-on, where an environment's variables are empty\n"
         "2 use(s) of an environment's variable are in a job's if, runs-on, environment, name, "
         "which GitHub evaluates before the job enters its environment: "
         "make it a repository variable (under actions) or move the use into a step.\n"

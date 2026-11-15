@@ -85,3 +85,9 @@ def test_job_level_variables(text: str, job_level: set[str]) -> None:
     lines = [workflows.without_comment(line) for line in text.splitlines()]
     (job,) = workflows.jobs("w.yml", lines)
     assert job.job_level_variables == job_level
+
+
+def test_job_level_uses_name_the_key() -> None:
+    text = "jobs:\n  a:\n    if: vars.A\n    name: ${{ vars.A }} ${{ vars.B }}\n"
+    (job,) = workflows.jobs("w.yml", text.splitlines())
+    assert job.job_level_uses == {("if", "A"), ("name", "A"), ("name", "B")}

@@ -114,7 +114,11 @@ def _expiry(finding: Finding, token: str, headers: Message, now: datetime, withi
     header = headers.get(EXPIRY_HEADER)
     if header is None and token.startswith("ghs_"):
         finding.expires = "an hour after it was made"
-        finding.problems.append("installation tokens expire an hour after they're made, so a stored one stops working")
+        # Like a header giving an expiry later today, which only a threshold above 0 flags.
+        if within > 0:
+            finding.problems.append(
+                "installation tokens expire an hour after they're made, so a stored one stops working"
+            )
         return
     if header is None:
         # Only a personal access token's missing header means it doesn't expire.

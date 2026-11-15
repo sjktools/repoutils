@@ -458,3 +458,11 @@ def test_get(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_inspect_without_a_summary(capsys: pytest.CaptureFixture[str]) -> None:
     assert secret_inspect.inspect("T", ["A"], ["A"], '{"A": "plain"}', within=14, exit_zero=False) == 0
     assert capsys.readouterr().out == "A: not a GitHub token or SSH key\nInspected 1 secret(s), with no problems.\n"
+
+
+def test_installation_token_without_expiry_header_and_no_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = {"total_count": 0, "repositories": []}
+    path = f"/installation/repositories?per_page={secret_inspect.PER_PAGE}"
+    monkeypatch.setattr(secret_inspect, "get", FakeAPI({(path, APP): Response(Message(), body)}))
+    finding = secret_inspect.describe("T", APP, NOW, 0)
+    assert (finding.expires, finding.problems) == ("an hour after it was made", [])

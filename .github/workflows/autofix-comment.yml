@@ -64,8 +64,13 @@ jobs:
           fi
           # The head SHA makes PR Fixes fail if the branch moves on before it
           # starts, rather than fix commits pushed after the comment.
-          gh workflow run fix.yml --repo "$GITHUB_REPOSITORY" --ref "$branch" \
-            -f head-sha="$head_sha"
+          # The run is the branch's own copy of fix.yml, so a branch whose copy
+          # predates fix.yml running on the branch (#67) must merge the base first.
+          if ! gh workflow run fix.yml --repo "$GITHUB_REPOSITORY" --ref "$branch" \
+            -f head-sha="$head_sha"; then
+            echo "::error::Couldn't start PR Fixes on $branch. If the branch's fix.yml still takes a branch input, merge $DEFAULT_BRANCH into it first."
+            exit 1
+          fi
           # PR Fixes has started, so a failed reaction only warns: a red run would
           # suggest commenting again.
           if ! gh api --method POST "repos/$GITHUB_REPOSITORY/issues/comments/$COMMENT_ID/reactions" \

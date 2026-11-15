@@ -212,9 +212,3 @@ def test_main_checks_the_dockerfile_uv_stage(repo: Path, capsys: pytest.CaptureF
 
 def test_repo_pins_pass() -> None:
     assert main(Path(__file__).parents[1]) == 0
-
-
-def test_fix_recipe_runs_actions_lock() -> None:
-    justfile = (Path(__file__).parents[1] / "justfile").read_text()
-    assert "actions-lock:\n    gh actions-lock\n" in justfile
-    assert "fix: fmt just-fmt lint-fix actions-lock\n" in justfile

@@ -59,7 +59,8 @@ A command that posts a PR comment finds its earlier comment by a hidden marker, 
 
 CI (`.github/workflows/ci.yml`) delegates each step to the `justfile`.
 Run `just ci` to run everything CI's test, build and coverage jobs run, or `just --list` for the recipes.
-`just check` runs every check except `lock-check` (which `just ci` runs first) without fixing anything, and `just fix` reformats and applies lint autofixes.
+`just check` runs every check except `lock-check` (which `just ci` runs first) without fixing anything.
+`just fix` reformats, applies lint autofixes and regenerates `actions.lock`, so it needs `gh`, logged in, with the gh-actions-lock extension.
 `just test` runs the tests, and `just coverage` runs them with a coverage report and writes `coverage.xml`.
 Before opening a PR, run `just patch-coverage` too, which reports the changed lines the tests miss, and cover them where a test is worth it.
 
@@ -78,8 +79,9 @@ Fix its cause, or assert it with `pytest.warns` around the call that raises it.
 CI pins its tools, and `just check-pins` fails if a pin differs.
 Every `setup-uv` step sets `version` to the minimum in `pyproject.toml`'s `[tool.uv] required-version`, and every `setup-just` step sets `just-version` to the justfile's `minimum-version`.
 `.github/workflows/actions.lock` pins every action the workflows use to a commit.
-After changing any `uses:`, regenerate it with `gh actions-lock` (the [github/gh-actions-lock](https://github.com/github/gh-actions-lock) extension), and never edit it by hand.
+After changing any `uses:`, regenerate it with `just fix` or `just actions-lock`, which run `gh actions-lock` (the [github/gh-actions-lock](https://github.com/github/gh-actions-lock) extension), and never edit it by hand.
 CI's `actions-lock` job verifies it.
+That job and `fix.yml` install the extension with the `.github/actions/install-gh-actions-lock` action, which pins its release by version and SHA-256.
 
 ## CI and releases
 

@@ -632,6 +632,7 @@ Dependabot secrets can't be inspected, as only Dependabot's runs get them.
 For a value that looks like a GitHub token, it makes a request with that token.
 It reports the token's type (from its prefix), its owner, and its expiry.
 It also reports the scopes of a classic token, and the repositories a fine-grained or app installation token can reach.
+An installation token lasts an hour, so one stored in a secret is always reported as expiring.
 For an OpenSSH private key, it reports the public key's fingerprint, which GitHub's deploy key page shows too.
 Anything else is reported by name only.
 It writes a table to `$GITHUB_STEP_SUMMARY` (or `--summary FILE`), which is as public as the run's logs.

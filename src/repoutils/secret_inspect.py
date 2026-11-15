@@ -42,7 +42,8 @@ TOKEN_TYPES = (
 )
 # A whole token, which is all a header may carry: anything else isn't sent,
 # as urllib's error for a bad header value would quote it.
-_TOKEN_RE = re.compile(r"(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]+")
+# Installation tokens may be JWTs (ghs_APPID_JWT), with dots and hyphens.
+_TOKEN_RE = re.compile(r"(?:gh[pour]_|github_pat_)[A-Za-z0-9_]+|ghs_[A-Za-z0-9_.-]+")
 _PEM_RE = re.compile(r"-----BEGIN ([A-Z0-9 ]+)-----(.*?)-----END \1-----", re.DOTALL)
 _OPENSSH_MAGIC = b"openssh-key-v1\0"
 # The repositories a report names before it only counts the rest.
@@ -109,10 +110,15 @@ def _repos(names: list[str], total: int, more: bool = False) -> str:
     )
 
 
-def _expiry(finding: Finding, headers: Message, now: datetime, within: int) -> None:
+def _expiry(finding: Finding, token: str, headers: Message, now: datetime, within: int) -> None:
     header = headers.get(EXPIRY_HEADER)
+    if header is None and token.startswith("ghs_"):
+        finding.expires = "an hour after it was made"
+        finding.problems.append("installation tokens expire an hour after they're made, so a stored one stops working")
+        return
     if header is None:
-        finding.expires = "never"
+        # Only a personal access token's missing header means it doesn't expire.
+        finding.expires = "never" if token.startswith(("ghp_", "github_pat_")) else "not reported"
         return
     expiry = parse_expiry(header)
     if expiry is None:
@@ -160,7 +166,7 @@ def _inspect_token(finding: Finding, token: str, now: datetime, within: int) -> 
                 repos = get(path, token).body
                 names = [repo["full_name"] for repo in repos]
                 finding.access = _repos(names, len(names), more=len(names) == PER_PAGE)
-        _expiry(finding, response.headers, now, within)
+        _expiry(finding, token, response.headers, now, within)
     except urllib.error.HTTPError as e:
         if e.code == 401:
             e.close()

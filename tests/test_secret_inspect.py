@@ -170,7 +170,32 @@ def test_installation_token(monkeypatch: pytest.MonkeyPatch) -> None:
     path = f"/installation/repositories?per_page={secret_inspect.PER_PAGE}"
     monkeypatch.setattr(secret_inspect, "get", FakeAPI({(path, APP): Response(Message(), body)}))
     finding = secret_inspect.describe("T", APP, NOW, 14)
-    assert (finding.owner, finding.access, finding.expires) == ("o", "1 repositories: o/r", "never")
+    assert (finding.owner, finding.access, finding.expires) == ("o", "1 repositories: o/r", "an hour after it was made")
+    assert finding.problems == ["installation tokens expire an hour after they're made, so a stored one stops working"]
+
+
+def test_installation_token_in_jwt_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    token = "ghs_12345_eyJhbGciOi.eyJpc3Mi-Oi.c2lnbmF0dXJl_x"
+    body = {"total_count": 0, "repositories": []}
+    path = f"/installation/repositories?per_page={secret_inspect.PER_PAGE}"
+    headers = _headers(GitHub_Authentication_Token_Expiration="2026-11-15 01:00:00 UTC")
+    api = FakeAPI({(path, token): Response(headers, body)})
+    monkeypatch.setattr(secret_inspect, "get", api)
+    finding = secret_inspect.describe("T", token, NOW, 0)
+    assert (finding.expires, finding.problems) == ("2026-11-15 (in 0 days)", [])
+    assert api.calls == [(path, token)]
+
+
+@pytest.mark.parametrize("value", ["ghs_abc def", "ghs_abc\rX-Header: 1", "ghp_abc.def"])
+def test_token_with_bad_characters_is_not_sent(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setattr(secret_inspect, "get", FakeAPI({}))
+    finding = secret_inspect.describe("T", value, NOW, 14)
+    assert finding.problems == ["has characters a GitHub token can't, so it wasn't tried"]
+
+
+def test_oauth_token_without_expiry_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(secret_inspect, "get", FakeAPI({("/user", "gho_abc"): _user("alice")}))
+    assert secret_inspect.describe("T", "gho_abc", NOW, 14).expires == "not reported"
 
 
 def test_installation_token_with_no_repositories(monkeypatch: pytest.MonkeyPatch) -> None:

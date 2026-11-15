@@ -671,7 +671,7 @@ It fails if a workflow uses a variable that none of the lists names, or a list n
 A variable that no workflow uses yet on purpose, such as one set up ahead of the workflow that will read it, can go under `unused` as well as its own list.
 `check-workflows` then doesn't report it, but fails once a workflow does use it, so the mark is removed when it's no longer true.
 It also fails if a job uses a variable that only environments hold, without naming one of them as its `environment`.
-GitHub evaluates a job's `if`, `runs-on`, `environment` and `name` before the job enters its environment, so an environment's variables are always empty there ([actions/runner#2472](https://github.com/actions/runner/issues/2472)).
+GitHub evaluates a job's `if`, `runs-on`, `name` and its environment's name before the job enters its environment, so an environment's variables are always empty there ([actions/runner#2472](https://github.com/actions/runner/issues/2472)).
 So `check-workflows` also fails if one of those keys uses a variable that only environments hold, even in a job that deploys to one of them.
 
 ### Deploy keys

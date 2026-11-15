@@ -28,7 +28,8 @@ _ENVIRONMENT_RE = re.compile(r"environment\s*:\s*(.*)")
 UNKNOWN = "${{ }}"
 # The keys of a job that GitHub evaluates before the job reaches a runner and
 # enters its environment, so an environment's variables are empty in them
-# (actions/runner#2472).
+# (actions/runner#2472). Of environment, only its name counts: its url is
+# evaluated when the job ends.
 JOB_LEVEL_KEYS = ("if", "runs-on", "environment", "name")
 
 
@@ -186,18 +187,45 @@ def _environment(body: list[str]) -> str | None:
     return None
 
 
+def _without_url(lines: list[str]) -> list[str]:
+    """An environment's lines (its key's line, and those indented under it)
+    without its url: a block mapping's url entry, or a flow mapping's."""
+    key, *value = _split(lines[0], ":")
+    flow = ":".join(value).strip()
+    if flow.startswith("{") and flow.endswith("}"):
+        entries = [entry for entry in _split(flow[1:-1], ",") if _unquote(_split(entry, ":")[0]) != "url"]
+        return [f"{key}: {{{','.join(entries)}}}"]
+    nested = [line for line in lines[1:] if line.strip()]
+    entry_indent = _indent(nested[0]) if nested else 0
+    kept = [lines[0]]
+    in_url = False
+    for line in nested:
+        if _indent(line) == entry_indent:
+            match = _BLOCK_KEY_RE.fullmatch(line.strip())
+            in_url = match is not None and match[2] == "url"
+        if not in_url:
+            kept.append(line)
+    return kept
+
+
 def _job_level_lines(body: list[str]) -> list[str]:
     """The lines of a job's body (the lines under its id) that give one of
-    JOB_LEVEL_KEYS: the key's own line, and the lines indented under it."""
+    JOB_LEVEL_KEYS: the key's own line, and the lines indented under it (or
+    the block sequence entries at its indent), leaving out environment's url."""
     indent = min((_indent(line) for line in body if line.strip()), default=0)
     found: list[str] = []
-    inside = False
-    for line in body:
-        if line.strip() and _indent(line) <= indent:
+    key: str | None = None
+    lines: list[str] = []
+    for line in [*body, "end:"]:
+        # A sequence entry at the key's own indent is still its value.
+        if line.strip() and _indent(line) <= indent and not line.lstrip().startswith("- "):
+            if key is not None:
+                found += _without_url(lines) if key == "environment" else lines
             match = _BLOCK_KEY_RE.fullmatch(line.strip())
-            inside = match is not None and _indent(line) == indent and match[2] in JOB_LEVEL_KEYS
-        if inside:
-            found.append(line)
+            key = match[2] if match is not None and _indent(line) == indent and match[2] in JOB_LEVEL_KEYS else None
+            lines = []
+        if key is not None:
+            lines.append(line)
     return found
 
 

@@ -88,7 +88,9 @@ jobs:
   # at their bumped, untrusted versions), so this job never references
   # AUTOFIX_TOKEN: a runner gets every secret its job uses, and code from an
   # earlier step could read it from a later one. It hands its commits to the
-  # push job as a Git bundle instead.
+  # push job as a Git bundle instead. It does give `just fix` the job's own
+  # GITHUB_TOKEN, which is read-only here and is all gh actions-lock needs to
+  # read the actions' public repositories.
   fix:
     needs: resolve
     runs-on: ubuntu-latest
@@ -139,7 +141,15 @@ jobs:
       - name: Install dependencies
         run: just sync
 
+      # The branch's copy of the action, from the merged tree (so it's there even
+      # if the branch predates it), so it installs the extension version the
+      # branch's justfile expects. This job runs the branch's code anyway.
+      - name: Install gh-actions-lock
+        uses: ./.github/actions/install-gh-actions-lock
+
       - name: Run fixes
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: just fix
 
       # Bundles the merge commit even if `just fix` changed nothing.

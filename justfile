@@ -222,13 +222,21 @@ dependabot-relock base:
     {{ repoutils }} dependabot-relock {{ base }}
 
 # Run all checks, without fixing anything or running tests
-check: lint fmt-check just-fmt-check mypy lint-workflows whitespace-check sentence-per-line-check prose-check check-pins check-checkout-credentials secrets-workflows-check variables-workflows-check lock-platforms-check requirements-check
+check: lint fmt-check just-fmt-check mypy lint-workflows actions-lock-check whitespace-check sentence-per-line-check prose-check check-pins check-checkout-credentials secrets-workflows-check variables-workflows-check lock-platforms-check requirements-check
+
+# Check .github/workflows/actions.lock pins every action the workflows use, transitive ones included, to a commit that still verifies upstream (needs gh, logged in, with the github/gh-actions-lock extension)
+actions-lock-check:
+    gh actions-lock --verify
+
+# Pin every action the workflows use in .github/workflows/actions.lock (needs gh, logged in, with the github/gh-actions-lock extension)
+actions-lock:
+    gh actions-lock
 
 # Formatting first fixes the long lines it can, so lint-fix stops only on
 # findings that need a hand edit.
 
-# Reformat code and autofix lint issues
-fix: fmt just-fmt lint-fix
+# Reformat code, autofix lint issues and update actions.lock
+fix: fmt just-fmt lint-fix actions-lock
 
 # Run everything CI's build, test and coverage jobs run (except the PR-only patch coverage), on this machine's Python and OS
 ci: lock-check sync check coverage build smoke

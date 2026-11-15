@@ -77,7 +77,15 @@ jobs:
       - name: Install dependencies
         run: just sync
 
+      # For `just check`'s actions-lock-check.
+      - name: Install gh-actions-lock
+        uses: $/.github/actions/install-gh-actions-lock
+
+      # GH_TOKEN is the job's read-only token, which is all gh actions-lock
+      # needs to verify each locked commit against the action's repository.
       - name: Run checks
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: just check
 
       - name: Build package
@@ -444,37 +452,6 @@ jobs:
           fi
           just secrets-export-test "$SECRETS_EXPORT_KEY"
 
-  # Checks .github/workflows/actions.lock, which pins every action the
-  # workflows use, transitive ones included, to a commit. Generate it with
-  # `gh actions-lock` (github/gh-actions-lock) after changing any `uses:`.
-  actions-lock:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-
-      # The release binary, checked against its SHA-256, so a moved tag or a
-      # replaced asset can't swap the verifier. `gh extension install --pin`
-      # takes only a release tag for a precompiled extension. The binary runs
-      # standalone, reading GH_TOKEN as the extension would.
-      - name: Install gh-actions-lock
-        run: |
-          curl -fsSL -o "$RUNNER_TEMP/gh-actions-lock" \
-            https://github.com/github/gh-actions-lock/releases/download/v0.4.1/linux-amd64
-          echo "39deb2fe714dbf74b073d8245fc7f3d50cd0eee18d5c0900e9e849ae933ae17e  $RUNNER_TEMP/gh-actions-lock" | sha256sum -c -
-          chmod +x "$RUNNER_TEMP/gh-actions-lock"
-
-      # Fails if actions.lock is missing an action a workflow uses, or a
-      # locked commit no longer verifies upstream.
-      - name: Verify actions.lock
-        run: '"$RUNNER_TEMP/gh-actions-lock" --verify'
-
   # Runs on a Dependabot branch, whose bumped dependency we don't trust:
   # checkout doesn't persist credentials, and nothing installs the project or
   # its dependencies (the recipes run repoutils from source with the standard
@@ -631,7 +608,7 @@ jobs:
   # another branch, can tag a release. A deploy key's push triggers workflows,
   # so the tag push still starts publish-pypi.yml.
   release:
-    needs: [build, coverage, actions-lock]
+    needs: [build, coverage]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: release

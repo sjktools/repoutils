@@ -332,3 +332,52 @@ def test_check_workflows_reports_job_without_environment(
         "1 use(s) of an environment's variable are in a job that doesn't deploy to it, "
         "so the variable is empty there: give the job that environment.\n"
     )
+
+
+def test_check_workflows_reports_job_level_use(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workflow = """
+jobs:
+  gated:
+    if: ${{ vars.ENABLED == 'true' }}
+    environment: release
+    steps:
+      - run: echo ${{ vars.ENABLED }}
+  runner:
+    runs-on:
+      - ${{ vars.RUNNER }}
+    environment: release
+  shared:
+    name: ${{ vars.SHARED }}
+    environment: release
+  fine:
+    environment: release
+    steps:
+      - if: ${{ vars.ENABLED }}
+        run: echo ${{ vars.RUNNER }}
+"""
+    config_text = (
+        '[tool.repoutils.variables]\nactions = ["SHARED"]\nenvironments.release = ["ENABLED", "RUNNER", "SHARED"]\n'
+    )
+    assert _workflows(tmp_path, monkeypatch, config_text, ci_yml=workflow) == 1
+    assert capsys.readouterr().out == (
+        "ENABLED: used by job gated in ci.yml in its if, runs-on, environment, name, "
+        "where an environment's variables are empty\n"
+        "RUNNER: used by job runner in ci.yml in its if, runs-on, environment, name, "
+        "where an environment's variables are empty\n"
+        "2 use(s) of an environment's variable are in a job's if, runs-on, environment, name, "
+        "which GitHub evaluates before the job enters its environment: "
+        "make it a repository variable (under actions) or move the use into a step.\n"
+    )
+
+
+def test_job_level_use_is_reported_once_without_an_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workflow = "jobs:\n  a:\n    if: vars.ENABLED\n    steps:\n      - run: echo\n"
+    config_text = '[tool.repoutils.variables]\nenvironments.release = ["ENABLED"]\n'
+    assert _workflows(tmp_path, monkeypatch, config_text, ci_yml=workflow) == 1
+    out = capsys.readouterr().out
+    assert "ENABLED: used by job a in ci.yml in its if" in out
+    assert "doesn't deploy to it" not in out

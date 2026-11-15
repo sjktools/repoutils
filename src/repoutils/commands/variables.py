@@ -23,7 +23,9 @@ never their values, to paste into pyproject.toml.
 ``.github/workflows`` uses a variable (``vars.NAME``) the table doesn't name,
 or the table names one that no workflow uses. It also fails if a job uses a
 variable that only environments hold without declaring one of them as its
-``environment``. ``other`` lists the variables workflows use that the
+``environment``, or uses one in a key GitHub evaluates before the job enters
+its environment (``if``, ``runs-on``, ``environment`` or ``name``), where it's
+always empty. ``other`` lists the variables workflows use that the
 repository doesn't hold (such as an organization's), which ``check`` doesn't
 look for.
 
@@ -36,6 +38,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.parse
+from collections.abc import Iterable
 from pathlib import Path
 
 from repoutils import github, workflows
@@ -60,6 +63,20 @@ def checks_anything(listed: secrets.Listed) -> bool:
     return ACTIONS in listed.lists or listed.environments is not None
 
 
+def job_level_uses(listed: secrets.Listed, jobs: Iterable[workflows.Job]) -> list[str]:
+    """A line for each variable that only environments hold that a job uses in
+    one of workflows.JOB_LEVEL_KEYS, where it's empty even if the job deploys
+    to one of those environments."""
+    repository = {name.upper() for names in listed.lists.values() for name in names}
+    environment_only = {name.upper() for names in (listed.environments or {}).values() for name in names} - repository
+    return [
+        f"{name}: used by job {job.id} in {job.file} in its {', '.join(workflows.JOB_LEVEL_KEYS)}, "
+        "where an environment's variables are empty"
+        for job in jobs
+        for name in sorted(job.job_level_variables & environment_only)
+    ]
+
+
 def check_workflows(root: Path = Path()) -> int:
     loaded = load(root)
     listed: dict[str, str] = {}
@@ -68,12 +85,15 @@ def check_workflows(root: Path = Path()) -> int:
     used = workflows.workflow_variables(root)
     unlisted = sorted(set(used) - set(listed))
     unused = sorted(listed[name] for name in set(listed) - set(used))
-    undeclared = secrets.undeclared_environments(loaded, workflows.workflow_jobs(root), lambda job: job.variables)
+    jobs = workflows.workflow_jobs(root)
+    job_level = job_level_uses(loaded, jobs)
+    # A job-level use is reported as such, whatever environment the job declares.
+    undeclared = secrets.undeclared_environments(loaded, jobs, lambda job: job.variables - job.job_level_variables)
     for name in unlisted:
         print(f"{name}: used by {', '.join(used[name])}, but not listed in pyproject.toml")
     for name in unused:
         print(f"{name}: listed in pyproject.toml, but no workflow uses it")
-    for line in undeclared:
+    for line in [*undeclared, *job_level]:
         print(line)
     if unlisted:
         print(
@@ -87,7 +107,13 @@ def check_workflows(root: Path = Path()) -> int:
             f"{len(undeclared)} use(s) of an environment's variable are in a job that doesn't deploy to it, "
             "so the variable is empty there: give the job that environment."
         )
-    if unlisted or unused or undeclared:
+    if job_level:
+        print(
+            f"{len(job_level)} use(s) of an environment's variable are in a job's "
+            f"{', '.join(workflows.JOB_LEVEL_KEYS)}, which GitHub evaluates before the job enters its environment: "
+            f"make it a repository variable (under {ACTIONS}) or move the use into a step."
+        )
+    if unlisted or unused or undeclared or job_level:
         return 1
     print(f"The workflows use exactly the {len(listed)} variable(s) pyproject.toml lists.")
     return 0

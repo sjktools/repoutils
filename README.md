@@ -668,6 +668,8 @@ It leaves out their values, though it reads them.
 It reads the workflows for the variables they use, as `vars.NAME` or `vars['NAME']`.
 It fails if a workflow uses a variable that none of the lists names, or a list names one that no workflow uses.
 It also fails if a job uses a variable that only environments hold, without naming one of them as its `environment`.
+GitHub evaluates a job's `if`, `runs-on`, `environment` and `name` before the job enters its environment, so an environment's variables are always empty there ([actions/runner#2472](https://github.com/actions/runner/issues/2472)).
+So `check-workflows` also fails if one of those keys uses a variable that only environments hold, even in a job that deploys to one of them.
 
 ### Deploy keys
 

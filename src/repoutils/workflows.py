@@ -26,6 +26,10 @@ _ANCHORS_AND_TAGS_RE = re.compile(r"^(?:[&!]\S*\s*)+")
 _ENVIRONMENT_RE = re.compile(r"environment\s*:\s*(.*)")
 # A job's environment that only an expression gives, so it can't be known.
 UNKNOWN = "${{ }}"
+# The keys of a job that GitHub evaluates before the job reaches a runner and
+# enters its environment, so an environment's variables are empty in them
+# (actions/runner#2472).
+JOB_LEVEL_KEYS = ("if", "runs-on", "environment", "name")
 
 
 def without_comment(line: str) -> str:
@@ -134,6 +138,8 @@ class Job:
     secrets: frozenset[str]
     # The variables it uses, in upper case.
     variables: frozenset[str] = frozenset()
+    # Those of its variables it uses in one of JOB_LEVEL_KEYS.
+    job_level_variables: frozenset[str] = frozenset()
 
 
 def _indent(line: str) -> int:
@@ -180,6 +186,21 @@ def _environment(body: list[str]) -> str | None:
     return None
 
 
+def _job_level_lines(body: list[str]) -> list[str]:
+    """The lines of a job's body (the lines under its id) that give one of
+    JOB_LEVEL_KEYS: the key's own line, and the lines indented under it."""
+    indent = min((_indent(line) for line in body if line.strip()), default=0)
+    found: list[str] = []
+    inside = False
+    for line in body:
+        if line.strip() and _indent(line) <= indent:
+            match = _BLOCK_KEY_RE.fullmatch(line.strip())
+            inside = match is not None and _indent(line) == indent and match[2] in JOB_LEVEL_KEYS
+        if inside:
+            found.append(line)
+    return found
+
+
 def jobs(file: str, lines: list[str]) -> list[Job]:
     """The jobs in a workflow's lines (without comments), read by indentation, as
     YAML's block style lays them out. A workflow written another way has none."""
@@ -210,6 +231,7 @@ def jobs(file: str, lines: list[str]) -> list[Job]:
             UNKNOWN if flow else _environment(body[1:]),
             frozenset(uses(body, SECRETS)),
             frozenset(uses(body, VARS)),
+            frozenset() if flow else frozenset(uses(_job_level_lines(body[1:]), VARS)),
         )
         for job_id, body, flow in bodies
     ]

@@ -61,3 +61,19 @@ from repoutils import workflows
 def test_jobs(text: str, jobs: list[tuple[str, str | None]]) -> None:
     lines = [workflows.without_comment(line) for line in text.splitlines()]
     assert [(job.id, job.environment) for job in workflows.jobs("w.yml", lines)] == jobs
+
+
+@pytest.mark.parametrize(
+    ("text", "job_level"),
+    [
+        ("jobs:\n  a:\n    if: vars.A\n    steps:\n      - if: vars.B\n", {"A"}),
+        ("jobs:\n  a:\n    runs-on: >-\n      ${{ vars.A }}\n    env:\n      X: ${{ vars.B }}\n", {"A"}),
+        ("jobs:\n  a:\n    environment:\n      name: ${{ vars.A }}\n      url: ${{ vars.B }}\n", {"A", "B"}),
+        ("jobs:\n  a:\n    steps:\n      - name: ${{ vars.A }}\n", set()),
+        ("jobs:\n  a: {if: vars.A}\n", set()),
+    ],
+)
+def test_job_level_variables(text: str, job_level: set[str]) -> None:
+    lines = [workflows.without_comment(line) for line in text.splitlines()]
+    (job,) = workflows.jobs("w.yml", lines)
+    assert job.job_level_variables == job_level

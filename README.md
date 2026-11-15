@@ -638,7 +638,7 @@ Anything else is reported by name only.
 It writes a table to `$GITHUB_STEP_SUMMARY` (or `--summary FILE`), which is as public as the run's logs.
 
 It fails if GitHub rejects a token, if a token expires in fewer than 14 days (`--expires-within DAYS`), or if a token has whitespace around it.
-`--exit-zero` forgives those, but a request that fails for any other reason still fails the command.
+`--exit-zero` forgives those, but a request that fails for any other reason, or an expiry it can't read, still fails the command.
 
 ### Deploy keys
 

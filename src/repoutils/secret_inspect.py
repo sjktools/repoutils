@@ -126,7 +126,9 @@ def _expiry(finding: Finding, token: str, headers: Message, now: datetime, withi
         return
     expiry = parse_expiry(header)
     if expiry is None:
+        # Fail closed: without the date, the expiry check can't tell whether it passes.
         finding.expires = header.strip()
+        finding.error = f"can't read the expiry header {EXPIRY_HEADER}: {header.strip()!r}"
         return
     days = (expiry - now).days
     finding.expires = f"{expiry:%Y-%m-%d} (in {days} days)" if days >= 0 else f"{expiry:%Y-%m-%d} (expired)"
@@ -204,7 +206,8 @@ def ssh_public_key(value: str) -> tuple[str, str, bool] | None:
         cipher, offset = _read_string(data, len(_OPENSSH_MAGIC))
         _, offset = _read_string(data, offset)  # kdfname
         _, offset = _read_string(data, offset)  # kdfoptions
-        offset += 4  # the number of keys
+        # The number of keys. Only the first is read: a deploy key's file holds one.
+        offset += 4
         blob, _ = _read_string(data, offset)
         key_type, _ = _read_string(blob, 0)
     except (binascii.Error, ValueError, struct.error):

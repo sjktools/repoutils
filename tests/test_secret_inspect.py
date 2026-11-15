@@ -126,7 +126,6 @@ def test_classic_token_without_expiry_or_scopes(monkeypatch: pytest.MonkeyPatch)
         ("2026-11-28 00:00:00 UTC", "2026-11-28 (in 13 days)", ["expires in 13 day(s), on 2026-11-28"]),
         ("2026-11-29 00:00:00 UTC", "2026-11-29 (in 14 days)", []),
         ("2026-11-14 00:00:00 UTC", "2026-11-14 (expired)", ["expired"]),
-        ("soon", "soon", []),
     ],
 )
 def test_expiry(monkeypatch: pytest.MonkeyPatch, expiry: str, expires: str, problems: list[str]) -> None:
@@ -466,3 +465,11 @@ def test_installation_token_without_expiry_header_and_no_threshold(monkeypatch: 
     monkeypatch.setattr(secret_inspect, "get", FakeAPI({(path, APP): Response(Message(), body)}))
     finding = secret_inspect.describe("T", APP, NOW, 0)
     assert (finding.expires, finding.problems) == ("an hour after it was made", [])
+
+
+def test_unreadable_expiry_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = FakeAPI({("/user", CLASSIC): _user("alice", GitHub_Authentication_Token_Expiration="soon")})
+    monkeypatch.setattr(secret_inspect, "get", api)
+    finding = secret_inspect.describe("T", CLASSIC, NOW, 14)
+    assert (finding.expires, finding.problems) == ("soon", [])
+    assert finding.error == "can't read the expiry header GitHub-Authentication-Token-Expiration: 'soon'"

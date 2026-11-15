@@ -78,15 +78,18 @@ def export_toml(table: str, values: dict[str, str], header: Iterable[str]) -> st
 
 def encrypt(age: str, recipients: list[str], plaintext: bytes, output: Path) -> None:
     """Encrypt plaintext with age to each recipient, into output, passing it on
-    age's standard input. Nothing is left at output if age fails."""
+    age's standard input. age writes to a file beside output, which replaces
+    output only once age succeeds, so a failure leaves any earlier file as it was."""
     args = [age, "--encrypt", *(arg for recipient in recipients for arg in ("--recipient", recipient))]
+    partial = output.with_name(f".{output.name}.partial")
     try:
-        result = subprocess.run([*args, "--output", str(output)], input=plaintext, capture_output=True, check=False)
+        result = subprocess.run([*args, "--output", str(partial)], input=plaintext, capture_output=True, check=False)
     except FileNotFoundError:
         raise ValueError(f"can't run {age}: install age, or give its path with --age") from None
     if result.returncode:
-        output.unlink(missing_ok=True)
+        partial.unlink(missing_ok=True)
         raise RuntimeError(f"age failed (exit {result.returncode}):\n{result.stderr.decode(errors='replace')}")
+    partial.replace(output)
 
 
 def _run_url() -> str | None:

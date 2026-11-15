@@ -133,18 +133,21 @@ def test_encrypt(tmp_path: Path, age: FakeAge) -> None:
         "--recipient",
         "ssh-ed25519 AAAA",
         "--output",
-        str(output),
+        str(tmp_path / ".out.age.partial"),
     ]
     assert age.input == b"plain"
-    assert output.exists()
+    assert output.read_bytes().startswith(b"age-encryption.org")
+    assert list(tmp_path.iterdir()) == [output]
 
 
-def test_encrypt_failure_leaves_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_encrypt_failure_keeps_an_earlier_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(subprocess, "run", FakeAge(returncode=1))
     output = tmp_path / "out.age"
+    output.write_bytes(b"an earlier backup")
     with pytest.raises(RuntimeError, match="age failed \\(exit 1\\):\nage: error: bad recipient"):
         secret_export.encrypt("age", ["age1abc"], b"plain", output)
-    assert not output.exists()
+    assert output.read_bytes() == b"an earlier backup"
+    assert list(tmp_path.iterdir()) == [output]
 
 
 def test_encrypt_without_age(tmp_path: Path) -> None:

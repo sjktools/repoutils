@@ -6,7 +6,10 @@ where ``name`` is ``--name`` and ``comment-prefix`` comes from
 ``[tool.repoutils]`` (default ``repoutils``), so the next run can find it. By
 default the next run edits that comment in place; with ``--hide-previous`` it
 posts a new comment and hides the earlier ones as outdated instead, which suits
-reports whose history is worth keeping, such as exolot's findings.
+reports whose history is worth keeping, such as exolot's findings. With
+``--update-only`` it edits the earlier comment but never posts a first one, so
+a run can mark a problem an earlier run reported as resolved without adding a
+comment where there was none.
 
 CI runs this in a job with a write-capable token that runs nothing else, so it
 uses only the standard library."""
@@ -41,7 +44,8 @@ def _post(args: argparse.Namespace, marker: str) -> str:
         hidden = github_comments.hide_comments(repo, args.pr, marker, token, keep=posted["node_id"])
         return f"Posted {args.body} to PR #{args.pr}, and hid {hidden} earlier comment(s)."
     author = args.author or github_comments.request("GET", f"{github_comments.API_URL}/user", token)["login"]
-    github_comments.upsert_comment(repo, args.pr, author, marker, body, token)
+    if not github_comments.upsert_comment(repo, args.pr, author, marker, body, token, create=not args.update_only):
+        return f"Not posting: PR #{args.pr} has no earlier comment to update."
     return f"Posted {args.body} to PR #{args.pr}."
 
 
@@ -60,6 +64,11 @@ def main(argv: list[str]) -> int:
         help="post a new comment and hide earlier ones, rather than edit the earlier one",
     )
     parser.add_argument(
+        "--update-only",
+        action="store_true",
+        help="edit the earlier comment, but post nothing if there's none",
+    )
+    parser.add_argument(
         "--repo",
         default=os.environ.get("GITHUB_REPOSITORY"),
         help="owner/name (default: $GITHUB_REPOSITORY, else gh's current repo)",
@@ -74,6 +83,8 @@ def main(argv: list[str]) -> int:
         "(default: looked up, which only works for a user token)",
     )
     args = parser.parse_args(argv)
+    if args.update_only and args.hide_previous:
+        parser.error("--update-only edits the earlier comment, so it can't go with --hide-previous")
 
     try:
         print(_post(args, config.marker(args.name)))

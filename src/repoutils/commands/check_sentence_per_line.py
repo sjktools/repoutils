@@ -15,6 +15,7 @@ import re
 from pathlib import Path
 
 from repoutils import config
+from repoutils.docstrings import summary
 from repoutils.markdown import INLINE_CODE_RE, UnreadableError, read_text, unfenced_lines
 
 DEFAULT_FILES = ["AGENTS.md", "README.md"]
@@ -87,7 +88,5 @@ def main() -> int:
 
 
 def run(argv: list[str]) -> int:
-    argparse.ArgumentParser(prog="repoutils check-sentence-per-line", description=__doc__.splitlines()[0]).parse_args(
-        argv
-    )
+    argparse.ArgumentParser(prog="repoutils check-sentence-per-line", description=summary(__doc__)).parse_args(argv)
     return main()

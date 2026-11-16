@@ -43,6 +43,7 @@ from typing import Any
 
 from repoutils import config, github
 from repoutils.commands import environments as environments_command
+from repoutils.docstrings import summary
 
 TABLE = "[tool.repoutils.deploy-keys]"
 # Deploy keys per page of the list (GitHub's most).
@@ -437,7 +438,7 @@ def dump(repo: str, token: str) -> int:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="repoutils deploy-keys",
-        description=__doc__.split("\n\n")[0].replace("\n", " "),
+        description=summary(__doc__),
         epilog="Uses $GITHUB_TOKEN, defaulting to `gh auth token`. It needs the Administration permission "
         "(write for ensure). A repository secret needs Secrets (write for ensure); an environment's secret "
         "needs Environments (write for ensure) and Actions read.",

@@ -33,6 +33,7 @@ dev = [
     "diff-cover>=11.0.1",
     "jactionlint>=2.5.0",
     "mypy>=2.4.1",
+    "pyright>=1.1.414",
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0",
@@ -328,6 +329,7 @@ mypy_path = "src"
 explicit_package_bases = true
 warn_unreachable = true
 disallow_any_unimported = true
+disallow_any_decorated = true
 enable_error_code = [
     "deprecated",
     "exhaustive-match",
@@ -341,6 +343,29 @@ enable_error_code = [
     "unused-awaitable",
     "explicit-override",
 ]
+
+# `just pyright`, alongside mypy: it catches some things mypy and ruff don't,
+# such as a module's `__doc__` being None, or an unused `import a.b` beside a
+# used `import a.c`. Strict, but without the checks for unknown types, which
+# mostly flag JSON values narrowed with isinstance, and code mypy infers fully,
+# such as `field(default_factory=list)` for a `list[str]`.
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+# Not part of strict; matches mypy's explicit-override error code.
+reportImplicitOverride = "error"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownLambdaType = false
+extraPaths = ["src"]
+
+# Tests may reach into private names.
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+# The repo root too, as some tests import helpers from other tests.
+extraPaths = [".", "src"]
+reportPrivateUsage = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

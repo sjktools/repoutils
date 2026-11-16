@@ -4,7 +4,6 @@ import subprocess
 import sys
 import tempfile
 import urllib.error
-import urllib.request
 from collections.abc import Sequence
 from email.message import Message
 from pathlib import Path

@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from repoutils import config, github
+from repoutils.docstrings import summary
 
 TABLE = "[tool.repoutils.security-settings]"
 # How long ensure waits for GitHub to finish turning on CodeQL default setup.
@@ -341,7 +342,7 @@ def ensure(repo: str, token: str, settings: dict[Setting, bool]) -> int:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="repoutils security-settings",
-        description=__doc__.split("\n\n")[0].replace("\n", " "),
+        description=summary(__doc__),
         epilog="Uses $GITHUB_TOKEN, defaulting to `gh auth token`; it needs a token that can administer the "
         "repository, which Actions' GITHUB_TOKEN can't be given.",
     )

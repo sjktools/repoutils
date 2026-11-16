@@ -3,6 +3,7 @@ each job's environment, without a YAML parser. Stdlib-only, like every repoutils
 
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -237,7 +238,7 @@ def _job_level_lines(body: list[str]) -> dict[str, list[str]]:
     return found
 
 
-def jobs(file: str, lines: list[str]) -> list[Job]:
+def jobs(file: str, lines: Sequence[str]) -> list[Job]:
     """The jobs in a workflow's lines (without comments), read by indentation, as
     YAML's block style lays them out. A workflow written another way has none."""
     start = next((i for i, line in enumerate(lines) if _JOBS_RE.fullmatch(line.rstrip())), None)

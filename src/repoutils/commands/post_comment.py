@@ -23,6 +23,7 @@ from pathlib import Path
 
 from repoutils import config
 from repoutils import github as github_comments
+from repoutils.docstrings import summary
 
 
 def _post(args: argparse.Namespace, marker: str) -> str:
@@ -52,7 +53,7 @@ def _post(args: argparse.Namespace, marker: str) -> str:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="repoutils post-comment",
-        description=__doc__.splitlines()[0] + " " + __doc__.splitlines()[1],
+        description=summary(__doc__),
         epilog="Comments with $GITHUB_TOKEN, defaulting to `gh auth token`.",
     )
     parser.add_argument("pr", type=int, help="pull request number")

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from repoutils import config
+from repoutils.docstrings import summary
 
 
 # How _classify_platform treats an (OS, arch) pair, as split by _split_platform.
@@ -142,5 +143,5 @@ def main() -> int:
 
 
 def run(argv: list[str]) -> int:
-    argparse.ArgumentParser(prog="repoutils check-lock-platforms", description=__doc__.splitlines()[0]).parse_args(argv)
+    argparse.ArgumentParser(prog="repoutils check-lock-platforms", description=summary(__doc__)).parse_args(argv)
     return main()

@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, override
 
 from repoutils import config, github
+from repoutils.docstrings import summary
 
 TABLE = "[tool.repoutils.actions-settings]"
 SUB_TABLES = ("selected-actions", "oidc")
@@ -376,7 +377,7 @@ def dump(repo: str, token: str) -> int:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="repoutils actions-settings",
-        description=__doc__.split("\n\n")[0].replace("\n", " "),
+        description=summary(__doc__),
         epilog="Uses $GITHUB_TOKEN, defaulting to `gh auth token`. It needs the Administration permission, "
         "and Actions for the oidc settings (write for ensure); Actions' GITHUB_TOKEN can't be given Administration.",
     )

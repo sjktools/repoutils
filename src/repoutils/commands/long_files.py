@@ -21,6 +21,7 @@ from typing import TypeGuard
 
 from repoutils import config as repoutils_config
 from repoutils import github as github_comments
+from repoutils.docstrings import summary
 
 # Marks the comment this posts, so the next run can find and edit it. This is
 # the marker with the default comment-prefix; main() uses the configured one.
@@ -253,7 +254,7 @@ def _post(args: argparse.Namespace, repo: str, report: Report, body: str, marker
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="repoutils long-files",
-        description=__doc__.splitlines()[0],
+        description=summary(__doc__),
         epilog="Prints the report, or with --post comments it with $GITHUB_TOKEN (default `gh auth token`).",
     )
     parser.add_argument(

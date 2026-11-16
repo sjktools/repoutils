@@ -104,7 +104,7 @@ class FakeGitHub:
         self.reads.append(path)
         if method != "GET":
             self.writes.append((method, path, json_body))
-            stored = {k: v for k, v in json_body.items()} | {"source_type": "Repository"}
+            stored: dict[str, Any] = {k: v for k, v in json_body.items()} | {"source_type": "Repository"}
             stored["rules"] = [r for r in stored["rules"] if r["type"] not in self.ignored]
             if method == "POST":
                 stored["id"] = max(self.rulesets, default=0) + 10

@@ -236,7 +236,7 @@ def test_reads_every_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(labels, "PER_PAGE", 2)
     gh = FakeGitHub([_label("other")] + MATCHING)
     assert _run(tmp_path, monkeypatch, gh, ["check"]) == 0
-    assert [url[-1] for method, url, _ in gh.calls] == ["1", "2", "3"]
+    assert [url[-1] for _, url, _ in gh.calls] == ["1", "2", "3"]
 
 
 def test_empty_description_in_config_clears_only_with_strict() -> None:

@@ -10,6 +10,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from repoutils.docstrings import summary
+
 
 def _text_files() -> list[str]:
     # `--eol` prefixes each path with Git's own view of its contents, e.g.
@@ -71,5 +73,5 @@ def main() -> int:
 
 
 def run(argv: list[str]) -> int:
-    argparse.ArgumentParser(prog="repoutils check-whitespace", description=__doc__.splitlines()[0]).parse_args(argv)
+    argparse.ArgumentParser(prog="repoutils check-whitespace", description=summary(__doc__)).parse_args(argv)
     return main()

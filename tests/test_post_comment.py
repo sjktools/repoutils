@@ -4,7 +4,6 @@ import shutil
 import subprocess
 import tempfile
 import urllib.error
-import urllib.request
 from email.message import Message
 from pathlib import Path
 from typing import Any, NoReturn
@@ -43,7 +42,7 @@ class FakeGitHub:
         return {"data": {"repository": {"pullRequest": {"comments": comments}}}}
 
     def hidden(self) -> list[str]:
-        return [b["variables"]["id"] for m, u, b in self.calls if b and "minimizeComment" in b.get("query", "")]
+        return [b["variables"]["id"] for _, _, b in self.calls if b and "minimizeComment" in b.get("query", "")]
 
 
 def _exolot_comment(
@@ -99,7 +98,7 @@ class PostCommentHidePreviousTests(TestCase):
         gh = FakeGitHub([])
         code, out, _ = self._run(["--repo", "o/r", "7", str(self._report()), "--commit", "def", *HIDE], gh)
         self.assertEqual(code, 0)
-        self.assertEqual([m for m, u, b in gh.calls], ["GET"])
+        self.assertEqual([m for m, _, _ in gh.calls], ["GET"])
         self.assertIn("Not posting", out)
 
     def test_reports_graphql_errors(self) -> None:
@@ -173,3 +172,55 @@ class PostCommentEditTests(TestCase):
         with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
             post_comment_main(["7", "r.md"])
         self.assertIn("--name", err.getvalue())
+
+    def _update_only(self, existing: list[dict[str, Any]]) -> tuple[int, str, list[tuple[str, str, Any]]]:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "r.md"
+            report.write_text("fixed\n")
+            calls: list[tuple[str, str, Any]] = []
+
+            def request(method: str, url: str, token: str, *, json_body: Any = None, **kwargs: object) -> Any:
+                calls.append((method, url, json_body))
+                if method == "GET" and url.endswith("/comments?per_page=100&page=1"):
+                    return existing
+                return []
+
+            out = io.StringIO()
+            argv = ["7", str(report), "--repo", "o/r", "--name", "autofix", "--author", "bot", "--update-only"]
+            with (
+                contextlib.chdir(tmp),
+                mock.patch.dict("os.environ", {"GITHUB_TOKEN": "tok"}),
+                mock.patch.object(github_comments, "request", request),
+                contextlib.redirect_stdout(out),
+            ):
+                code = post_comment_main(argv)
+        return code, out.getvalue(), [(m, u, b) for m, u, b in calls if m != "GET"]
+
+    def test_update_only_edits_the_earlier_comment(self) -> None:
+        code, out, writes = self._update_only(
+            [{"id": 5, "user": {"login": "bot"}, "body": "<!-- repoutils-autofix -->\nfailed"}]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            writes,
+            [
+                (
+                    "PATCH",
+                    "https://api.github.com/repos/o/r/issues/comments/5",
+                    {"body": "<!-- repoutils-autofix -->\nfixed\n"},
+                )
+            ],
+        )
+        self.assertIn("Posted", out)
+
+    def test_update_only_posts_nothing_without_an_earlier_comment(self) -> None:
+        code, out, writes = self._update_only([])
+        self.assertEqual(code, 0)
+        self.assertEqual(writes, [])
+        self.assertIn("no earlier comment to update", out)
+
+    def test_update_only_rejects_hide_previous(self) -> None:
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+            post_comment_main(["7", "r.md", "--name", "x", "--update-only", "--hide-previous"])
+        self.assertIn("can't go with --hide-previous", err.getvalue())

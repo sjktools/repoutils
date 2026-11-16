@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from repoutils import config, github
+from repoutils.docstrings import summary
 
 TABLE = "[[tool.repoutils.labels]]"
 # GitHub refuses a longer description.
@@ -241,7 +242,7 @@ def ensure(repo: str, token: str, labels: list[Label], *, strict: bool) -> int:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="repoutils labels",
-        description=__doc__.split("\n\n")[0].replace("\n", " "),
+        description=summary(__doc__),
         epilog="Reads labels with $GITHUB_TOKEN, defaulting to `gh auth token`; ensure needs issues: write.",
     )
     subparsers = parser.add_subparsers(dest="mode", required=True, metavar="{check,ensure,dump}")

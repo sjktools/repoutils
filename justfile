@@ -139,6 +139,10 @@ just-fmt-check:
 mypy:
     uv run --group dev mypy
 
+# Type-check src and tests with pyright (strict; see pyproject.toml's [tool.pyright])
+pyright:
+    uv run --group dev pyright
+
 # Lint the GitHub Actions workflows with jactionlint
 lint-workflows:
     uv run --group dev jactionlint
@@ -222,7 +226,7 @@ dependabot-relock base:
     {{ repoutils }} dependabot-relock {{ base }}
 
 # Run all checks, without fixing anything or running tests
-check: lint fmt-check just-fmt-check mypy lint-workflows actions-lock-check whitespace-check sentence-per-line-check prose-check check-pins check-checkout-credentials secrets-workflows-check variables-workflows-check lock-platforms-check requirements-check
+check: lint fmt-check just-fmt-check mypy pyright lint-workflows actions-lock-check whitespace-check sentence-per-line-check prose-check check-pins check-checkout-credentials secrets-workflows-check variables-workflows-check lock-platforms-check requirements-check
 
 # Check .github/workflows/actions.lock pins every action the workflows use, transitive ones included, to a commit that still verifies upstream (needs gh, logged in, with the github/gh-actions-lock extension)
 actions-lock-check:

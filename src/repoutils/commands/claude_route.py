@@ -22,6 +22,8 @@ import argparse
 import re
 import sys
 
+from repoutils.docstrings import summary
+
 # "@claude" as a word of its own, at the start (after any whitespace), and
 # then followed by whitespace, punctuation that ends a phrase or the end:
 # "@claude, fix this" or "@claude." count, "@claudebot" doesn't.
@@ -48,5 +50,5 @@ def main() -> int:
 
 
 def run(argv: list[str]) -> int:
-    argparse.ArgumentParser(prog="repoutils claude-route", description=__doc__.splitlines()[0]).parse_args(argv)
+    argparse.ArgumentParser(prog="repoutils claude-route", description=summary(__doc__)).parse_args(argv)
     return main()

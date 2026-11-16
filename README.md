@@ -43,7 +43,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `requirements-min-versions` | Checks or updates the `>=` minimum versions in `pyproject.toml` to match the versions in `uv.lock`. |
 | `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
 | `check-lock-platforms` | Fails if `uv.lock` contains wheels for platforms that the project does not allow. |
-| `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment or hides it when you pass `--hide-previous`. |
+| `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment (posting nothing with `--update-only` when none exists) or hides it when you pass `--hide-previous`. |
 | `added-strings` | Lists the added lines in a pull request that match strings configured in `pyproject.toml` (such as `# noqa:`), or posts the list to the pull request. |
 | `post-patch-coverage` | Formats the Markdown patch coverage report from `diff-cover`, adds the project coverage and the change from the base commit, posts the report to a pull request, and warns when coverage is below a limit. |
 | `post-coverage-status` | Posts the project and patch coverage of a commit as GitHub commit statuses for information only. |

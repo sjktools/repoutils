@@ -624,10 +624,12 @@ jobs:
           fetch-tags: true
 
       # Keep version in step with pyproject.toml's [tool.uv] required-version.
+      # No cache, so nothing a cache entry holds runs alongside the deploy key.
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.3
         with:
           version: "0.13.6"
+          enable-cache: false
 
       - name: Tag version
         run: |

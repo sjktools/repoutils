@@ -16,6 +16,7 @@ import subprocess
 from pathlib import Path
 
 from repoutils import config
+from repoutils.docstrings import summary
 
 DEFAULT_DIR = "screenshots"
 RULES = ["*", "!/.gitignore"]
@@ -71,6 +72,6 @@ def main(directory: str | None = None) -> int:
 
 
 def run(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="repoutils check-screenshots-dir", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="repoutils check-screenshots-dir", description=summary(__doc__))
     parser.add_argument("--dir", help=f"the screenshots directory (default: from config, else {DEFAULT_DIR})")
     return main(parser.parse_args(argv).dir)

@@ -14,7 +14,7 @@ import argparse
 import os
 import subprocess
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -31,6 +31,7 @@ from repoutils.commands import (
     security_settings,
     variables,
 )
+from repoutils.docstrings import summary
 
 
 def _has_table(name: str) -> Callable[[dict[str, Any]], bool]:
@@ -96,7 +97,7 @@ def _selected(mode: str, table: dict[str, Any]) -> list[Command]:
 
 
 @contextmanager
-def _token(token: str) -> Iterator[None]:
+def _token(token: str) -> Generator[None]:
     """GITHUB_TOKEN set to token while the commands run, so they don't each ask gh for it."""
     old = os.environ.get("GITHUB_TOKEN")
     os.environ["GITHUB_TOKEN"] = token
@@ -136,7 +137,7 @@ def _run(commands: list[Command], mode: str, repo: str, *, exit_zero: bool, fail
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="repoutils github-settings",
-        description=__doc__.split("\n\n")[0].replace("\n", " "),
+        description=summary(__doc__),
     )
     subparsers = parser.add_subparsers(dest="mode", required=True, metavar="{check,ensure,dump}")
     check_parser = subparsers.add_parser(

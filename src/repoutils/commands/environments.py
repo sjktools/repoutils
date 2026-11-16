@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from repoutils import config, github
+from repoutils.docstrings import summary
 
 TABLE = "[tool.repoutils.environments]"
 # Environments or branch policies per page of a list (GitHub's most).
@@ -417,7 +418,7 @@ def ensure(repo: str, token: str, environments: list[Environment]) -> int:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="repoutils environments",
-        description=__doc__.split("\n\n")[0].replace("\n", " "),
+        description=summary(__doc__),
         epilog="Uses $GITHUB_TOKEN, defaulting to `gh auth token`; ensure needs a token that can administer "
         "the repository, which Actions' GITHUB_TOKEN can't be given.",
     )

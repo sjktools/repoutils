@@ -50,6 +50,7 @@ from typing import Any
 
 from repoutils import config, github, secret_export, secret_inspect, workflows
 from repoutils.commands import environments as environments_command
+from repoutils.docstrings import summary
 
 TABLE = "[tool.repoutils.secrets]"
 # Secrets per page of the list (GitHub's most).
@@ -377,7 +378,7 @@ def inspect(listed: Listed, environment: str | None, *, within: int, exit_zero: 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="repoutils secrets",
-        description=__doc__.split("\n\n")[0].replace("\n", " "),
+        description=summary(__doc__),
         epilog="check and dump read secret names (never values) with $GITHUB_TOKEN, defaulting to `gh auth token`; "
         "it needs the Secrets and Dependabot secrets read permissions, "
         "and Actions and Environments read for environment secrets. "

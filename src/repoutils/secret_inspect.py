@@ -346,7 +346,8 @@ def _days(text: str) -> int:
     return days
 
 
-def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+# argparse has no public name for the type add_subparsers() returns.
+def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:  # pyright: ignore[reportPrivateUsage]
     """Add the inspect subcommand and its options."""
     inspect_parser = subparsers.add_parser(
         "inspect",

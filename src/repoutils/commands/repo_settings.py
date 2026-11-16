@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from repoutils import config, github
+from repoutils.docstrings import summary
 
 TABLE = "[tool.repoutils.repo-settings]"
 
@@ -273,7 +274,7 @@ def ensure(repo: str, token: str, settings: dict[Setting, Any]) -> int:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="repoutils repo-settings",
-        description=__doc__.split("\n\n")[0].replace("\n", " "),
+        description=summary(__doc__),
         epilog="Uses $GITHUB_TOKEN, defaulting to `gh auth token`; ensure needs a token that can administer "
         "the repository, which Actions' GITHUB_TOKEN can't be given.",
     )

@@ -331,6 +331,8 @@ def main(argv: list[str]) -> int:
         parser.error("give a PR number, or --output")
     if args.base and args.coverage_report is None:
         parser.error("--base needs --coverage-report")
+    # Only used without --output, which requires it (checked above).
+    pr: int = 0 if args.pr is None else args.pr
 
     try:
         marker = config.marker(MARKER_NAME)
@@ -358,9 +360,9 @@ def main(argv: list[str]) -> int:
             if args.commit:
                 # As in post_screenshots: an older commit's run can finish after a
                 # newer one's, and mustn't overwrite its report.
-                pr_head = github_comments.pr_head(repo, args.pr, token)
+                pr_head = github_comments.pr_head(repo, pr, token)
                 if not pr_head.startswith(args.commit):
-                    print(f"Not posting: the report is for {args.commit}, but PR #{args.pr}'s head is now {pr_head}.")
+                    print(f"Not posting: the report is for {args.commit}, but PR #{pr}'s head is now {pr_head}.")
                     return 0
         project = None
         if head is not None:
@@ -374,7 +376,7 @@ def main(argv: list[str]) -> int:
                 f.write(body + "\n")
             print(f"Wrote the coverage report to {args.output}.")
             return 0
-        github_comments.upsert_comment(repo, args.pr, author, marker, body, token)
+        github_comments.upsert_comment(repo, pr, author, marker, body, token)
     except subprocess.CalledProcessError as e:
         print(f"{' '.join(e.cmd)} failed:\n{e.stderr}", file=sys.stderr)
         return 1
@@ -388,7 +390,7 @@ def main(argv: list[str]) -> int:
         # ValueError: the base's status isn't in the format post-coverage-status posts.
         print(e, file=sys.stderr)
         return 1
-    print(f"Posted the patch coverage report to PR #{args.pr}.")
+    print(f"Posted the patch coverage report to PR #{pr}.")
     return 0
 
 

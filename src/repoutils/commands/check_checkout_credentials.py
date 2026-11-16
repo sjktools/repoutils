@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from repoutils.commands.check_pins import pins, workflow_files
+from repoutils.docstrings import summary
 
 CHECKOUT = "actions/checkout"
 KEY = "persist-credentials"
@@ -46,7 +47,5 @@ def main(root: Path = Path()) -> int:
 
 
 def run(argv: list[str]) -> int:
-    argparse.ArgumentParser(
-        prog="repoutils check-checkout-credentials", description=__doc__.splitlines()[0]
-    ).parse_args(argv)
+    argparse.ArgumentParser(prog="repoutils check-checkout-credentials", description=summary(__doc__)).parse_args(argv)
     return main()

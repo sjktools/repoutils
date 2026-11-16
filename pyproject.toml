@@ -33,6 +33,7 @@ dev = [
     "diff-cover>=11.0.1",
     "jactionlint>=2.5.0",
     "mypy>=2.4.1",
+    "pyright>=1.1.414",
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0",
@@ -343,9 +344,11 @@ enable_error_code = [
     "explicit-override",
 ]
 
-# For editors that run pyright (such as VS Code's Pylance); CI runs only mypy.
-# Strict, but without the checks for partially unknown types, which flag code
-# mypy infers fully, such as `field(default_factory=list)` for a `list[str]`.
+# `just pyright`, alongside mypy: it catches some things mypy and ruff don't,
+# such as a module's `__doc__` being None, or an unused `import a.b` beside a
+# used `import a.c`. Strict, but without the checks for unknown types, which
+# mostly flag JSON values narrowed with isinstance, and code mypy infers fully,
+# such as `field(default_factory=list)` for a `list[str]`.
 [tool.pyright]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
@@ -353,17 +356,16 @@ typeCheckingMode = "strict"
 reportImplicitOverride = "error"
 reportUnknownVariableType = false
 reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownLambdaType = false
 extraPaths = ["src"]
 
-# Tests are relaxed: they reach into private names, and pytest's fixtures and
-# monkeypatching leave lambdas and arguments of unknown type.
+# Tests may reach into private names.
 [[tool.pyright.executionEnvironments]]
 root = "tests"
 # The repo root too, as some tests import helpers from other tests.
 extraPaths = [".", "src"]
 reportPrivateUsage = false
-reportUnknownLambdaType = false
-reportUnknownArgumentType = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

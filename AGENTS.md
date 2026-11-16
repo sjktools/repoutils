@@ -78,8 +78,8 @@ Its limits are ceilings and not targets, so reword the sentences it lists and le
 A file cut up into very short sentences fails too, and reads no better than one made of long ones.
 
 `just mypy` type-checks `src` and `tests` in strict mode, so all new code, tests included, needs full type annotations.
-`[tool.pyright]` is for editors that run pyright, such as VS Code, and CI doesn't run it.
-Its checks for partially unknown types are off, as they flag code that mypy infers fully.
+`just pyright`, part of `just check`, type-checks them again with pyright in strict mode, as it catches some mistakes that mypy and ruff miss.
+Its checks for unknown types are off, as they mostly flag JSON values and code that mypy infers fully.
 `[tool.pytest.ini_options]` sets `filterwarnings = ["error"]`, so a warning fails its test.
 Fix its cause, or assert it with `pytest.warns` around the call that raises it.
 

@@ -64,10 +64,11 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 
 These commands require a GitHub token:
 
-- any command that posts to a pull request
-- the `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys` and `security-settings` commands
+- any command that posts to a pull request, and `post-coverage-status`
+- the `github-settings`, `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys` and `security-settings` commands
 
 These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when `$GITHUB_TOKEN` is not set.
+`wait-for-base-coverage` sends `$GITHUB_TOKEN` when it is set, and does not run `gh auth token`.
 
 ## Configuration
 
@@ -746,7 +747,7 @@ It fails in the following cases:
 
 - a declared key is missing, has the wrong read/write access, or shares its title with another key in the repository
 - the configured secret is missing
-- the secret was updated before the deploy key was created – such a secret cannot hold the private key of that deploy key
+- the secret was updated before the deploy key was created – such a secret may not hold the private key of that deploy key
 
 Because `ensure` cannot recover a lost private key to fix a missing or outdated secret, it instructs you to run `ensure --rotate <title>`.
 `check` always fails on any undeclared write-capable deploy key, because a ruleset deploy-key bypass covers all write-capable deploy keys in the repository.

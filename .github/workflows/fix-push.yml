@@ -211,17 +211,19 @@ jobs:
           fi
           body="$RUNNER_TEMP/autofix.md"
           update_only=()
+          # Push is skipped only when resolve found no bundle; any other result
+          # means the fixes weren't pushed, whether a check refused them (the
+          # branch moved on, say) or something failed.
           if [ "$FIX_CONCLUSION" != success ]; then
             echo "PR Fixes [failed]($FIX_URL) on $START_SHA, so nothing was pushed." > "$body"
-          elif [ "$RESOLVE_RESULT" != success ] || [ "$PUSH_RESULT" = failure ] || [ "$PUSH_RESULT" = cancelled ]; then
-            echo "PR Fixes ran on $START_SHA, but [pushing its fixes failed]($RUN_URL)." > "$body"
-          else
-            if [ "$PUSH_RESULT" = success ]; then
-              echo "PR Fixes [pushed its fixes]($RUN_URL) on top of $START_SHA." > "$body"
-            else
-              echo "PR Fixes [found nothing to fix]($FIX_URL) on $START_SHA." > "$body"
-            fi
+          elif [ "$RESOLVE_RESULT" = success ] && [ "$PUSH_RESULT" = success ]; then
+            echo "PR Fixes [pushed its fixes]($RUN_URL) on top of $START_SHA." > "$body"
             update_only=(--update-only)
+          elif [ "$RESOLVE_RESULT" = success ] && [ "$PUSH_RESULT" = skipped ]; then
+            echo "PR Fixes [found nothing to fix]($FIX_URL) on $START_SHA." > "$body"
+            update_only=(--update-only)
+          else
+            echo "PR Fixes ran on $START_SHA, but [didn't push its fixes]($RUN_URL)." > "$body"
           fi
           PYTHONPATH=src python3 -m repoutils post-comment "$number" "$body" \
             --name autofix --author "github-actions[bot]" "${update_only[@]}"

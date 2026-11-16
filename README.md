@@ -69,6 +69,7 @@ These commands require a GitHub token:
 
 These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when `$GITHUB_TOKEN` is not set.
 `wait-for-base-coverage` sends `$GITHUB_TOKEN` when it is set, and does not run `gh auth token`.
+Of the `secrets` and `variables` subcommands, only `check` and `dump` use the token.
 
 ## Configuration
 

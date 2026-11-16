@@ -248,7 +248,7 @@ When the command cannot read a file (for example, when the file is not valid UTF
 The command checks the remaining files and exits with code 1, even when you pass `--exit-zero`.
 `repoutils check-sentence-per-line` handles unreadable files in the same way.
 
-The default limits for long sentences come from a sample of 17 pre-LLM README files and recent machine-generated documents.
+The default limits for long sentences come from a sample of 17 documents, both pre-LLM README files and recent machine-generated documents.
 The default limit for short sentences comes from a smaller sample of rewrites of this README, so adjust the limits to fit your project.
 
 ### Added strings
@@ -312,7 +312,7 @@ When the base commit has no coverage status, the comment notes that fact and sho
 The comment includes a warning and prints a `::warning::` workflow command in two cases:
 
 - Project coverage dropped from the base commit by more than `warn-project-drop` percentage points (default 2).
-- Patch coverage is more than `warn-patch-below` points (default 1) below the base project coverage, or the pull request coverage when the base has no status.
+- Patch coverage is more than `warn-patch-below` points (default 1) below the base project coverage, or the pull request project coverage when the base has no status.
 
 These conditions only produce warnings, so low coverage never causes the command to fail.
 The command exits non-zero only when it cannot produce or post the report, such as on a bad file, bad setting or failed request.

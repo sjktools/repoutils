@@ -35,7 +35,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `check-prose` | Fails if the prose in a configured Markdown file has long sentences, many joined clauses, or too many short sentences. |
 | `check-blame-ignore-revs` | Fails unless `.git-blame-ignore-revs` lists only full commit hashes that are ancestors of a target commit. |
 | `check-screenshots-dir` | Fails unless `.gitignore` is the only tracked file in the screenshots directory and ignores all other files in that directory. |
-| `git-config-setup` | Sets the local `blame.ignoreRevsFile` Git setting; this command is idempotent so a justfile can run it before every recipe. |
+| `git-config-setup` | Sets the local `blame.ignoreRevsFile` Git setting (idempotent, so a justfile can run it before every recipe). |
 | `long-files` | Lists the files over a line limit as Markdown (with changed files first), or posts that list to a pull request. |
 | `check-pins` | Fails unless every `setup-uv` and `setup-just` workflow step pins the versions required by `pyproject.toml` and the justfile. |
 | `check-checkout-credentials` | Fails on any `actions/checkout` step that does not set `persist-credentials`. |
@@ -242,7 +242,8 @@ The limits apply to the average rates across the whole file rather than to indiv
 A file can contain a few long sentences and still pass.
 For each limit that a file exceeds, the command prints the five sentences that contribute the most to that rate.
 The two limits for long sentences share one list of sentences under the first exceeded limit.
-Pass `--stats` to print all rates for every file, and pass `--exit-zero` to print the same output and exit with code 0.
+Pass `--exit-zero` to print the same output and exit with code 0.
+Pass `--stats` to print all rates for every file.
 
 When the command cannot read a file (for example, when the file is not valid UTF-8), it prints `<file>: cannot read (<reason>)`.
 The command checks the remaining files and exits with code 1, even when you pass `--exit-zero`.
@@ -276,10 +277,10 @@ If a later push removes all matches, the command updates the previous comment to
 The command reads the project coverage from `coverage.xml` for the whole project.
 It reads the patch coverage from the `diff-cover` JSON report (`--patch-report`) for the lines changed in the pull request or commit.
 
-Run this command in CI on every commit on the default branch, and on the head commit of every pull request.
+Run this command in CI on every default-branch commit and on the head commit of every pull request.
 The default branch statuses then record the coverage history of the project.
 Skip this step on pull requests from forks and Dependabot, because their tokens lack write permission.
-Pass `--base` with the pull request base commit or parent commit to include the coverage change from that commit in the project status.
+Pass `--base` with the pull request base or parent commit to include the coverage change in the project status.
 If the base commit has no `coverage/project` status, the status omits the coverage change.
 
 Both statuses always use the `success` state because they record coverage without failing the commit.
@@ -297,7 +298,7 @@ The change is the difference between the two displayed percentages.
 The patch coverage number counts lines in the same way as `diff-cover`, and shows `no changed lines to cover` when the diff has no executable lines.
 
 A token with permission to post commit statuses can post a status with any context name, including the name of a required check.
-Therefore, run this command in a separate job that installs no other packages and receives the coverage reports through a workflow artifact.
+Therefore, run this command in a separate job that installs no other packages and receives the coverage reports as artifacts.
 That job requires the `statuses: write` permission, which GitHub does not grant to pull requests from forks or from Dependabot.
 Pass `--dry-run` to print the statuses without posting them to GitHub.
 
@@ -316,7 +317,7 @@ The comment includes a warning and prints a `::warning::` workflow command in tw
 
 These conditions only produce warnings, so low coverage never causes the command to fail.
 The command exits non-zero only when it cannot produce or post the report, such as on a bad file, bad setting or failed request.
-Pass `--output <file>` to append the comment text to a local file (such as `$GITHUB_STEP_SUMMARY`) instead of posting it to the pull request.
+Pass `--output <file>` to append the comment text to a file (such as `$GITHUB_STEP_SUMMARY`) instead of posting it.
 Use `--output` on pull requests from forks and Dependabot, where the workflow token cannot post pull request comments.
 
 The CI workflow on the base commit can still be in progress when the pull request finishes its coverage run.
@@ -442,7 +443,7 @@ Any setting omitted from the table keeps its current value on GitHub.
 | `cache-retention-days` | positive integer | Number of days that GitHub retains an unused Actions cache. |
 | `cache-size-gb` | positive integer | Maximum total cache storage in gigabytes before GitHub evicts the oldest caches. |
 | `oidc.use-default-subject` | `true` or `false` | Use the default template for the OpenID Connect (OIDC) token subject claim. |
-| `oidc.include-claim-keys` | list of strings | Ordered list of claim keys for a custom OIDC subject template; requires `oidc.use-default-subject = false`. |
+| `oidc.include-claim-keys` | list of strings | Ordered list of claim keys for a custom OIDC subject template (requires `oidc.use-default-subject = false`). |
 | `oidc.immutable-subject` | `true` or `false` | Use the immutable OIDC subject claim based on the numeric repository ID instead of the repository name. |
 
 The `selected-actions` settings require `allowed-actions = "selected"`, because GitHub stores them only in that mode.
@@ -458,7 +459,7 @@ GitHub returns HTTP 404 for those endpoints, so `check` and `ensure` fail when `
 `--exit-zero` works in the same way as in `labels check`.
 
 `check` and `dump` require a token with read access to repository administration settings, plus read access to Actions when reading `oidc` settings.
-For a fine-grained personal access token, grant the Administration and Actions `read` permissions for `check` and `dump`, and grant `write` for both permissions for `ensure`.
+For a fine-grained personal access token, grant Administration and Actions `read` for `check` and `dump`, and `write` for `ensure`.
 The `GITHUB_TOKEN` provided by GitHub Actions cannot have the Administration permission.
 
 `repoutils actions-settings dump` prints every setting from the table above with its current value in the repository.
@@ -684,7 +685,7 @@ The command writes the exported secret names and the decryption command to `$GIT
 
 The command writes the encrypted file only to the runner, so add a workflow step after `export` to upload that file as a workflow artifact.
 Any signed-in GitHub user can download artifacts from a public repository, so set a short `retention-days` and delete the artifact after download.
-Deleting old artifacts ensures that a future compromise of the private key cannot decrypt earlier backups left on GitHub.
+Deleting old artifacts prevents a future compromise of the private key from decrypting earlier backups left on GitHub.
 
 ### Variables
 
@@ -735,7 +736,7 @@ GitHub cannot change the read/write access of an existing deploy key.
 If a key has the wrong access, the behavior of `ensure` depends on whether the key has a `secret`.
 If it has a `secret`, `ensure` generates a new key pair, replaces the deploy key, and updates that `secret`.
 If it lacks a `secret`, `ensure` re-adds the existing public key with the configured access.
-Run `ensure --rotate <title>` to replace a deploy key and its secret with a new key pair, adding the new key before deleting the old key.
+Run `ensure --rotate <title>` to replace a deploy key and its secret, adding the new key before deleting the old key.
 `ensure` refuses to create a missing key that omits `secret`, because the generated private key would not be saved anywhere.
 It also fails when the target environment for `secret` does not exist, which `repoutils environments ensure` can create.
 It never deletes a deploy key that `pyproject.toml` does not declare.
@@ -745,7 +746,7 @@ It fails in the following cases:
 
 - a declared key is missing, has the wrong read/write access, or shares its title with another key in the repository
 - the configured secret is missing
-- the secret was updated before the deploy key was created; such a secret cannot hold the private key of that deploy key
+- the secret was updated before the deploy key was created – such a secret cannot hold the private key of that deploy key
 
 Because `ensure` cannot recover a lost private key to fix a missing or outdated secret, it instructs you to run `ensure --rotate <title>`.
 `check` always fails on any undeclared write-capable deploy key, because a ruleset deploy-key bypass covers all write-capable deploy keys in the repository.

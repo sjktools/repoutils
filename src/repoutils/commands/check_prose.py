@@ -66,13 +66,15 @@ JOINT_RE = re.compile(r",\s+(?:" + "|".join(CONJUNCTIONS) + r")\b|;|:\s|\s(?:[�
 class Metric:
     """A rate over a file's sentences, and the config key of its limit."""
 
-    key: str
+    # Both None for a rate that only --stats reports, with no setting to limit it.
+    key: str | None
     default: float | None
     name: str
     # What one sentence adds to the rate.
     count: Callable[[str], int]
     unit: str
     # mean: the count per sentence. share: the percentage of sentences that count.
+    # cv: the counts' coefficient of variation (standard deviation over mean).
     kind: Literal["mean", "share", "cv"] = "mean"
     # Whether the worst sentences are the ones with the lowest counts, not the highest.
     lowest_first: bool = False
@@ -122,14 +124,7 @@ def metrics(
 
     return [
         Metric("max-words-per-sentence", 18, "words per sentence", _word_count, "words"),
-        Metric(
-            "max-sdsl-cv",
-            None,
-            "SDSL CV (std-dev ÷ mean sentence length)",
-            _word_count,
-            "words",
-            "cv",
-        ),
+        Metric(None, None, "sentence-length CV (standard deviation ÷ mean)", _word_count, "words", "cv"),
         Metric(
             "max-long-sentences", 12, f"% of sentences over {long_sentence_words} words", long_words, "words", "share"
         ),
@@ -205,13 +200,15 @@ def main(paths: list[str] | None = None, *, exit_zero: bool = False, show_stats:
     min_sentences = config.integer(table, "min-sentences", DEFAULT_MIN_SENTENCES, WHERE)
     long_sentence_words = config.integer(table, "long-sentence-words", DEFAULT_LONG_SENTENCE_WORDS, WHERE)
     short_sentence_words = config.integer(table, "short-sentence-words", DEFAULT_SHORT_SENTENCE_WORDS, WHERE)
-    limits = []
-    for metric in metrics(long_sentence_words, short_sentence_words):
-        if metric.default is None:
-            limit = None if table.get(metric.key) is None else config.optional_number(table, metric.key, 0, WHERE)
-        else:
-            limit = config.optional_number(table, metric.key, metric.default, WHERE)
-        limits.append((metric, limit))
+    limits = [
+        (
+            metric,
+            None
+            if metric.key is None or metric.default is None
+            else config.optional_number(table, metric.key, metric.default, WHERE),
+        )
+        for metric in metrics(long_sentence_words, short_sentence_words)
+    ]
     if paths is None:
         paths = [path for path in files() if Path(path).is_file()]
     failed = []

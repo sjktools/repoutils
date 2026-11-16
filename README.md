@@ -30,7 +30,7 @@ That installs only repoutils, hash-checked against `uv.lock`, and not the projec
 | Command | What it does |
 | --- | --- |
 | `check-whitespace` | Fails on trailing whitespace, a leading blank line or a missing or extra final newline in any Git-tracked text file. |
-| `check-sentence-per-line` | Fails if a configured Markdown file (by default `AGENTS.md` and `README.md`) has two sentences on one line, or checks the files you name. |
+| `check-sentence-per-line` | Fails if a Markdown file has two sentences on one line. It checks the files you name, or else the configured files (default `AGENTS.md` and `README.md`). |
 | `check-prose` | Fails if a configured Markdown file's prose has long, clause-heavy sentences, or too many short ones. |
 | `check-blame-ignore-revs` | Fails unless `.git-blame-ignore-revs` lists only full hashes of commits that are ancestors of a target. |
 | `check-screenshots-dir` | Fails unless the screenshots directory's `.gitignore` is the only file tracked there, and still ignores everything else. |
@@ -220,7 +220,6 @@ So in a wrapped paragraph, a sentence that starts mid-line with a lowercase word
 | Setting | Default | What it limits |
 |---|---|---|
 | `max-words-per-sentence` | 18 | The mean number of words in a sentence. |
-| `max-sdsl-cv` | off | The coefficient of variation of sentence length (its standard deviation divided by its mean). |
 | `max-long-sentences` | 12 | The percentage of sentences with more than `long-sentence-words` words (default 30). |
 | `max-short-sentences` | 25 | The percentage of sentences with fewer than `short-sentence-words` words (default 8), list items and lead-ins aside. |
 | `max-commas-per-sentence` | 1.3 | The mean number of commas in a sentence. |
@@ -236,6 +235,7 @@ The limits apply to a whole file's rates and not to each sentence, so a file wit
 Under each limit that a file is over, the command lists the five sentences that add most to it.
 The two limits on long sentences share one list, under the first of them that the file is over.
 `--stats` prints every rate for every file, and `--exit-zero` reports the same but exits 0.
+`--stats` also prints one rate that no setting limits, the sentence-length CV: the standard deviation of sentence length divided by its mean.
 
 A file that can't be read, such as one that isn't valid UTF-8, is reported on one line as `<file>: cannot read (<reason>)`.
 The command still checks the other files and then exits 1, even with `--exit-zero`, and `check-sentence-per-line` treats such a file the same way.

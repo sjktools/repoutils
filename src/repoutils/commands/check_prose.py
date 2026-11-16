@@ -22,6 +22,7 @@ into a list or a code block.
 
 import argparse
 import re
+import statistics
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,13 +67,13 @@ class Metric:
     """A rate over a file's sentences, and the config key of its limit."""
 
     key: str
-    default: float
+    default: float | None
     name: str
     # What one sentence adds to the rate.
     count: Callable[[str], int]
     unit: str
     # mean: the count per sentence. share: the percentage of sentences that count.
-    kind: Literal["mean", "share"] = "mean"
+    kind: Literal["mean", "share", "cv"] = "mean"
     # Whether the worst sentences are the ones with the lowest counts, not the highest.
     lowest_first: bool = False
     # Whether the rate leaves out the sentences in list items, and the ones that
@@ -93,6 +94,9 @@ class Metric:
             return 0
         if self.kind == "share":
             return 100 * sum(count > 0 for count in counts) / len(counts)
+        if self.kind == "cv":
+            mean = sum(counts) / len(counts)
+            return statistics.pstdev(counts) / mean if mean > 0 else 0
         return sum(counts) / len(counts)
 
     def over(self, sentences: list[Sentence], limit: float | None) -> bool:
@@ -118,6 +122,14 @@ def metrics(
 
     return [
         Metric("max-words-per-sentence", 18, "words per sentence", _word_count, "words"),
+        Metric(
+            "max-sdsl-cv",
+            None,
+            "SDSL CV (std-dev ÷ mean sentence length)",
+            _word_count,
+            "words",
+            "cv",
+        ),
         Metric(
             "max-long-sentences", 12, f"% of sentences over {long_sentence_words} words", long_words, "words", "share"
         ),
@@ -193,10 +205,13 @@ def main(paths: list[str] | None = None, *, exit_zero: bool = False, show_stats:
     min_sentences = config.integer(table, "min-sentences", DEFAULT_MIN_SENTENCES, WHERE)
     long_sentence_words = config.integer(table, "long-sentence-words", DEFAULT_LONG_SENTENCE_WORDS, WHERE)
     short_sentence_words = config.integer(table, "short-sentence-words", DEFAULT_SHORT_SENTENCE_WORDS, WHERE)
-    limits = [
-        (metric, config.optional_number(table, metric.key, metric.default, WHERE))
-        for metric in metrics(long_sentence_words, short_sentence_words)
-    ]
+    limits = []
+    for metric in metrics(long_sentence_words, short_sentence_words):
+        if metric.default is None:
+            limit = None if table.get(metric.key) is None else config.optional_number(table, metric.key, 0, WHERE)
+        else:
+            limit = config.optional_number(table, metric.key, metric.default, WHERE)
+        limits.append((metric, limit))
     if paths is None:
         paths = [path for path in files() if Path(path).is_file()]
     failed = []

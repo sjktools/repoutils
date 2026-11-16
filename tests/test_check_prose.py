@@ -83,6 +83,7 @@ def test_false_turns_a_limit_off(project: Path, capsys: pytest.CaptureFixture[st
     out = capsys.readouterr().out
     assert "- 1.00 semicolons per sentence (no limit)\n" in out
     assert "- 4.00 words per sentence (limit 18)\n" in out
+    assert "- 0.00 SDSL CV (std-dev ÷ mean sentence length) (no limit)\n" in out
     assert "<- over" not in out
 
 
@@ -125,6 +126,13 @@ def test_short_sentences_that_lead_into_a_list_are_not_counted(
     assert "- 0.00 % of sentences outside lists under 8 words (limit 25)\n" in capsys.readouterr().out
 
 
+def test_stats_measure_sdsl_cv(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _configure(project, "min-sentences = 1\nmax-short-sentences = false\n")
+    (project / "README.md").write_text("One two three.\nOne two three four five six.\n")
+    assert check_prose.main(show_stats=True) == 0
+    assert "- 0.33 SDSL CV (std-dev ÷ mean sentence length) (no limit)\n" in capsys.readouterr().out
+
+
 def test_settings(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _configure(project, 'files = ["DOC.md", "MISSING.md"]\nmin-sentences = 2\nlong-sentence-words = 3\n')
     (project / "DOC.md").write_text("One two three four.\nOne two three.\n")
@@ -155,6 +163,7 @@ def test_stats_show_the_rates_of_a_file_too_short_to_judge(project: Path, capsys
         "AGENTS.md: 0 sentences, too few to judge (min-sentences is 15).",
         "README.md: 1 sentences, too few to judge (min-sentences is 15):",
         "- 4.00 words per sentence (limit 18)",
+        "- 0.00 SDSL CV (std-dev ÷ mean sentence length) (no limit)",
         "- 0.00 % of sentences over 30 words (limit 12)",
         "- 100.00 % of sentences outside lists under 8 words (limit 25)",
         "- 0.00 commas per sentence (limit 1.3)",

@@ -5,8 +5,11 @@ import textwrap
 from pathlib import Path
 from unittest import TestCase
 
+import pytest
+
 from repoutils.commands.check_sentence_per_line import _problems as sentence_per_line_problems
 from repoutils.commands.check_sentence_per_line import main as sentence_per_line_main
+from repoutils.commands.check_sentence_per_line import run as sentence_per_line_run
 
 
 class CheckSentencePerLineTests(TestCase):
@@ -93,3 +96,14 @@ class CheckSentencePerLineTests(TestCase):
         self.assertEqual(code, 1)
         self.assertIn("AGENTS.md:1: sentence boundary mid-line", stdout)
         self.assertNotIn("README.md:1", stdout)
+
+
+def test_run_with_files_argument(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "bad.md").write_text("One sentence. Another sentence.\n")
+    (tmp_path / "README.md").write_text("One sentence.\n")
+    assert sentence_per_line_run(["bad.md"]) == 1
+    assert sentence_per_line_run(["README.md"]) == 0
+    with pytest.raises(SystemExit) as error:
+        sentence_per_line_run(["missing.md"])
+    assert error.value.code == 2

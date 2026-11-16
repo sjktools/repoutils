@@ -30,7 +30,7 @@ That installs only repoutils, hash-checked against `uv.lock`, and not the projec
 | Command | What it does |
 | --- | --- |
 | `check-whitespace` | Fails on trailing whitespace, a leading blank line or a missing or extra final newline in any Git-tracked text file. |
-| `check-sentence-per-line` | Fails if a configured Markdown file (by default `AGENTS.md` and `README.md`) has two sentences on one line. |
+| `check-sentence-per-line` | Fails if a configured Markdown file (by default `AGENTS.md` and `README.md`) has two sentences on one line, or checks the files you name. |
 | `check-prose` | Fails if a configured Markdown file's prose has long, clause-heavy sentences, or too many short ones. |
 | `check-blame-ignore-revs` | Fails unless `.git-blame-ignore-revs` lists only full hashes of commits that are ancestors of a target. |
 | `check-screenshots-dir` | Fails unless the screenshots directory's `.gitignore` is the only file tracked there, and still ignores everything else. |
@@ -220,6 +220,7 @@ So in a wrapped paragraph, a sentence that starts mid-line with a lowercase word
 | Setting | Default | What it limits |
 |---|---|---|
 | `max-words-per-sentence` | 18 | The mean number of words in a sentence. |
+| `max-sdsl-cv` | off | The coefficient of variation of sentence length (its standard deviation divided by its mean). |
 | `max-long-sentences` | 12 | The percentage of sentences with more than `long-sentence-words` words (default 30). |
 | `max-short-sentences` | 25 | The percentage of sentences with fewer than `short-sentence-words` words (default 8), list items and lead-ins aside. |
 | `max-commas-per-sentence` | 1.3 | The mean number of commas in a sentence. |

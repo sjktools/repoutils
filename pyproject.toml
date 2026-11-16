@@ -355,6 +355,16 @@ reportUnknownVariableType = false
 reportUnknownMemberType = false
 extraPaths = ["src"]
 
+# Tests are relaxed: they reach into private names, and pytest's fixtures and
+# monkeypatching leave lambdas and arguments of unknown type.
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+# The repo root too, as some tests import helpers from other tests.
+extraPaths = [".", "src"]
+reportPrivateUsage = false
+reportUnknownLambdaType = false
+reportUnknownArgumentType = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["error"]

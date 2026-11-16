@@ -1,8 +1,6 @@
-import http.client
 import http.server
 import threading
 import urllib.error
-import urllib.request
 from email.message import Message
 from typing import Any, override
 from unittest import TestCase, mock

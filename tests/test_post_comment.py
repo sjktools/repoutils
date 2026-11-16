@@ -4,7 +4,6 @@ import shutil
 import subprocess
 import tempfile
 import urllib.error
-import urllib.request
 from email.message import Message
 from pathlib import Path
 from typing import Any, NoReturn
@@ -43,7 +42,7 @@ class FakeGitHub:
         return {"data": {"repository": {"pullRequest": {"comments": comments}}}}
 
     def hidden(self) -> list[str]:
-        return [b["variables"]["id"] for m, u, b in self.calls if b and "minimizeComment" in b.get("query", "")]
+        return [b["variables"]["id"] for _, _, b in self.calls if b and "minimizeComment" in b.get("query", "")]
 
 
 def _exolot_comment(
@@ -99,7 +98,7 @@ class PostCommentHidePreviousTests(TestCase):
         gh = FakeGitHub([])
         code, out, _ = self._run(["--repo", "o/r", "7", str(self._report()), "--commit", "def", *HIDE], gh)
         self.assertEqual(code, 0)
-        self.assertEqual([m for m, u, b in gh.calls], ["GET"])
+        self.assertEqual([m for m, _, _ in gh.calls], ["GET"])
         self.assertIn("Not posting", out)
 
     def test_reports_graphql_errors(self) -> None:

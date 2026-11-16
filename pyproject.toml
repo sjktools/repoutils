@@ -113,7 +113,7 @@ dependabot = ["DEPENDABOT_FIX_TOKEN"]
 # Only main's workflows can reach these: ci.yml's release job pushes v* tags
 # with the deploy key, and bump-version.yml uses GH_ACTIONS_TOKEN.
 environments.release = ["GH_ACTIONS_TOKEN", "RELEASE_DEPLOY_KEY"]
-# fix.yml's push job pushes /autofix's commits to a PR's branch with this.
+# fix-push.yml pushes /autofix's commits to a PR's branch with this.
 environments.autofix = ["AUTOFIX_TOKEN"]
 
 # The variables `repoutils variables` checks the repository has, names only.
@@ -132,7 +132,7 @@ allowed-branches = ["main"]
 allowed-tags = []
 
 # Only main can deploy to autofix either, which holds AUTOFIX_TOKEN for
-# fix.yml's push job. It's apart from release, so the job that pushes a PR's
+# fix-push.yml. It's apart from release, so the job that pushes a PR's
 # branch can't read the release deploy key.
 [tool.repoutils.environments.autofix]
 deployment-branches = "selected"

@@ -42,7 +42,7 @@ That installs only repoutils, hash-checked against `uv.lock`, and not the projec
 | `requirements-min-versions` | Checks or fixes `pyproject.toml`'s `>=` minimums against the versions in `uv.lock`. |
 | `dependabot-relock` | Re-locks a Dependabot branch's `uv.lock` with this uv, to exactly Dependabot's versions. |
 | `check-lock-platforms` | Fails if `uv.lock` has wheels for platforms the project doesn't allow. |
-| `post-comment` | Posts a Markdown file to a PR, editing the earlier comment or hiding it with `--hide-previous`. |
+| `post-comment` | Posts a Markdown file to a PR, editing the earlier comment (and with `--update-only`, posting nothing if there is none) or hiding it with `--hide-previous`. |
 | `added-strings` | Lists the lines a PR adds that have strings `pyproject.toml` configures, such as `# noqa:`, or posts that to a PR, for information only. |
 | `post-patch-coverage` | Posts diff-cover's Markdown patch coverage report to a PR, reformatted, with the project's coverage and its change from the PR's base, and warns when either falls short. |
 | `post-coverage-status` | Posts a commit's project and patch coverage as commit statuses, as a record and not a gate. |

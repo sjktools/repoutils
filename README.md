@@ -3,12 +3,12 @@
 `repoutils` is a package of repository checks and CI helper commands for Python projects that use `uv`, `just` and GitHub Actions.
 Run a command as `repoutils <command>`.
 
-These checks and helper commands previously lived in the `scripts/` directories of several projects, such as [exolot](https://github.com/skissane/exolot).
+These checks and helper commands previously lived in the `scripts/` directories of several personal projects, such as [exolot](https://github.com/skissane/exolot).
 This package collects them in one place so that each project can depend on one package instead of maintaining separate copies.
 
 `repoutils` has no runtime dependencies and uses only the Python standard library (Python 3.12 or later).
-It must keep zero dependencies because projects run it in CI jobs that hold write-capable tokens or check out untrusted Dependabot branches.
-Those CI jobs must not install any other packages.
+It should keep zero dependencies because projects run it in CI jobs that hold write-capable tokens or check out untrusted Dependabot branches.
+Those CI jobs should not install any other packages.
 
 ## Installing
 
@@ -45,7 +45,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `check-lock-platforms` | Fails if `uv.lock` contains wheels for platforms that the project does not allow. |
 | `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment (posting nothing with `--update-only` when none exists) or hides it when you pass `--hide-previous`. |
 | `added-strings` | Lists the added lines in a pull request that match strings configured in `pyproject.toml` (such as `# noqa:`), or posts the list to the pull request. |
-| `post-patch-coverage` | Formats the Markdown patch coverage report from `diff-cover`, adds the project coverage and the change from the base commit, posts the report to a pull request, and warns when coverage is below a limit. |
+| `post-patch-coverage` | Formats the Markdown patch coverage report from `diff-cover`, adds the project coverage and the change from the base commit, posts the report to a pull request, and warns when coverage drops or falls below a limit. |
 | `post-coverage-status` | Posts the project and patch coverage of a commit as GitHub commit statuses for information only. |
 | `wait-for-base-coverage` | Waits until the base commit of a pull request has a `coverage/project` commit status so that `post-patch-coverage` can compare coverage. |
 | `post-screenshots` | Uploads PNG files from a directory and posts them to a pull request in a comment. |
@@ -63,6 +63,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `check-attestations` | Fails unless every distribution file in `dist/` has a PEP 740 publish attestation. |
 
 These commands require a GitHub token:
+
 - any command that posts to a pull request
 - the `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys` and `security-settings` commands
 
@@ -207,7 +208,7 @@ Machine-generated text often uses that style, which is difficult to read.
 
 The command also fails when a file has too many very short sentences.
 Authors sometimes split sentences into fragments only to stay below the word limit, which is also difficult to read.
-Therefore, one limit caps the percentage of short sentences in a file.
+One limit therefore caps the percentage of short sentences in a file.
 That limit excludes list items, because short sentences are normal in lists.
 That limit also excludes sentences that end with a colon before a list or a code block.
 Treat all limits as maximum values rather than targets, and do not edit sentences when the file already passes.
@@ -221,7 +222,7 @@ The command splits sentences according to standard English punctuation.
 A sentence ends at a full stop, question mark or exclamation mark when the next sentence starts with an uppercase letter, digit or inline code.
 A colon at the end of a paragraph or list item also ends a sentence.
 A newline after any of those punctuation marks always starts a new sentence, regardless of the first character on the next line.
-Therefore, in a wrapped paragraph, a sentence that starts mid-line with a lowercase word (such as `uv`) is counted as part of the previous sentence.
+In a wrapped paragraph, a sentence that starts mid-line with a lowercase word (such as `uv`) is counted as part of the previous sentence.
 
 | Setting | Default | What it limits |
 |---|---|---|
@@ -238,7 +239,7 @@ A file with fewer than `min-sentences` sentences (default 15) is too short to me
 The settings `min-sentences`, `long-sentence-words` and `short-sentence-words` must be integers.
 
 The limits apply to the average rates across the whole file rather than to individual sentences.
-Therefore, a file can contain a few long sentences and still pass.
+A file can contain a few long sentences and still pass.
 For each limit that a file exceeds, the command prints the five sentences that contribute the most to that rate.
 The two limits for long sentences share one list of sentences under the first exceeded limit.
 Pass `--stats` to print all rates for every file, and pass `--exit-zero` to print the same output and exit with code 0.
@@ -247,7 +248,7 @@ When the command cannot read a file (for example, when the file is not valid UTF
 The command checks the remaining files and exits with code 1, even when you pass `--exit-zero`.
 `repoutils check-sentence-per-line` handles unreadable files in the same way.
 
-The default limits for long sentences come from a comparison of 17 pre-LLM README files with recent machine-generated documents.
+The default limits for long sentences come from a sample of 17 pre-LLM README files and recent machine-generated documents.
 The default limit for short sentences comes from a smaller sample of rewrites of this README, so adjust the limits to fit your project.
 
 ### Added strings
@@ -256,13 +257,13 @@ The default limit for short sentences comes from a smaller sample of rewrites of
 It lists every added line that matches any configured pattern in `strings`.
 Each entry in `strings` specifies either `string` (a literal substring) or `regex` (a Python regular expression).
 The default `message` asks the author to verify that the matched text is necessary.
-A regular expression can match code syntax without matching documentation or test strings that mention that syntax.
-For example, `^\s*if TYPE_CHECKING\b` matches only the `if TYPE_CHECKING` statement, and `pyproject.toml` in this repository defines a regular expression for `# noqa` comments.
+Unlike a literal substring, a regular expression can match code syntax without matching documentation or test strings that mention that syntax.
+For example, `^\s*if TYPE_CHECKING\b` matches only the `if TYPE_CHECKING` statement, and `repoutils` uses a regular expression in its own `pyproject.toml` for `# noqa` comments.
 For a `regex` entry, `name` sets the label shown in the report instead of the raw regular expression.
 
 The `include` and `exclude` settings take glob patterns for file paths, where `*` matches across `/`.
 The patterns in `[tool.repoutils.added-strings]` apply to all entries, and the patterns on a single entry narrow the search for that entry.
-Exclude `pyproject.toml` and documentation files because those files often mention the forbidden strings.
+Exclude `pyproject.toml` and documentation files because those files often mention the configured strings.
 
 The report is for information only, so the command exits with code 0 even when it finds matches.
 The command exits non-zero when it cannot run the check, such as on an invalid setting, failed `git` command or failed GitHub request.
@@ -276,8 +277,8 @@ The command reads the project coverage from `coverage.xml` for the whole project
 It reads the patch coverage from the `diff-cover` JSON report (`--patch-report`) for the lines changed in the pull request or commit.
 
 Run this command in CI on every commit on the default branch, and on the head commit of every pull request.
-Exclude fork and Dependabot PRs, whose tokens lack write permission.
-This ensures that the default branch statuses record the coverage history of the project.
+The default branch statuses then record the coverage history of the project.
+Skip this step on pull requests from forks and Dependabot, because their tokens lack write permission.
 Pass `--base` with the pull request base commit or parent commit to include the coverage change from that commit in the project status.
 If the base commit has no `coverage/project` status, the status omits the coverage change.
 
@@ -310,8 +311,8 @@ When the base commit has no coverage status, the comment notes that fact and sho
 
 The comment includes a warning and prints a `::warning::` workflow command in two cases:
 
-- The project coverage dropped from the base commit by more than `warn-project-drop` percentage points (default 2).
-- The patch coverage is more than `warn-patch-below` points (default 1) below the base project coverage, or below the pull request project coverage.
+- Project coverage dropped from the base commit by more than `warn-project-drop` percentage points (default 2).
+- Patch coverage is more than `warn-patch-below` points (default 1) below the base project coverage, or the pull request coverage when the base has no status.
 
 These conditions only produce warnings, so low coverage never causes the command to fail.
 The command exits non-zero only when it cannot produce or post the report, such as on a bad file, bad setting or failed request.
@@ -323,8 +324,8 @@ Run `repoutils wait-for-base-coverage <owner/repo> <base>` before `post-patch-co
 This command polls the `coverage/project` commit status on the base commit and exits as soon as that status exists.
 While the status is absent, the command checks the `post-coverage-status` check run (`--check-name`) on that commit, exiting when that check run finishes.
 The command also stops after 10 minutes (`--timeout`).
-If the wait times out without a status, the command prints a warning and exits with code 0.
-Therefore, a broken base commit does not fail the checks on the pull request.
+If the check run finishes or the wait times out without a status, the command prints a warning and exits with code 0.
+A broken base commit therefore does not fail the checks on the pull request.
 This command requires the `checks: read` and `statuses: read` permissions.
 
 ### GitHub settings
@@ -347,6 +348,7 @@ You can paste the output directly into `pyproject.toml`.
 When an existing label has an empty description on GitHub, `ensure` sets the description from `pyproject.toml`.
 
 By default, `ensure` reports other differences without modifying them:
+
 - label names that differ in letter case
 - differences in color
 - differences in non-empty descriptions
@@ -395,7 +397,7 @@ Any setting omitted from the table keeps its current value on GitHub.
 | `require-web-commit-signoff` | `true` or `false` | Require contributors to sign off on web-based commits. |
 
 The GitHub API accepts a commit message setting only when the request also includes the corresponding commit title setting.
-Therefore, when `pyproject.toml` sets only `squash-merge.message` (or `merge-commit.message`), `repoutils` sends that message together with the title currently set on GitHub.
+When `pyproject.toml` sets only `squash-merge.message` (or `merge-commit.message`), `repoutils` sends that message together with the title currently set on GitHub.
 GitHub rejects some combinations of title and message, and `ensure` reports that rejection as an HTTP 422 error.
 
 `repo-settings` intentionally excludes destructive or structural settings.
@@ -428,7 +430,7 @@ Any setting omitted from the table keeps its current value on GitHub.
 
 | Setting | Values | On GitHub |
 |---|---|---|
-| `allowed-actions` | `"all"`, `"owner"`, `"selected"` or `"disabled"` | Determines whether all actions and reusable workflows can run, only those belonging to the repository owner, only those in `selected-actions`, or none. |
+| `allowed-actions` | `"all"`, `"owner"`, `"selected"` or `"disabled"` | Determines whether all actions and reusable workflows can run, only those belonging to the repository owner, only those in `selected-actions`, or none (Actions is disabled). |
 | `require-sha-pinning` | `true` or `false` | Require actions to be pinned to a full-length commit SHA. |
 | `selected-actions.github-owned` | `true` or `false` | Allow actions created by GitHub. |
 | `selected-actions.verified-creators` | `true` or `false` | Allow actions created by Marketplace verified creators. |
@@ -470,8 +472,8 @@ If GitHub omits a setting from its response or returns an unsupported value, `du
 
 Each `[tool.repoutils.rulesets.<name>]` table defines one branch ruleset or tag ruleset in the repository (Settings > Rules > Rulesets).
 The table specifies only the settings that differ from the defaults of a new ruleset.
-Any rule or setting omitted from the table is disabled or empty, so the table defines the complete ruleset.
-`ensure` disables any rule that the table omits.
+Omitted rules are disabled, omitted `exclude` and `bypass` lists are empty, and other omitted settings use their defaults.
+The table defines the complete ruleset, and `ensure` disables any rule that the table omits.
 
 `repoutils rulesets` ignores push rulesets.
 It also ignores rulesets inherited from an organization and legacy branch protection rules.
@@ -488,7 +490,7 @@ Each table in `bypass` identifies one actor.
 Specify the actor with `role` (`"admin"`, `"maintain"`, `"write"` or a custom role ID), `app` (a GitHub App slug), `team` (a team slug), `org-admin = true` or `deploy-keys = true`.
 Each entry can also specify `mode` as `"always"` (default), `"pull-request"` or `"exempt"`.
 
-For example, these two tag rulesets stop users from updating or deleting a `v*` tag, and let only deploy keys create one.
+For example, these two tag rulesets prevent anyone from updating or deleting a `v*` tag, and let only deploy keys create one.
 They must be separate rulesets because a `bypass` list applies to all rules in its ruleset.
 
 ```toml
@@ -620,9 +622,9 @@ Pass `--app dependabot` for a Dependabot secret, or pass `--env ENVIRONMENT` for
 It does not create missing environments, whereas `repoutils environments ensure` can create them.
 `--exit-zero` and `--fail-on-unexpected` work in the same way as in `labels check`.
 For `secrets check`, `--fail-on-unexpected` fails when a configured secret store contains a secret that its list does not name.
-Therefore, `dependabot = []` requires the repository to have no Dependabot secrets.
+For example, `dependabot = []` requires the repository to have no Dependabot secrets.
 When the table includes any `environments` key, `--fail-on-unexpected` checks the secrets of every environment in the repository, including environments not listed in the table.
-Therefore, `environments = {}` requires every environment to have no secrets.
+Setting `environments = {}` requires every environment to have no secrets.
 
 `check` and `dump` require a token that can list the secrets in the repository.
 For a fine-grained personal access token, grant the Secrets `read` and Dependabot secrets `read` permissions.
@@ -674,13 +676,13 @@ Each `--recipient` argument takes an `age` recipient string (`age1...`) or an SS
 Pass `--github-key USER/SHA256:...` to encrypt to the SSH public key of the GitHub user `USER` that matches that `ssh-keygen -l` fingerprint.
 The command downloads the user's public keys from `https://github.com/USER.keys` and fails if none of the keys matches the fingerprint.
 `age` supports only `ssh-ed25519` and `ssh-rsa` SSH keys, and requires a plaintext private key file for decryption.
-Therefore, a key stored on a hardware security key or in a password manager agent cannot decrypt the backup.
+A key stored on a hardware security key or in a password manager agent cannot decrypt the backup.
 Use a dedicated `age-keygen` key in that case.
 Pass `--armor` to write ASCII-armored output instead of binary output (`age --decrypt` accepts both formats).
 Pass `--age PATH` to specify the path to the `age` executable when `age` is not on `PATH`.
 The command writes the exported secret names and the decryption command to `$GITHUB_STEP_SUMMARY` (or to `--summary FILE`).
 
-After `export` finishes, the workflow uploads the encrypted file as a workflow artifact.
+The command writes the encrypted file only to the runner, so add a workflow step after `export` to upload that file as a workflow artifact.
 Any signed-in GitHub user can download artifacts from a public repository, so set a short `retention-days` and delete the artifact after download.
 Deleting old artifacts ensures that a future compromise of the private key cannot decrypt earlier backups left on GitHub.
 
@@ -710,7 +712,7 @@ If you create a variable before any workflow uses it, list its name in `unused` 
 `check-workflows` then allows the unused variable, and fails once a workflow references that variable so that you remove it from `unused`.
 The command also fails when a job references an environment-only variable without specifying one of the environments that hold that variable in `environment:`.
 GitHub Actions evaluates a job's `if`, `runs-on`, `name`, and `environment` name expressions before loading the job environment ([actions/runner#2472](https://github.com/actions/runner/issues/2472)).
-Environment variables always evaluate to empty strings in those fields.
+Variables scoped to a deployment environment always evaluate to empty strings in those fields.
 Therefore, `check-workflows` also fails when any of those fields references an environment-only variable, even when the job deploys to that environment.
 
 ### Deploy keys
@@ -740,6 +742,7 @@ It never deletes a deploy key that `pyproject.toml` does not declare.
 
 `repoutils deploy-keys check` does not modify the repository.
 It fails in the following cases:
+
 - a declared key is missing, has the wrong read/write access, or shares its title with another key in the repository
 - the configured secret is missing
 - the secret was updated before the deploy key was created; such a secret cannot hold the private key of that deploy key

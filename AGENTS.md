@@ -134,8 +134,10 @@ The commenter's author association must be `OWNER` or `MEMBER`, so outside colla
 `/testpypi` publishes a dev build of the PR's branch to TestPyPI only.
 `/autofix` runs `just fix` on the PR's branch and pushes the result (with the `AUTOFIX_TOKEN` secret).
 It dispatches `fix.yml` on the PR's branch, which runs `just fix` with no secrets and uploads its commits as a Git bundle.
-Then `fix-push.yml`, which a `workflow_run` trigger always runs from `main`, checks that the bundle only adds commits to the branch, and pushes them.
-If either run fails, or PR Fixes can't start, the PR gets one comment saying so, which later runs edit, so a success replaces an earlier failure.
+Then `fix-push.yml`, which always runs from `main`, checks that the bundle only adds commits to the branch, and pushes them.
+`autofix-comment.yml` waits for the fix run and dispatches `fix-push.yml` itself, as a run dispatched with a `GITHUB_TOKEN` starts no `workflow_run` workflow.
+A `workflow_run` trigger covers a fix run that a person starts by hand.
+If either run fails, or either can't start, the PR gets one comment saying so, which later runs edit, so a success replaces an earlier failure.
 The fix runs on the branch rather than on `main` because code in a run can write to the Actions cache of the run's branch.
 On `main`, that would reach the jobs that publish, tag or bump a release, which use no cache either, as a second line of defence.
 `AUTOFIX_TOKEN` lives in the `autofix` environment, which only `main` can deploy to, as with `release`.

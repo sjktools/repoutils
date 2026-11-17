@@ -39,8 +39,10 @@ class FakeGitHub:
             return {"default_branch": "trunk"}
         if url == RUN:
             return self.runs.pop(0) if len(self.runs) > 1 else self.runs[0]
-        if url.startswith(f"{RUN}/artifacts"):
-            return {"artifacts": self.artifacts}
+        if url.startswith(f"{RUN}/artifacts?per_page={workflow_summaries.PER_PAGE}&page="):
+            page = int(url.rsplit("=", 1)[1])
+            size = workflow_summaries.PER_PAGE
+            return {"artifacts": self.artifacts[(page - 1) * size : page * size]}
         raise AssertionError(url)
 
     def request_bytes(self, method: str, url: str, token: str) -> bytes:
@@ -125,9 +127,26 @@ def test_run_id_reads_an_existing_run(
 ) -> None:
     fake = FakeGitHub([_done()], [], {})
     _install(monkeypatch, fake)
-    assert _remote(run_id=7, ref="ignored") == 0
+    # A run that kept no summaries, such as one whose jobs all skipped, inspected nothing.
+    assert _remote(run_id=7, ref="ignored") == 1
     assert all(method == "GET" for method, _, _ in fake.calls)
-    assert "kept no step summaries" in capsys.readouterr().err
+    assert f"Run 7 kept no step summaries (step-summaries-* artifacts), so nothing was inspected: {PAGE}" in (
+        capsys.readouterr().err
+    )
+
+
+def test_reads_every_page_of_artifacts(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], no_sleep: list[float]
+) -> None:
+    monkeypatch.setattr(workflow_summaries, "PER_PAGE", 1)
+    artifacts = [_artifact("other"), _artifact("step-summaries-x")]
+    zips = {f"{API}/zip/step-summaries-x": _zip({"s.md": "second page"})}
+    fake = FakeGitHub([_done()], artifacts, zips)
+    _install(monkeypatch, fake)
+    assert _remote(run_id=7) == 0
+    assert "second page" in capsys.readouterr().out
+    pages = [url for _, url, _ in fake.calls if "/artifacts?" in url]
+    assert pages == [f"{RUN}/artifacts?per_page=1&page={page}" for page in (1, 2, 3)]
 
 
 def test_failed_run_still_prints_its_summaries(
@@ -166,7 +185,8 @@ def test_dispatch_without_a_run_id(monkeypatch: pytest.MonkeyPatch, response: ob
 def test_command_line(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], no_sleep: list[float]
 ) -> None:
-    fake = FakeGitHub([_done()], [], {})
+    zips = {f"{API}/zip/step-summaries-x": _zip({"s.md": "S"})}
+    fake = FakeGitHub([_done()], [_artifact("step-summaries-x")], zips)
     _install(monkeypatch, fake)
     monkeypatch.setenv("GITHUB_TOKEN", "tok")
     argv = ["inspect-remote", "--repo", "o/r", "--workflow", "w.yml", "--ref", "dev", "--timeout", "1"]
@@ -178,11 +198,37 @@ def test_command_line(
     )
 
 
+def test_command_line_run_id_starts_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], no_sleep: list[float]
+) -> None:
+    zips = {f"{API}/zip/step-summaries-x": _zip({"s.md": "S"})}
+    fake = FakeGitHub([_done()], [_artifact("step-summaries-x")], zips)
+    _install(monkeypatch, fake)
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+    assert secrets.main(["inspect-remote", "--repo", "o/r", "--run-id", "7"]) == 0
+    assert all(method == "GET" for method, _, _ in fake.calls)
+
+
+def test_command_line_converts_minutes_to_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    def fake_inspect_remote(repo: str, token: str, **options: Any) -> int:
+        seen.update(options, repo=repo, token=token)
+        return 0
+
+    monkeypatch.setattr(workflow_summaries, "inspect_remote", fake_inspect_remote)
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+    assert secrets.main(["inspect-remote", "--repo", "o/r", "--timeout", "1.5", "--interval", "2"]) == 0
+    assert seen["timeout"] == 90
+    assert seen["interval"] == 2
+
+
 @pytest.mark.parametrize("option", ["--timeout", "--interval"])
-def test_rejects_non_positive_times(option: str, capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize("value", ["0", "-1", "nan", "inf"])
+def test_rejects_bad_times(option: str, value: str, capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
-        secrets.main(["inspect-remote", option, "0"])
-    assert "must be more than 0" in capsys.readouterr().err
+        secrets.main(["inspect-remote", option, value])
+    assert "must be a number more than 0" in capsys.readouterr().err
 
 
 def test_request_bytes_returns_the_raw_body(monkeypatch: pytest.MonkeyPatch) -> None:

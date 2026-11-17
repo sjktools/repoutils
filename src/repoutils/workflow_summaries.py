@@ -12,6 +12,7 @@ Stdlib-only, like every repoutils module."""
 
 import argparse
 import io
+import math
 import os
 import sys
 import zipfile
@@ -72,16 +73,24 @@ def wait(repo: str, run_id: int, token: str, *, interval: float, timeout: float)
         told = held
         if run.get("status") == "completed" and held is None:
             return run
-        if monotonic() >= deadline:
+        left = deadline - monotonic()
+        if left <= 0:
             raise TimeoutError(f"Run {run_id} hadn't finished after {timeout:g} seconds: {run.get('html_url')}")
-        sleep(interval)
+        sleep(min(interval, left))
 
 
 def summaries(repo: str, run_id: int, token: str) -> list[Summary]:
     """The step summaries in the run's step-summaries-* artifacts, by artifact
     name and then path."""
     url = f"{github.API_URL}/repos/{repo}/actions/runs/{run_id}/artifacts?per_page={PER_PAGE}"
-    artifacts = github.request("GET", url, token)["artifacts"]
+    artifacts: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        batch = github.request("GET", f"{url}&page={page}", token)["artifacts"]
+        artifacts += batch
+        if len(batch) < PER_PAGE:
+            break
+        page += 1
     found: list[Summary] = []
     for artifact in sorted(artifacts, key=lambda a: str(a["name"])):
         name = str(artifact["name"])
@@ -114,7 +123,8 @@ def inspect_remote(
     interval: float,
     timeout: float,
 ) -> int:
-    """Run (or read) the workflow and print its step summaries; exit 0 only if the run succeeded."""
+    """Run (or read) the workflow and print its step summaries; exit 0 only
+    if the run succeeded and kept some."""
     if run_id is None:
         ref = ref or default_branch(repo, token)
         run_id = dispatch(repo, workflow, ref, token)
@@ -127,7 +137,13 @@ def inspect_remote(
         print()
     conclusion = run.get("conclusion")
     if not found:
-        print(f"Run {run_id} kept no step summaries ({ARTIFACT_PREFIX}* artifacts).", file=sys.stderr)
+        # Such as when every job was skipped: inspect-secrets.yml's jobs only run on main.
+        print(
+            f"Run {run_id} kept no step summaries ({ARTIFACT_PREFIX}* artifacts), so nothing was inspected: "
+            f"{run.get('html_url')}",
+            file=sys.stderr,
+        )
+        return 1
     if conclusion != "success":
         print(f"Run {run_id} finished with conclusion {conclusion}: {run.get('html_url')}", file=sys.stderr)
         return 1
@@ -137,8 +153,8 @@ def inspect_remote(
 
 def _positive(text: str) -> float:
     value = float(text)
-    if value <= 0:
-        raise argparse.ArgumentTypeError("must be more than 0")
+    if not math.isfinite(value) or value <= 0:
+        raise argparse.ArgumentTypeError("must be a number more than 0")
     return value
 
 
@@ -151,7 +167,8 @@ def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]"
         description=f"Dispatch the workflow that runs `secrets inspect` (default {DEFAULT_WORKFLOW}), "
         f"wait for it, and print the step summaries its jobs keep as {ARTIFACT_PREFIX}* artifacts. "
         "While GitHub holds the run for approval, print where to approve it and keep waiting. "
-        "Fails unless the run succeeds. Uses $GITHUB_TOKEN, defaulting to `gh auth token`, "
+        "Fails unless the run succeeds and keeps some step summaries. "
+        "Uses $GITHUB_TOKEN, defaulting to `gh auth token`, "
         "which needs the Actions write permission to dispatch, and Actions read for --run-id.",
     )
     parser.add_argument(

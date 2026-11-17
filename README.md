@@ -687,8 +687,13 @@ Then it prints the step summaries that the jobs of the run upload as `step-summa
 GitHub can hold a run for approval, and a job can wait for approval to deploy to an environment.
 In both cases, `inspect-remote` prints the address of the run, where you can approve it, and continues to wait.
 Pass `--run-id ID` to print the summaries of an existing run instead of starting one.
-`inspect-remote` fails when the run does not succeed, or when the run does not finish within 30 minutes (`--timeout MINUTES`).
-It uses `$GITHUB_TOKEN`, or `gh auth token` when that variable is not set, and the token needs the Actions write permission to start the workflow.
+`inspect-remote` fails in these cases:
+
+- The run does not succeed.
+- The run keeps no step summaries, for example because it ran on a branch other than `main`, where the jobs of `inspect-secrets.yml` do not run.
+- The run does not finish within 30 minutes (`--timeout MINUTES`).
+
+It uses `$GITHUB_TOKEN`, or `gh auth token` when that variable is not set, and the token needs the Actions write permission to start the workflow, or only the Actions read permission with `--run-id`.
 
 `repoutils secrets export` also runs inside a GitHub Actions workflow and writes an encrypted backup of the secret values using [age](https://age-encryption.org).
 Pass the job secrets in `SECRETS_JSON` in the same way as for `inspect`.

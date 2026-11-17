@@ -335,7 +335,9 @@ class MainTests(_GitRepoTestCase):
         ):
             code, _, _ = self._run(["--base", "", "--repo", "", "--post", "7", "--author", "bot"], gh)
         self.assertEqual(code, 0)
-        gh_output.assert_called_once_with("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+        gh_output.assert_called_once_with(
+            "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner", cwd=self.repo
+        )
         [(_, url, body)] = gh.writes()
         self.assertEqual(url, f"{github_comments.API_URL}/repos/o/r/issues/7/comments")
         self.assertIn("](https://github.com/o/r/blob/", body["body"])

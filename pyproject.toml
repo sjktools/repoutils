@@ -197,7 +197,8 @@ required-status-checks = [
     { context = "check-and-build", app = "github-actions" },
     { context = "coverage", app = "github-actions" },
     # These three report on the PR, so they fail if the base's long-files,
-    # added-strings or post-patch-coverage is broken (coverage runs the PR's).
+    # added-strings or post-patch-coverage is broken. The coverage job runs
+    # the PR's own copy of each, with --output for post-patch-coverage.
     { context = "long-files", app = "github-actions" },
     { context = "added-strings", app = "github-actions" },
     { context = "post-patch-coverage", app = "github-actions" },

@@ -346,7 +346,9 @@ def main(argv: list[str]) -> int:
         )
         repo = args.repo
         if args.post is not None and not repo:
-            repo = github_comments.gh_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+            repo = github_comments.gh_output(
+                "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner", cwd=cwd
+            )
         body = render(findings, base=base, commit=commit, repo=repo)
         if args.post is None:
             print(body, end="")

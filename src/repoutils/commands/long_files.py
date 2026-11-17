@@ -295,7 +295,9 @@ def main(argv: list[str]) -> int:
         commit = args.commit or _git(cwd, "rev-parse", "HEAD").strip()
         repo = args.repo
         if args.post is not None and not repo:
-            repo = github_comments.gh_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+            repo = github_comments.gh_output(
+                "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner", cwd=cwd
+            )
         body = render(report, base=args.base or None, commit=commit, repo=repo, policy=config.policy)
         if args.post is None:
             print(body, end="")

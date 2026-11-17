@@ -111,19 +111,19 @@ check-release version index="https://pypi.org/simple/":
     echo "repoutils $1 did not install from $2 and run" >&2
     exit 1
 
-# Lint with ruff. ruff only warns about an invalid noqa directive or rule code
-# list, so fail on those warnings too. --no-cache, as ruff gives them only for
-# files it reparses.
+# Lint with ruff, failing on any warning too, as ruff only warns about such
+# things as an invalid noqa directive. --no-cache, as ruff gives those only for
+# files it reparses. uv's --quiet keeps uv's own warnings out of the check.
 lint:
     #!/usr/bin/env bash
     set -euo pipefail
     stderr="$(mktemp)"
     trap 'rm -f "$stderr"' EXIT
     status=0
-    uv run --group dev ruff check --no-cache . 2>"$stderr" || status=$?
+    uv run --quiet --group dev ruff check --no-cache . 2>"$stderr" || status=$?
     cat "$stderr" >&2
-    if grep -Eq '^warning: .*(noqa|rule code)' "$stderr"; then
-        echo 'ruff warned about a noqa directive (see above)' >&2
+    if grep -q '^warning:' "$stderr"; then
+        echo 'ruff gave a warning (see above)' >&2
         exit 1
     fi
     exit "$status"

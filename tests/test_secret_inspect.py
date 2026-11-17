@@ -161,6 +161,17 @@ def test_token_hash_ignores_surrounding_whitespace(monkeypatch: pytest.MonkeyPat
     assert finding.sha256 == secret_inspect.token_hash(CLASSIC)
 
 
+def test_short_token_gets_no_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A short value could be recovered from its hash by trying every one.
+    api = FakeAPI({("/user", "ghp_1234"): _http_error(401)})
+    assert _inspect(tmp_path, monkeypatch, {"CLASSIC": "ghp_1234"}, ["--exit-zero"], api) == 0
+    assert secret_inspect.token_hash("ghp_1234") not in capsys.readouterr().out
+    summary = (tmp_path / "summary.md").read_text()
+    assert "| `CLASSIC` | classic personal access token |   |   |   |   |\n" in summary
+
+
 def test_only_tokens_get_a_hash() -> None:
     assert secret_inspect.describe("T", "plain", NOW, 14).sha256 == ""
     assert secret_inspect.describe("T", _openssh_key()[0], NOW, 14).sha256 == ""
@@ -215,7 +226,6 @@ def test_refresh_token_is_not_sent(monkeypatch: pytest.MonkeyPatch) -> None:
         "T",
         "GitHub App refresh token",
         access="a refresh token can't call the API",
-        sha256=secret_inspect.token_hash("ghr_abc"),
     )
 
 

@@ -56,6 +56,10 @@ _OPENSSH_MAGIC = b"openssh-key-v1\0"
 # repository's tokens apart. A GitHub token is far too random for its hash to
 # lead back to it, but other secrets may not be, so only tokens get one.
 HASH_DIGITS = 12
+# The shortest token that gets a hash. GitHub's tokens are at least this long
+# (a prefix and 36 random characters), and a shorter value with a token's
+# prefix may be short enough to recover from its hash by trying every one.
+MIN_HASHED_LENGTH = 40
 EXPIRY_HEADER = "GitHub-Authentication-Token-Expiration"
 
 
@@ -233,8 +237,9 @@ def describe(name: str, value: str, now: datetime, within: int) -> Finding:
         if stripped != value:
             finding.problems.append("has whitespace around the token, which breaks most uses of it")
         if _TOKEN_RE.fullmatch(stripped):
-            # Only a well-formed token: a malformed value may not be random enough to hash.
-            finding.sha256 = token_hash(stripped)
+            # Only a well-formed, full-length token: anything else may not be random enough to hash.
+            if len(stripped) >= MIN_HASHED_LENGTH:
+                finding.sha256 = token_hash(stripped)
             _inspect_token(finding, stripped, now, within)
         else:
             finding.problems.append("has characters a GitHub token can't, so it wasn't tried")

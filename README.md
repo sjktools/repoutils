@@ -667,6 +667,7 @@ It also reports the scopes of a classic personal access token, or the number of 
 The GitHub API does not report which repositories a fine-grained token can access, so `inspect` does not report them.
 `inspect` also reports the first 12 hexadecimal digits of the SHA-256 hash of each GitHub token, so you can see whether two secrets hold the same token.
 A GitHub token is too random for anyone to recover it from its hash, but other secret values can be less random, so `inspect` does not hash them.
+For the same reason, `inspect` does not hash a value shorter than 40 characters, even when it has a token prefix, as every GitHub token is at least that long.
 An installation token expires after one hour, so `inspect` always reports an installation token stored in a secret as expiring.
 When a secret value is an OpenSSH private key, `inspect` reports the public key fingerprint, which also appears on the GitHub deploy keys page.
 For any other secret value, `inspect` reports only the secret name.

@@ -32,7 +32,8 @@ environments hold without declaring one of them as its ``environment``.
 (``actions`` and ``other``, or ``environments.<name>`` with ``--environment``)
 it reports what it is: a GitHub token's type, owner, expiry and the start of
 its SHA-256 hash, or an SSH key's fingerprint, never the value. It also reports
-every other secret the job gets as unexpected (see repoutils.secret_inspect).
+every other secret the job gets, with a warning that it's unexpected (see
+repoutils.secret_inspect).
 ``export`` writes the same secrets' values as TOML encrypted with age, for a
 workflow to upload as a backup (see repoutils.secret_export).
 Stdlib-only, like every repoutils command."""

@@ -655,7 +655,8 @@ The command ignores `GITHUB_TOKEN` (which GitHub provides automatically) and ign
 Use `inspect` to identify which token or key a secret contains and to detect tokens that will expire soon.
 Pass the job secrets to the command in the environment variable `SECRETS_JSON: ${{ toJSON(secrets) }}`.
 By default, `inspect` reports on the secrets in `actions` and `other`, or on the secrets for one environment when you pass `--environment NAME`.
-`inspect` also reports on every other secret in `SECRETS_JSON` that `pyproject.toml` does not list for the job, and marks each one as unexpected.
+`inspect` also reports on every other secret in `SECRETS_JSON` that `pyproject.toml` does not list for the job, and warns that each one is unexpected.
+An unexpected secret does not make `inspect` fail.
 A job that deploys to an environment also receives the repository and organization secrets, so `inspect --environment NAME` expects the secrets in `actions` and `other` as well, but does not report on them.
 A workflow job receives the secrets of an environment only when the job deploys to that environment, so inspect each environment in a separate job.
 Workflows not triggered by Dependabot cannot read Dependabot secrets, so `inspect` skips `dependabot`.
@@ -676,9 +677,8 @@ The command writes a Markdown summary table to `$GITHUB_STEP_SUMMARY` (or to `--
 - GitHub rejects a token.
 - A token expires within 14 days (`--expires-within DAYS`).
 - A token has surrounding whitespace.
-- A secret is unexpected.
 
-Passing `--exit-zero` ignores those four findings, but the command still exits non-zero on a failed network request or an unparseable expiration date.
+Passing `--exit-zero` ignores those three findings, but the command still exits non-zero on a failed network request or an unparseable expiration date.
 
 `repoutils secrets export` also runs inside a GitHub Actions workflow and writes an encrypted backup of the secret values using [age](https://age-encryption.org).
 Pass the job secrets in `SECRETS_JSON` in the same way as for `inspect`.

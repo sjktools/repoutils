@@ -357,7 +357,8 @@ def test_inspect_unexpected_secrets(
     # The repository's job doesn't expect an environment's secrets, or one pyproject.toml lists nowhere.
     api = FakeAPI({("/user", CLASSIC): _user("alice"), ("/user", FINE): _user("bob")})
     values = {"CLASSIC": CLASSIC, "FINE": FINE, "STRAY": "s", "AUTOFIX": FINE, "DEPLOY_KEY": "k"}
-    assert _inspect(tmp_path, monkeypatch, values, [], api) == 1
+    # Unexpected secrets are a warning, which doesn't fail the job.
+    assert _inspect(tmp_path, monkeypatch, values, [], api) == 0
     out = capsys.readouterr().out
     assert "STRAY: not a GitHub token or SSH key\n" in out
     # An unexpected token is inspected like any other, so it can be matched to the declared one.
@@ -365,11 +366,13 @@ def test_inspect_unexpected_secrets(
     assert f"AUTOFIX: fine-grained personal access token, owner bob, expires never, SHA-256 starts {fine}\n" in out
     for name in ("AUTOFIX", "DEPLOY_KEY", "STRAY"):
         assert f"{name}: {secret_inspect.UNEXPECTED}\n" in out
-    assert "3 problem(s) with the 6 secret(s) inspected.\n" in out
+    assert out.endswith("Inspected 6 secret(s), with no problems.\n")
     summary = (tmp_path / "summary.md").read_text()
     assert "| `STRAY` (unexpected) | not a GitHub token or SSH key |" in summary
-    assert f"- `STRAY`: {secret_inspect.UNEXPECTED}\n" in summary
-    assert _inspect(tmp_path, monkeypatch, values, ["--exit-zero"], api) == 0
+    assert (
+        "> [!WARNING]\n> pyproject.toml doesn't list these secrets for this job: `AUTOFIX`, `DEPLOY_KEY`, `STRAY`.\n"
+    ) in summary
+    assert "### Problems" not in summary
 
 
 def test_inspect_environment_expects_repository_secrets(

@@ -3,11 +3,12 @@ finding the matching token on GitHub's settings pages, without ever showing a
 value or any part of one. Kept apart from the secrets command for length.
 
 The workflow passes the secrets as ``${{ toJSON(secrets) }}`` in $SECRETS_JSON.
-It inspects every secret the job gets, and reports any that pyproject.toml
-doesn't list for the job as unexpected. A value that looks like a GitHub token
-is used for an API request of its own, which gives its owner and its expiry,
-and is reported with the start of its SHA-256 hash, so that two secrets holding
-the same token can be told apart from two holding different ones. An OpenSSH
+It inspects every secret the job gets, and warns about any that pyproject.toml
+doesn't list for the job, as unexpected, without failing. A value that looks
+like a GitHub token is used for an API request of its own, which gives its
+owner and its expiry, and is reported with the start of its SHA-256 hash, so
+that two secrets holding the same token can be told apart from two holding
+different ones. An OpenSSH
 private key gives its public key's fingerprint, as GitHub's deploy key page
 shows it. Anything else is reported by name only.
 Stdlib-only, like every repoutils module."""
@@ -268,6 +269,14 @@ def summary_markdown(title: str, findings: list[Finding]) -> str:
         lines.append(f"| {name} | {' | '.join(_cell(cell) for cell in cells)} |")
     problems = [f"- `{f.name}`: {problem}" for f in findings for problem in f.problems]
     errors = [f"- `{f.name}`: {f.error}" for f in findings if f.error]
+    unexpected = [f"`{f.name}`" for f in findings if f.unexpected]
+    if unexpected:
+        lines += [
+            "",
+            "> [!WARNING]",
+            f"> pyproject.toml doesn't list these secrets for this job: {', '.join(unexpected)}.",
+            "> Delete each one from where it is set, or list it in pyproject.toml.",
+        ]
     if problems:
         lines += ["", "### Problems", "", *problems]
     if errors:
@@ -300,8 +309,8 @@ def read_secrets(text: str) -> dict[str, str]:
     return {name.upper(): value for name, value in secrets.items()}
 
 
-# What makes a secret unexpected, for the report.
-UNEXPECTED = "unexpected: pyproject.toml doesn't list it for this job"
+# The warning for an unexpected secret, which isn't a problem: the job still passes.
+UNEXPECTED = "warning: unexpected, as pyproject.toml doesn't list it for this job"
 
 
 def inspect(
@@ -328,11 +337,12 @@ def inspect(
     for name in sorted(name for name in values if name not in known):
         finding = describe(name, values[name], now, within)
         finding.unexpected = True
-        finding.problems.insert(0, UNEXPECTED)
         findings.append(finding)
     for finding in findings:
         print(_line(finding))
     for finding in findings:
+        if finding.unexpected:
+            print(f"{finding.name}: {UNEXPECTED}")
         for problem in finding.problems:
             print(f"{finding.name}: {problem}")
         if finding.error:
@@ -370,7 +380,7 @@ def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]"
         f"as ${{{{ toJSON(secrets) }}}} in ${ENV_VAR}: each GitHub token's type, owner and expiry, "
         "from a request made with it, and the start of its SHA-256 hash, and each SSH key's fingerprint. "
         "Also reports every secret the job gets that pyproject.toml doesn't list for it, as unexpected. "
-        "Never shows a value. Fails if GitHub rejects a token, a token expires soon, or a secret is unexpected.",
+        "Never shows a value. Fails if GitHub rejects a token or it expires soon.",
     )
     inspect_parser.add_argument(
         "--environment",
@@ -392,6 +402,6 @@ def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]"
     inspect_parser.add_argument(
         "--exit-zero",
         action="store_true",
-        help="exit 0 even if a token is rejected or expires soon, or a secret is unexpected "
+        help="exit 0 even if a token is rejected or expires soon "
         "(still exit 1 if one can't be inspected, unlike `|| true`)",
     )

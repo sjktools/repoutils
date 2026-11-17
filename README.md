@@ -1,17 +1,18 @@
 # repoutils
 
-repoutils is a set of repository checks and CI helpers for Python projects that use uv, just and GitHub Actions.
-You run it as `repoutils <command>`.
+`repoutils` is a package of repository checks and CI helper commands for Python projects that use `uv`, `just` and GitHub Actions.
+Run a command as `repoutils <command>`.
 
-I used to keep these checks and helpers in the `scripts/` directories of several personal projects, such as [exolot](https://github.com/skissane/exolot).
-I pulled them together here so that each project can depend on one package instead of keeping its own copies.
+These checks and helper commands previously lived in the `scripts/` directories of several personal projects, such as [exolot](https://github.com/skissane/exolot).
+This package collects them in one place so that each project can depend on one package instead of maintaining separate copies.
 
-repoutils has no dependencies, and needs only the Python standard library (3.12 or later).
-It should stay that way, because projects run it in CI jobs that hold write-capable tokens or check out untrusted Dependabot branches, and nothing else should be installed in those jobs.
+`repoutils` has no runtime dependencies and uses only the Python standard library (Python 3.12 or later).
+It should keep zero dependencies because projects run it in CI jobs that hold write-capable tokens or check out untrusted Dependabot branches.
+Those CI jobs should not install any other packages.
 
 ## Installing
 
-Give repoutils its own dependency group, and include that group in `dev`:
+Put `repoutils` in a separate dependency group in `pyproject.toml`, and include that group in `dev`:
 
 ```toml
 [dependency-groups]
@@ -19,54 +20,61 @@ repoutils = ["repoutils>=0.1.0"]
 dev = [{ include-group = "repoutils" }, "pytest>=9"]
 ```
 
-Then run a command with `uv run repoutils <command>`.
-In a job with a write-capable token, use `uv run --only-group repoutils repoutils <command>` instead.
-That installs only repoutils, hash-checked against `uv.lock`, and not the project or its other dependencies.
+Run a command with `uv run repoutils <command>`.
+In a CI job with a write-capable token, run `uv run --only-group repoutils repoutils <command>` instead.
+That command installs only `repoutils`, verifies its hashes against `uv.lock`, and does not install the project or other dependencies.
 
 ## Commands
 
-`repoutils --help` lists the commands, and `repoutils <command> --help` shows a command's options.
+Run `repoutils --help` to list all commands, and run `repoutils <command> --help` to show the options for one command.
 
 | Command | What it does |
 | --- | --- |
-| `check-whitespace` | Fails on trailing whitespace, a leading blank line or a missing or extra final newline in any Git-tracked text file. |
-| `check-sentence-per-line` | Fails if a Markdown file has two sentences on one line. It checks the files you name, or else the configured files (default `AGENTS.md` and `README.md`). |
-| `check-prose` | Fails if a configured Markdown file's prose has long, clause-heavy sentences, or too many short ones. |
-| `check-blame-ignore-revs` | Fails unless `.git-blame-ignore-revs` lists only full hashes of commits that are ancestors of a target. |
-| `check-screenshots-dir` | Fails unless the screenshots directory's `.gitignore` is the only file tracked there, and still ignores everything else. |
-| `git-config-setup` | Sets the repo's local `blame.ignoreRevsFile`; idempotent, for a justfile to run on every recipe. |
-| `long-files` | Lists the files over a line limit as Markdown, changed files first, or posts that to a PR. |
-| `check-pins` | Fails unless every `setup-uv` and `setup-just` step pins the versions `pyproject.toml` and the justfile require. |
-| `check-checkout-credentials` | Fails on any `actions/checkout` step that doesn't set `persist-credentials`. |
-| `claude-route` | Prints `review`, `other` or `none` for a comment on stdin, for routing between the Claude workflows. |
-| `requirements-min-versions` | Checks or fixes `pyproject.toml`'s `>=` minimums against the versions in `uv.lock`. |
-| `dependabot-relock` | Re-locks a Dependabot branch's `uv.lock` with this uv, to exactly Dependabot's versions. |
-| `check-lock-platforms` | Fails if `uv.lock` has wheels for platforms the project doesn't allow. |
-| `post-comment` | Posts a Markdown file to a PR, editing the earlier comment (and with `--update-only`, posting nothing if there is none) or hiding it with `--hide-previous`. |
-| `added-strings` | Lists the lines a PR adds that have strings `pyproject.toml` configures, such as `# noqa:`, or posts that to a PR, for information only. |
-| `post-patch-coverage` | Posts diff-cover's Markdown patch coverage report to a PR, reformatted, with the project's coverage and its change from the PR's base, and warns when either falls short. |
-| `post-coverage-status` | Posts a commit's project and patch coverage as commit statuses, as a record and not a gate. |
-| `wait-for-base-coverage` | Waits for a PR's base commit to have its `coverage/project` status, so the PR's comparison works. |
-| `post-screenshots` | Uploads a directory of PNGs and posts them to a PR as a comment. |
-| `recreate-pr` | Recreates a PR as a draft from the same branch and closes the original. |
-| `github-settings` | Runs `check`, `ensure` or `dump` across all the GitHub settings commands below. `check` and `ensure` skip the ones `pyproject.toml` doesn't configure, and `dump` runs them all. |
-| `labels` | Checks or creates the labels `pyproject.toml` defines, or prints the ones the repository has. |
-| `repo-settings` | Checks or changes the repository settings `pyproject.toml` gives, or prints the ones the repository has. |
-| `rulesets` | Checks, creates or updates the branch and tag rulesets `pyproject.toml` defines, or prints the ones the repository has. |
-| `environments` | Checks, creates or updates the deployment environments `pyproject.toml` defines, or prints the ones the repository has. |
-| `actions-settings` | Checks or changes the Actions settings `pyproject.toml` gives, or prints the ones the repository has. |
-| `secrets` | Checks the repository has the Actions, Dependabot and environment secrets `pyproject.toml` names, or prints the names it has. Also checks the workflows use exactly those secrets. In a workflow, it reports what each token secret is, or backs up their values encrypted with age. |
-| `variables` | Checks the repository has the Actions and environment variables `pyproject.toml` names, each with a value, or prints the names it has. Also checks the workflows use exactly those variables. |
-| `deploy-keys` | Checks or creates the deploy keys `pyproject.toml` declares, and the secrets that hold their private halves, or prints the keys the repository has. |
-| `security-settings` | Checks or changes the security settings `pyproject.toml` gives, such as secret protection, or prints the ones the repository has. |
-| `check-attestations` | Fails unless every distribution in `dist/` has a PEP 740 publish attestation. |
+| `check-whitespace` | Fails on trailing whitespace, a leading blank line, or a missing or extra final newline in any Git-tracked text file. |
+| `check-sentence-per-line` | Fails if a Markdown file has two sentences on one line. It reads the files named on the command line, or else the configured files (by default `AGENTS.md` and `README.md`). |
+| `check-prose` | Fails if the prose in a configured Markdown file has long sentences, many joined clauses, or too many short sentences. |
+| `check-blame-ignore-revs` | Fails unless `.git-blame-ignore-revs` lists only full commit hashes that are ancestors of a target commit. |
+| `check-screenshots-dir` | Fails unless `.gitignore` is the only tracked file in the screenshots directory and ignores all other files in that directory. |
+| `git-config-setup` | Sets the local `blame.ignoreRevsFile` Git setting (idempotent, so a justfile can run it before every recipe). |
+| `long-files` | Lists the files over a line limit as Markdown (with changed files first), or posts that list to a pull request. |
+| `check-pins` | Fails unless every `setup-uv` and `setup-just` workflow step pins the versions required by `pyproject.toml` and the justfile. |
+| `check-checkout-credentials` | Fails on any `actions/checkout` step that does not set `persist-credentials`. |
+| `claude-route` | Reads a comment from standard input and prints `review`, `other` or `none` to route between the Claude workflows. |
+| `requirements-min-versions` | Checks or updates the `>=` minimum versions in `pyproject.toml` to match the versions in `uv.lock`. |
+| `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
+| `check-lock-platforms` | Fails if `uv.lock` contains wheels for platforms that the project does not allow. |
+| `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment (posting nothing with `--update-only` when none exists) or hides it when you pass `--hide-previous`. |
+| `added-strings` | Lists the added lines in a pull request that match strings configured in `pyproject.toml` (such as `# noqa:`), or posts the list to the pull request. |
+| `post-patch-coverage` | Formats the Markdown patch coverage report from `diff-cover`, adds the project coverage and the change from the base commit, posts the report to a pull request, and warns when coverage drops or falls below a limit. |
+| `post-coverage-status` | Posts the project and patch coverage of a commit as GitHub commit statuses for information only. |
+| `wait-for-base-coverage` | Waits until the base commit of a pull request has a `coverage/project` commit status so that `post-patch-coverage` can compare coverage. |
+| `post-screenshots` | Uploads PNG files from a directory and posts them to a pull request in a comment. |
+| `recreate-pr` | Recreates a pull request as a draft from the same branch and closes the original pull request. |
+| `github-settings` | Runs `check`, `ensure` or `dump` across all GitHub settings commands below. `check` and `ensure` skip commands not configured in `pyproject.toml`, and `dump` runs all commands. |
+| `labels` | Checks or creates the issue labels defined in `pyproject.toml`, or prints the labels that exist in the repository. |
+| `repo-settings` | Checks or updates the repository settings defined in `pyproject.toml`, or prints the current settings of the repository. |
+| `rulesets` | Checks, creates or updates the branch and tag rulesets defined in `pyproject.toml`, or prints the current rulesets of the repository. |
+| `environments` | Checks, creates or updates the deployment environments defined in `pyproject.toml`, or prints the current environments of the repository. |
+| `actions-settings` | Checks or updates the GitHub Actions settings defined in `pyproject.toml`, or prints the current settings of the repository. |
+| `secrets` | Checks that the repository has the Actions, Dependabot and environment secrets listed in `pyproject.toml`, or prints the secret names in the repository. Also checks that workflows use only those secrets, inspects token secrets in a workflow, or exports secret values encrypted with `age`. |
+| `variables` | Checks that the repository has the Actions and environment variables listed in `pyproject.toml` with non-empty values, or prints the variable names in the repository. Also checks that workflows use only those variables. |
+| `deploy-keys` | Checks or creates the deploy keys declared in `pyproject.toml` and the secrets that store their private keys, or prints the deploy keys in the repository. |
+| `security-settings` | Checks or updates the security settings defined in `pyproject.toml` (such as secret protection), or prints the current security settings of the repository. |
+| `check-attestations` | Fails unless every distribution file in `dist/` has a PEP 740 publish attestation. |
 
-The commands that post to a PR need a GitHub token, and so do `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys` and `security-settings`.
-They read `$GITHUB_TOKEN`, and fall back to `gh auth token`.
+These commands require a GitHub token:
+
+- any command that posts to a pull request, and `post-coverage-status`
+- the `github-settings`, `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys` and `security-settings` commands
+
+These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when `$GITHUB_TOKEN` is not set.
+`wait-for-base-coverage` sends `$GITHUB_TOKEN` when it is set, and does not run `gh auth token`.
+Of the `secrets` and `variables` subcommands, only `check` and `dump` use the token.
 
 ## Configuration
 
-Settings go in the project's `pyproject.toml`, and all of them are optional:
+Put all configuration settings in `pyproject.toml`.
+Every setting is optional:
 
 ```toml
 [tool.repoutils]
@@ -196,284 +204,298 @@ secret = { environment = "release", name = "RELEASE_DEPLOY_KEY" }
 
 ### Prose
 
-`repoutils check-prose` measures the prose in each configured Markdown file, and fails a file whose sentences are, on the whole, long and full of joined clauses.
-That style is common in machine-written documents, and it's tiring to read.
+`repoutils check-prose` measures the prose in each configured Markdown file.
+It fails when the sentences in a file are too long or contain too many joined clauses.
+Machine-generated text often uses that style, which is difficult to read.
 
-The opposite fault fails too.
-Prose that has been cut up only to get under the limits ends up as a run of very short sentences, which reads no better.
-So one limit caps how many of those a file can have.
-That limit leaves out list items, where a terse sentence is at home.
-It also leaves out a sentence that ends in a colon, which leads into a list or a code block.
-Treat the limits as ceilings and not as targets, and leave a sentence alone if the file already passes.
+The command also fails when a file has too many very short sentences.
+Authors sometimes split sentences into fragments only to stay below the word limit, which is also difficult to read.
+One limit therefore caps the percentage of short sentences in a file.
+That limit excludes list items, because short sentences are normal in lists.
+That limit also excludes sentences that end with a colon before a list or a code block.
+Treat all limits as maximum values rather than targets, and do not edit sentences when the file already passes.
 
-The command skips code blocks, headings, tables, block quotes, comments and any line that starts with an HTML block tag.
-A block quote runs on to the next blank line, list item or heading.
-It counts inline code as one word, and a URL as one word.
-Text with no closing punctuation, or with fewer than three words, isn't counted, such as a terse bullet.
+The command skips code blocks, headings, tables, block quotes, HTML comments, and lines that start with an HTML block tag.
+A block quote continues until the next blank line, list item or heading.
+The command counts an inline code span as one word and a URL as one word.
+It ignores text that has no closing punctuation or has fewer than three words, such as a short list item.
 
-It reads sentences as English punctuates them.
-A sentence ends at a full stop, a question mark or an exclamation mark, and the next one starts with a capital, a digit or inline code.
-A colon ends one too, at the end of a paragraph or a list item.
-A new line after one of those marks starts a sentence too, whatever its first word is.
-So in a wrapped paragraph, a sentence that starts mid-line with a lowercase word, such as "uv", is read as part of the one before it.
+The command splits sentences according to standard English punctuation.
+A sentence ends at a full stop, question mark or exclamation mark when the next sentence starts with an uppercase letter, digit or inline code.
+A colon at the end of a paragraph or list item also ends a sentence.
+A newline after any of those punctuation marks always starts a new sentence, regardless of the first character on the next line.
+In a wrapped paragraph, a sentence that starts mid-line with a lowercase word (such as `uv`) is counted as part of the previous sentence.
 
 | Setting | Default | What it limits |
 |---|---|---|
-| `max-words-per-sentence` | 18 | The mean number of words in a sentence. |
-| `max-long-sentences` | 12 | The percentage of sentences with more than `long-sentence-words` words (default 30). |
-| `max-short-sentences` | 25 | The percentage of sentences with fewer than `short-sentence-words` words (default 8), list items and lead-ins aside. |
-| `max-commas-per-sentence` | 1.3 | The mean number of commas in a sentence. |
-| `max-semicolons-per-sentence` | 0.05 | The mean number of semicolons in a sentence. |
-| `max-joints-per-sentence` | 0.6 | The mean number of clause joints in a sentence. |
+| `max-words-per-sentence` | 18 | Mean number of words per sentence. |
+| `max-long-sentences` | 12 | Percentage of sentences with more than `long-sentence-words` words (default 30). |
+| `max-short-sentences` | 25 | Percentage of sentences with fewer than `short-sentence-words` words (default 8), excluding list items and sentences ending with a colon. |
+| `max-commas-per-sentence` | 1.3 | Mean number of commas per sentence. |
+| `max-semicolons-per-sentence` | 0.05 | Mean number of semicolons per sentence. |
+| `max-joints-per-sentence` | 0.6 | Mean number of clause joints per sentence. |
 
-A clause joint is a semicolon, a colon, a dash or a comma before a word such as "and", "but", "because" or "which".
-Set a limit to `false` to turn it off.
-A file with fewer than `min-sentences` sentences (default 15) is too short to judge, and passes.
-`min-sentences`, `long-sentence-words` and `short-sentence-words` are whole numbers.
+A clause joint is a semicolon, a colon, a dash, or a comma before a conjunction such as "and", "but", "because" or "which".
+Set any limit to `false` to disable that limit.
+A file with fewer than `min-sentences` sentences (default 15) is too short to measure and always passes.
+The settings `min-sentences`, `long-sentence-words` and `short-sentence-words` must be integers.
 
-The limits apply to a whole file's rates and not to each sentence, so a file with a few long sentences can still pass.
-Under each limit that a file is over, the command lists the five sentences that add most to it.
-The two limits on long sentences share one list, under the first of them that the file is over.
-`--stats` prints every rate for every file, and `--exit-zero` reports the same but exits 0.
-`--stats` also prints one rate that no setting limits, the sentence-length CV: the standard deviation of sentence length divided by its mean.
+The limits apply to the average rates across the whole file rather than to individual sentences.
+A file can contain a few long sentences and still pass.
+For each limit that a file exceeds, the command prints the five sentences that contribute the most to that rate.
+The two limits for long sentences share one list of sentences under the first exceeded limit.
+Pass `--exit-zero` to print the same output and exit with code `0`.
+Pass `--stats` to print all rates for every file.
+`--stats` also prints the sentence-length CV, which no setting limits: the standard deviation of sentence length divided by the mean sentence length.
 
-A file that can't be read, such as one that isn't valid UTF-8, is reported on one line as `<file>: cannot read (<reason>)`.
-The command still checks the other files and then exits 1, even with `--exit-zero`, and `check-sentence-per-line` treats such a file the same way.
+When the command cannot read a file (for example, when the file is not valid UTF-8), it prints `<file>: cannot read (<reason>)`.
+The command still reads the remaining files, and exits with code `1` even when you pass `--exit-zero`.
+`repoutils check-sentence-per-line` handles unreadable files in the same way.
 
-The defaults for long sentences come from comparing READMEs written before language models with recent machine-written documents.
-That sample was small (17 documents), and the short-sentence limit rests on less still (a few rewrites of this README), so adjust the limits to suit your project.
+The default limits for long sentences come from a sample of 17 documents, both pre-LLM README files and recent machine-generated documents.
+The default limit for short sentences comes from a smaller sample of rewrites of this README, so adjust the limits to fit your project.
 
 ### Added strings
 
-`repoutils added-strings` finds the lines the working tree adds since the merge base of `--base` and `HEAD`, and lists the ones that have any of the configured strings.
-Each entry under `strings` gives either `string`, a plain substring, or `regex`, a Python regular expression searched for in each line.
-Its `message` defaults to asking the author to double check that the string is actually necessary.
-A regex can tell code from a string that names it, which a plain substring can't, so tests and docs that mention it don't trip it.
-For example, `^\s*if TYPE_CHECKING\b` matches only the statement, and repoutils' own `pyproject.toml` has one for a `# noqa` comment.
-A regex's `name` is what the report calls its matches in place of the regex.
+`repoutils added-strings` searches the lines added in the working tree since the merge base of `--base` and `HEAD`.
+It lists every added line that matches any configured pattern in `strings`.
+Each entry in `strings` specifies either `string` (a literal substring) or `regex` (a Python regular expression).
+The default `message` asks the author to verify that the matched text is necessary.
+Unlike a literal substring, a regular expression can match code syntax without matching documentation or test strings that mention that syntax.
+For example, `^\s*if TYPE_CHECKING\b` matches only the `if TYPE_CHECKING` statement, and `repoutils` uses a regular expression in its own `pyproject.toml` for `# noqa` comments.
+For a `regex` entry, `name` sets the label shown in the report instead of the raw regular expression.
 
-`include` and `exclude` are glob patterns for the paths to search, which a `*` matches across `/`.
-The ones in the table apply to every string, and an entry's own narrow its string further.
-The project's own `pyproject.toml` and docs often name the strings, so leave them out.
+The `include` and `exclude` settings take glob patterns for file paths, where `*` matches across `/`.
+The patterns in `[tool.repoutils.added-strings]` apply to all entries, and the patterns on a single entry narrow the search for that entry.
+Exclude `pyproject.toml` and documentation files because those files often mention the configured strings.
 
-The report is for information only, so the command exits 0 whatever it finds.
-It still fails if it can't check, such as on a bad setting, a failed `git` command or a failed request to GitHub.
-With `--post <PR>`, it posts the report only when the PR adds a string.
-If a later push removes them all, it updates the earlier comment to say so, rather than leaving a stale warning.
+The report is for information only, so the command exits with code `0` even when it finds matches.
+The command exits non-zero when it cannot run the check, such as on an invalid setting, failed `git` command or failed GitHub request.
+When you pass `--post <PR>`, the command posts a pull request comment only when the pull request adds a matching string.
+If a later push removes all matches, the command updates the previous comment to state that none remain.
 
 ### Coverage status
 
-`repoutils post-coverage-status <sha>` posts a commit's coverage as two statuses on it, named `coverage/project` and `coverage/patch`.
-The project status comes from `coverage.xml`, and covers the whole project.
-The patch status comes from diff-cover's JSON report (`--patch-report`), and covers the lines that a PR, or a commit outside one, changes.
+`repoutils post-coverage-status <sha>` posts two commit statuses (`coverage/project` and `coverage/patch`) on the specified commit.
+The command reads the project coverage from `coverage.xml` for the whole project.
+It reads the patch coverage from the `diff-cover` JSON report (`--patch-report`) for the lines changed in the pull request or commit.
 
-Post them on each commit of the default branch, and on each PR's head, wherever the token can.
-The default branch's project statuses then become a history of its coverage.
-Given `--base`, the PR's base or the commit's parent, the project status also shows the change from that commit's project status.
-If that commit has none yet, the status leaves the change out.
+Run this command in CI on every default-branch commit and on the head commit of every pull request.
+The default branch statuses then record the coverage history of the project.
+Skip this step on pull requests from forks and Dependabot, because their tokens lack write permission.
+Pass `--base` with the pull request base or parent commit to include the coverage change in the project status.
+If the base commit has no `coverage/project` status, the status omits the coverage change.
 
-Both are always `success`, because they record coverage and don't judge it.
-Their descriptions are the figures in one fixed format, so other tools can parse them:
+Both statuses always use the `success` state because they record coverage without failing the commit.
+Their description strings use a fixed format so that other tools can parse them:
 
 ```text
 96.52% (2114/2172 lines, 610/650 branches), +0.12 points from 1a2b3c4
 92.30% (12/13 lines)
 ```
 
-The project figure is coverage.py's total, which counts covered lines and branches together.
-It's cut to two decimal places rather than rounded, so it shows 100.00% only when nothing is missed.
-Its branches part appears only when the report measured branches.
-The change is the difference between the two figures as shown.
-The patch figure counts lines as diff-cover does, and reads `no changed lines to cover` when there are none.
+The project coverage number is the total from `coverage.py`, which combines covered lines and covered branches.
+The command truncates this number to two decimal places instead of rounding it, so `100.00%` appears only when coverage is complete.
+The branch count appears only when `coverage.xml` includes branch coverage.
+The change is the difference between the two displayed percentages.
+The patch coverage number counts lines in the same way as `diff-cover`, and shows `no changed lines to cover` when the diff has no executable lines.
 
-A token that can post statuses can post one under any name, including a required check's.
-So post from a job of its own that installs nothing, and hand it the reports as an artifact.
-That job needs `statuses: write`, which a fork's or Dependabot's PR doesn't get.
-`--dry-run` prints the statuses without posting them.
+A token with permission to post commit statuses can post a status with any context name, including the name of a required check.
+Therefore, run this command in a separate job that installs no other packages and receives the coverage reports as artifacts.
+That job requires the `statuses: write` permission, which GitHub does not grant to pull requests from forks or from Dependabot.
+Pass `--dry-run` to print the statuses without posting them to GitHub.
 
 ### Patch coverage comment
 
-`repoutils post-patch-coverage <PR>` posts diff-cover's Markdown report to the PR, and edits that comment on later runs.
-Given `--coverage-report coverage.xml`, the comment also shows the project's coverage.
-Given `--base` too, the PR's base commit, it shows that commit's `coverage/project` status and the change from it.
-It never compares with an older commit, whose figure would include whatever else has merged since.
-When the base has no status, the comment says so and shows the PR's figure alone.
+`repoutils post-patch-coverage <PR>` posts the Markdown report from `diff-cover` to the pull request, and updates that existing comment on subsequent runs.
+When you pass `--coverage-report coverage.xml`, the comment also shows the project coverage.
+When you also pass `--base <sha>`, the comment shows the `coverage/project` status of that base commit and the change from it.
+The command never compares against an older commit, because an older commit would include changes from other merged pull requests.
+When the base commit has no coverage status, the comment notes that fact and shows only the coverage of the pull request.
 
-The comment warns, and prints a `::warning::` for the run page, in two cases:
+The comment includes a warning and prints a `::warning::` workflow command in two cases:
 
-- Project coverage fell from the base's by more than `warn-project-drop` points (default 2).
-- Patch coverage is more than `warn-patch-below` points under the base's project coverage (default 1), or the PR's when the base has none.
+- Project coverage dropped from the base commit by more than `warn-project-drop` percentage points (default 2).
+- Patch coverage is more than `warn-patch-below` points (default 1) below the base project coverage, or the pull request project coverage when the base has no status.
 
-These only warn, so coverage never fails the command.
-It still fails when it can't produce the report, such as on a bad report, a bad setting or a failed request to GitHub.
-`--output <file>` appends the comment to a file, such as `$GITHUB_STEP_SUMMARY`, instead of posting it.
-That shows the same figures on fork and Dependabot PRs, whose token can't comment.
+These conditions only produce warnings, so low coverage never causes the command to fail.
+The command exits non-zero only when it cannot produce or post the report, such as on a bad file, bad setting or failed request.
+Pass `--output <file>` to append the comment text to a file (such as `$GITHUB_STEP_SUMMARY`) instead of posting it.
+Use `--output` on pull requests from forks and Dependabot, where the workflow token cannot post pull request comments.
 
-The base's CI may still be running when the PR's coverage is ready, so run `repoutils wait-for-base-coverage <owner/repo> <base>` first.
-It polls the base's `coverage/project` status, and stops as soon as it's there.
-While it's missing, it watches the base's `post-coverage-status` check run (`--check-name`), and stops once that finishes.
-After 10 minutes (`--timeout`) it stops anyway.
-Giving up only warns and exits 0, so a broken base doesn't fail the PR's own checks.
-It needs `checks: read` and `statuses: read`.
+The CI workflow on the base commit can still be in progress when the pull request finishes its coverage run.
+Run `repoutils wait-for-base-coverage <owner/repo> <base>` before `post-patch-coverage`.
+This command polls the `coverage/project` commit status on the base commit and exits as soon as that status exists.
+While the status is absent, the command checks the `post-coverage-status` check run (`--check-name`) on that commit, exiting when that check run finishes.
+The command also stops after 10 minutes (`--timeout`).
+If the check run finishes or the wait times out without a status, the command prints a warning and exits with code `0`.
+A broken base commit therefore does not fail the checks on the pull request.
+This command requires the `checks: read` and `statuses: read` permissions.
 
 ### GitHub settings
 
-`repoutils github-settings check` runs the `check` of each GitHub settings command that `pyproject.toml` configures, in the order of the table above.
-It says which commands it skips, and fails if it skips them all.
-It runs every command it doesn't skip, and fails if any of them fails.
-It passes `--repo` and `--exit-zero` on to each command, and `--fail-on-unexpected` to the commands that have it.
+`repoutils github-settings check` runs `check` for every GitHub settings command configured in `pyproject.toml`, following the order in the command table above.
+It prints the names of the unconfigured commands that it skips, and fails if `pyproject.toml` configures none of them.
+It runs all configured commands and fails if any command fails.
+It forwards `--repo` and `--exit-zero` to every command, and forwards `--fail-on-unexpected` to the commands that support that option.
 
-`repoutils github-settings ensure` runs `ensure` in the same way, leaving out `secrets` and `variables`, which have no `ensure`.
-It stops at the first command that fails.
-So a deploy key's secret isn't set in an environment whose protection didn't apply.
+`repoutils github-settings ensure` runs `ensure` for each configured command in the same order, excluding `secrets` and `variables` because those commands have no `ensure` subcommand.
+It stops immediately at the first command that fails.
+Stopping on failure prevents `deploy-keys ensure` from storing a secret in an environment before `environments ensure` applies the protection rules for that environment.
 
-`repoutils github-settings dump` runs every command's `dump`, whatever `pyproject.toml` configures, with a blank line between them.
-The output can be pasted into `pyproject.toml` as it is.
+`repoutils github-settings dump` runs `dump` for every settings command regardless of `pyproject.toml`, with a blank line between the outputs.
+You can paste the output directly into `pyproject.toml`.
 
 ### Labels
 
-`repoutils labels ensure` creates each label the repository lacks, grey if `pyproject.toml` gives it no color.
-Where a label's description is empty on GitHub, `ensure` fills it in with the one from `pyproject.toml`.
+`repoutils labels ensure` creates every label defined in `pyproject.toml` that does not exist in the repository, using a grey color when `pyproject.toml` omits `color`.
+When an existing label has an empty description on GitHub, `ensure` sets the description from `pyproject.toml`.
 
-Other differences are reported but left alone: a name in a different case, a different color, or a different description that isn't empty.
-Pass `--strict` to have those changed to match as well.
-`ensure` never changes or deletes a label `pyproject.toml` doesn't define.
-If a request fails part way through, the labels before it have already been changed, so run `ensure` again to finish the job.
+By default, `ensure` reports other differences without modifying them:
 
-`repoutils labels check` changes nothing.
-It fails in exactly the cases where `ensure`, given the same `--strict`, would change something.
-The differences `ensure` would leave alone are reported too, but they don't make it fail.
+- label names that differ in letter case
+- differences in color
+- differences in non-empty descriptions
 
-With `--fail-on-unexpected`, `check` also lists the labels the repository has but `pyproject.toml` doesn't define (matching names regardless of case), and fails if there are any.
-Use it when you want `pyproject.toml` to be the complete list of labels.
-`ensure` still leaves those labels alone, so you have to delete them on GitHub or add them to `pyproject.toml`.
+Pass `--strict` to update those existing labels to match `pyproject.toml`.
+`ensure` never modifies or deletes a label that `pyproject.toml` does not define.
+If a request fails mid-run, earlier label changes remain in place, and you can run `ensure` again to finish the rest.
 
-With `--exit-zero`, `check` reports the same things but exits 0, unless it couldn't do the check at all (because of a bad token, for example).
-That's the difference from `|| true`, which would hide that kind of failure as well.
+`repoutils labels check` does not modify the repository.
+It fails in the exact cases where `ensure` (with the same `--strict` option) would create or update a label.
+It also prints the differences that `ensure` leaves unchanged, without failing on them.
 
-In GitHub Actions, `ensure` needs the `issues: write` permission, and `check` needs `issues: read` if the repository is private.
+When you pass `--fail-on-unexpected`, `check` also lists any labels in the repository that `pyproject.toml` does not define (matching names case-insensitively) and fails if any exist.
+Use `--fail-on-unexpected` when `pyproject.toml` must define every label in the repository.
+`ensure` still ignores unexpected labels, so you must delete them on GitHub or add them to `pyproject.toml`.
 
-`repoutils labels dump` prints every label the repository has as `[[tool.repoutils.labels]]` entries, each with its name, its color and its description if it has one.
-You can paste them into `pyproject.toml` and edit them from there.
-If you paste them in unchanged, `check --strict` passes.
-`dump` neither reads nor changes `pyproject.toml`.
+When you pass `--exit-zero`, `check` prints the same report and exits with code `0`, unless an error (such as a bad token) stops it from comparing.
+Using `--exit-zero` is safer than `|| true` in a shell script because `|| true` also hides runtime and authentication errors.
+
+In GitHub Actions, `ensure` requires the `issues: write` permission, and `check` requires `issues: read` on a private repository.
+
+`repoutils labels dump` prints every label in the repository as `[[tool.repoutils.labels]]` entries, including the name, color, and non-empty description of each label.
+You can paste the output into `pyproject.toml` and edit the entries as needed.
+If you paste the output without changes, `repoutils labels check --strict` passes.
+`dump` does not read or modify `pyproject.toml`.
 
 ### Repository settings
 
-`[tool.repoutils.repo-settings]` covers the settings on a repository's General settings page that most projects want to keep the same, mainly the ones in its Features and Pull Requests sections.
-All of them are optional, but `check` and `ensure` fail if the table doesn't set any.
-A setting the table leaves out stays as it is on GitHub.
+`[tool.repoutils.repo-settings]` configures the settings on the General settings page of a repository, primarily in the Features and Pull Requests sections.
+Every setting is optional, but `check` and `ensure` fail if the table contains no settings.
+Any setting omitted from the table keeps its current value on GitHub.
 
 | Setting | Values | On GitHub |
 |---|---|---|
-| `description`, `homepage` | a string (`""` for none) | The repository's About box. |
-| `issues`, `projects`, `wiki`, `discussions`, `pull-requests` | `true` or `false` | Whether each feature is on. |
-| `pull-request-creation` | `"all"` or `"collaborators"` | Who can open pull requests. |
-| `merge-commit.allow`, `squash-merge.allow`, `rebase-merge.allow` | `true` or `false` | Which merge methods are allowed. |
-| `merge-commit.title` | `"merge-message"` or `"pr-title"` | The default title of a merge commit (`"merge-message"` is "Merge pull request #123 from branch"). |
-| `merge-commit.message` | `"pr-title"`, `"pr-body"` or `"blank"` | The default message of a merge commit. |
-| `squash-merge.title` | `"pr-title"` or `"commit-or-pr-title"` | The default title of a squash commit (`"commit-or-pr-title"` uses the commit's title if there's only one). |
-| `squash-merge.message` | `"pr-body"`, `"commit-messages"` or `"blank"` | The default message of a squash commit. |
-| `allow-auto-merge` | `true` or `false` | Allow auto-merge. |
+| `description`, `homepage` | string (`""` for empty) | Populates the repository About box. |
+| `issues`, `projects`, `wiki`, `discussions`, `pull-requests` | `true` or `false` | Whether each repository feature is enabled. |
+| `pull-request-creation` | `"all"` or `"collaborators"` | Who can create pull requests. |
+| `merge-commit.allow`, `squash-merge.allow`, `rebase-merge.allow` | `true` or `false` | Which pull request merge methods are enabled. |
+| `merge-commit.title` | `"merge-message"` or `"pr-title"` | Default title of a merge commit (`"merge-message"` produces `Merge pull request #123 from branch`). |
+| `merge-commit.message` | `"pr-title"`, `"pr-body"` or `"blank"` | Default message body of a merge commit. |
+| `squash-merge.title` | `"pr-title"` or `"commit-or-pr-title"` | Default title of a squash commit (`"commit-or-pr-title"` uses the commit title when the pull request has one commit). |
+| `squash-merge.message` | `"pr-body"`, `"commit-messages"` or `"blank"` | Default message body of a squash commit. |
+| `allow-auto-merge` | `true` or `false` | Allow auto-merge on pull requests. |
 | `allow-update-branch` | `true` or `false` | Always suggest updating pull request branches. |
-| `delete-branch-on-merge` | `true` or `false` | Automatically delete head branches. |
+| `delete-branch-on-merge` | `true` or `false` | Automatically delete head branches after merge. |
 | `require-web-commit-signoff` | `true` or `false` | Require contributors to sign off on web-based commits. |
 
-GitHub only accepts a commit message along with its title.
-So when you set only `squash-merge.message` (or `merge-commit.message`), repoutils sends the title GitHub already has.
-GitHub refuses some pairs of title and message, and `ensure` reports that as an HTTP 422 error.
+The GitHub API accepts a commit message setting only when the request also includes the corresponding commit title setting.
+When `pyproject.toml` sets only `squash-merge.message` (or `merge-commit.message`), `repoutils` sends that message together with the title currently set on GitHub.
+GitHub rejects some combinations of title and message, and `ensure` reports that rejection as an HTTP 422 error.
 
-Some things are left out on purpose.
-`repo-settings` can't rename, transfer or archive the repository, change its default branch or visibility, or make it a template, and it rejects a table that tries to.
+`repo-settings` intentionally excludes destructive or structural settings.
+It cannot rename, transfer or archive a repository, change its default branch or visibility, or make it a template.
+It rejects any configuration table that contains those keys.
 
-`repoutils repo-settings ensure` changes every setting that differs, all in one request.
-It fails if GitHub doesn't apply one of them.
-That can happen because GitHub ignores some changes rather than refusing them, such as a change an organization's policy forbids.
+`repoutils repo-settings ensure` updates all differing settings in a single API request.
+It then verifies the response and fails if GitHub did not apply every change.
+GitHub silently ignores some requested changes instead of returning an error, such as when an organization policy forbids the change.
 
-`repoutils repo-settings check` changes nothing, and fails in exactly the cases where `ensure` would change something.
-`--exit-zero` works the same way as it does for `labels check`.
+`repoutils repo-settings check` does not modify the repository, and fails in the exact cases where `ensure` would update a setting.
+`--exit-zero` works in the same way as in `labels check`.
 
-`ensure` needs a token that can administer the repository, such as a fine-grained token with the Administration write permission.
-The `GITHUB_TOKEN` that GitHub Actions provides can't be given that permission.
+`ensure` requires a token with administration write access to the repository, such as a fine-grained personal access token with the Administration `write` permission.
+The `GITHUB_TOKEN` provided by GitHub Actions cannot have the Administration permission.
 
-`repoutils repo-settings dump` prints every setting in the table above with the value the repository has for it.
+`repoutils repo-settings dump` prints every setting from the table above with its current value in the repository.
 The output is a `[tool.repoutils.repo-settings]` table with a sub-table for each merge method.
-Paste it into `pyproject.toml` and trim it down to the settings you want to keep the same.
-If you paste it in unchanged, `check` passes.
-`dump` neither reads nor changes `pyproject.toml`.
-If GitHub doesn't return a setting, or returns a value the table can't express, `dump` leaves it out and says so on stderr.
+Paste the output into `pyproject.toml` and remove the settings that you do not want to manage.
+If you paste the output without changes, `repoutils repo-settings check` passes.
+`dump` does not read or modify `pyproject.toml`.
+If GitHub omits a setting from its response or returns an unsupported value, `dump` omits that setting and prints a warning to standard error.
 
 ### Actions settings
 
-`[tool.repoutils.actions-settings]` covers the repository's Actions settings page (Settings, Actions, General).
-It works like `[tool.repoutils.repo-settings]`.
-All of its settings are optional, but `check` and `ensure` fail if the table doesn't set any.
-A setting the table leaves out stays as it is on GitHub.
+`[tool.repoutils.actions-settings]` configures the GitHub Actions settings page of the repository (Settings > Actions > General).
+It follows the same model as `[tool.repoutils.repo-settings]`.
+Every setting is optional, but `check` and `ensure` fail if the table contains no settings.
+Any setting omitted from the table keeps its current value on GitHub.
 
 | Setting | Values | On GitHub |
 |---|---|---|
-| `allowed-actions` | `"all"`, `"owner"`, `"selected"` or `"disabled"` | Which actions and reusable workflows may run: all, only the owner's, the ones `selected-actions` gives, or none (Actions is off). |
+| `allowed-actions` | `"all"`, `"owner"`, `"selected"` or `"disabled"` | Determines whether all actions and reusable workflows can run, only those belonging to the repository owner, only those in `selected-actions`, or none (Actions is disabled). |
 | `require-sha-pinning` | `true` or `false` | Require actions to be pinned to a full-length commit SHA. |
 | `selected-actions.github-owned` | `true` or `false` | Allow actions created by GitHub. |
-| `selected-actions.verified-creators` | `true` or `false` | Allow actions by Marketplace verified creators. |
-| `selected-actions.patterns` | a list of strings | The other actions and reusable workflows allowed, such as `"astral-sh/*"`, in any order. |
-| `default-token-permissions` | `"read"` or `"write"` | The `GITHUB_TOKEN`'s default permissions: read only, or read and write. |
+| `selected-actions.verified-creators` | `true` or `false` | Allow actions created by Marketplace verified creators. |
+| `selected-actions.patterns` | list of strings | Patterns for other allowed actions and reusable workflows (such as `"astral-sh/*"`), in any order. |
+| `default-token-permissions` | `"read"` or `"write"` | Controls whether `GITHUB_TOKEN` gets read-only or read-write permissions by default. |
 | `can-approve-pull-requests` | `true` or `false` | Allow GitHub Actions to create and approve pull requests. |
-| `fork-pr-approval` | `"first-time-contributors-new-to-github"`, `"first-time-contributors"` or `"all-external-contributors"` | Which outside contributors need approval before their fork's pull request runs workflows. |
-| `retention-days` | a positive integer | How many days checks, workflow runs, commit statuses, artifacts and logs are kept. |
-| `cache-retention-days` | a positive integer | How many days an unused cache is kept. |
-| `cache-size-gb` | a positive integer | How many gigabytes of caches the repository keeps before evicting the oldest. |
-| `oidc.use-default-subject` | `true` or `false` | Use the default template for the OIDC token's subject claim. |
-| `oidc.include-claim-keys` | a list of strings | The claims a custom subject template joins, in order, which needs `oidc.use-default-subject = false`. |
-| `oidc.immutable-subject` | `true` or `false` | Use the immutable subject claim, based on the repository's ID rather than its name. |
+| `fork-pr-approval` | `"first-time-contributors-new-to-github"`, `"first-time-contributors"` or `"all-external-contributors"` | Which external contributors require approval before workflows run on their fork pull requests. |
+| `retention-days` | positive integer | Number of days that GitHub retains checks, workflow runs, commit statuses, artifacts and logs. |
+| `cache-retention-days` | positive integer | Number of days that GitHub retains an unused Actions cache. |
+| `cache-size-gb` | positive integer | Maximum total cache storage in gigabytes before GitHub evicts the oldest caches. |
+| `oidc.use-default-subject` | `true` or `false` | Use the default template for the OpenID Connect (OIDC) token subject claim. |
+| `oidc.include-claim-keys` | list of strings | Ordered list of claim keys for a custom OIDC subject template (requires `oidc.use-default-subject = false`). |
+| `oidc.immutable-subject` | `true` or `false` | Use the immutable OIDC subject claim based on the numeric repository ID instead of the repository name. |
 
-The `selected-actions` settings need `allowed-actions = "selected"`, as GitHub only has them then.
+The `selected-actions` settings require `allowed-actions = "selected"`, because GitHub stores them only in that mode.
 
-`repoutils actions-settings ensure` changes every setting that differs, with one request for each part of the page that needs one.
-It fails if GitHub doesn't apply one of them.
-An organization's policy can lock some settings, such as the `GITHUB_TOKEN`'s write permission.
-GitHub refuses a change to a locked setting with an HTTP 409 error, and `ensure` reports it.
-Some settings don't apply to every repository, such as fork pull request approval on a private one.
-GitHub answers those with HTTP 404, so `check` and `ensure` fail if the table sets one, and `dump` leaves it out.
+`repoutils actions-settings ensure` updates all differing settings, sending one API request for each endpoint that requires a change.
+It fails if GitHub does not apply every requested change.
+An organization policy can lock some settings, such as write permissions for `GITHUB_TOKEN`.
+GitHub rejects changes to a locked setting with an HTTP 409 error, and `ensure` reports that error.
+Some settings do not exist on all repositories, such as `fork-pr-approval` on a private repository.
+GitHub returns HTTP 404 for those endpoints, so `check` and `ensure` fail when `pyproject.toml` configures them, and `dump` omits them.
 
-`repoutils actions-settings check` changes nothing, and fails in exactly the cases where `ensure` would change something.
-`--exit-zero` works the same way as it does for `labels check`.
+`repoutils actions-settings check` does not modify the repository, and fails in the exact cases where `ensure` would update a setting.
+`--exit-zero` works in the same way as in `labels check`.
 
-`check` and `dump` need a token with read access to the repository's administration settings, and to its Actions for the `oidc` settings.
-For a fine-grained token, that's the Administration and Actions read permissions, and `ensure` needs both as write permissions.
-The `GITHUB_TOKEN` that GitHub Actions provides can't be given the Administration permission.
+`check` and `dump` require a token with read access to repository administration settings, plus read access to Actions when reading `oidc` settings.
+For a fine-grained personal access token, grant Administration and Actions `read` for `check` and `dump`, and `write` for `ensure`.
+The `GITHUB_TOKEN` provided by GitHub Actions cannot have the Administration permission.
 
-`repoutils actions-settings dump` prints every setting in the table above with the value the repository has for it.
-It leaves out `selected-actions` unless `allowed-actions` is `"selected"`, and `oidc.include-claim-keys` with the default template.
-Paste the output into `pyproject.toml` and trim it down to the settings you want to keep the same.
-If you paste it in unchanged, `check` passes.
-`dump` neither reads nor changes `pyproject.toml`.
-If GitHub doesn't return a setting, or returns a value the table can't express, `dump` leaves it out and says so on stderr.
+`repoutils actions-settings dump` prints every setting from the table above with its current value in the repository.
+It omits `selected-actions` unless `allowed-actions` is `"selected"`, and omits `oidc.include-claim-keys` when the repository uses the default OIDC template.
+Paste the output into `pyproject.toml` and remove the settings that you do not want to manage.
+If you paste the output without changes, `repoutils actions-settings check` passes.
+`dump` does not read or modify `pyproject.toml`.
+If GitHub omits a setting from its response or returns an unsupported value, `dump` omits that setting and prints a warning to standard error.
 
 ### Rulesets
 
-Each `[tool.repoutils.rulesets.<name>]` table is one of the repository's branch or tag rulesets (Settings, Rules, Rulesets).
-It gives only what isn't a new ruleset's default.
-Anything it leaves out is off or empty, so the table is the whole ruleset.
-`ensure` turns off any rule the table leaves out.
+Each `[tool.repoutils.rulesets.<name>]` table defines one branch ruleset or tag ruleset in the repository (Settings > Rules > Rulesets).
+The table specifies only the settings that differ from the defaults of a new ruleset.
+Omitted rules are disabled, omitted `exclude` and `bypass` lists are empty, and other omitted settings use their defaults.
+The table defines the complete ruleset, and `ensure` disables any rule that the table omits.
 
-Push rulesets are left alone.
-So are rulesets the repository inherits from its organization, and legacy branch protection rules.
+`repoutils rulesets` ignores push rulesets.
+It also ignores rulesets inherited from an organization and legacy branch protection rules.
 
 | Setting | Values | On GitHub |
 |---|---|---|
-| `target` | `"branch"` (the default) or `"tag"` | Whether it's a branch or a tag ruleset. |
-| `enforcement` | `"active"` (the default), `"evaluate"` or `"disabled"` | Whether the ruleset is enforced. |
-| `include`, `exclude` | branch or tag name patterns, such as `["main", "release/*"]` or `["v*"]`, or `"~ALL"` (or `"~DEFAULT_BRANCH"`, for a branch ruleset) | The branches or tags it targets. `refs/heads/` or `refs/tags/` is optional. `include` is required. |
-| `bypass` | a list of tables (see below) | Who can bypass the ruleset. |
-| `rules.<rule>` | `true`, or a table of the rule's parameters | Each rule that's on. |
+| `target` | `"branch"` (default) or `"tag"` | Whether the ruleset applies to branches or tags. |
+| `enforcement` | `"active"` (default), `"evaluate"` or `"disabled"` | Enforcement state of the ruleset. |
+| `include`, `exclude` | branch or tag name patterns (such as `["main", "release/*"]` or `["v*"]`), `"~ALL"`, or `"~DEFAULT_BRANCH"` (for branch rulesets only) | Which branches or tags the ruleset targets. The `refs/heads/` or `refs/tags/` prefix is optional, and `include` is required. |
+| `bypass` | list of actor tables (see below) | Which actors can bypass the ruleset. |
+| `rules.<rule>` | `true`, or a table of rule parameters | Each rule enabled in the ruleset. |
 
-Each `bypass` entry names one actor.
-That's `role` (`"admin"`, `"maintain"`, `"write"` or a custom role's ID), `app` (a GitHub App's slug), `team` (a team's slug), `org-admin = true` or `deploy-keys = true`.
-It can also give a `mode`: `"always"` (the default), `"pull-request"` or `"exempt"`.
+Each table in `bypass` identifies one actor.
+Specify the actor with `role` (`"admin"`, `"maintain"`, `"write"` or a custom role ID), `app` (a GitHub App slug), `team` (a team slug), `org-admin = true` or `deploy-keys = true`.
+Each entry can also specify `mode` as `"always"` (default), `"pull-request"` or `"exempt"`.
 
-For example, these two tag rulesets stop anyone updating or deleting a `v*` tag, and let only deploy keys create one.
-They're separate because a bypass applies to every rule in its ruleset.
+For example, these two tag rulesets prevent anyone from updating or deleting a `v*` tag, and let only deploy keys create one.
+They must be separate rulesets because a `bypass` list applies to all rules in its ruleset.
 
 ```toml
 [tool.repoutils.rulesets.release-tags-immutable]
@@ -493,16 +515,16 @@ bypass = [{ deploy-keys = true }]
 creation = true
 ```
 
-Rules and their parameters have the names that GitHub's REST API and a ruleset's JSON export use, in kebab case.
-So `non_fast_forward` is `rules.non-fast-forward`.
-A tag ruleset can have only the rules GitHub's ruleset page offers for tags.
-Those are `creation`, `update`, `deletion`, `required-linear-history`, `required-deployments`, `required-signatures`, `required-status-checks`, `non-fast-forward`, `tag-name-pattern` and the three commit metadata patterns.
-`tag-name-pattern` is for tag rulesets only, and `check` refuses a rule in the wrong kind of ruleset.
-A parameter left out has the default that GitHub's ruleset page gives a new rule, which is off, 0 or empty.
-The exceptions are `pull-request.allowed-merge-methods`, which allows all three methods, and `merge-queue`, which takes the page's values.
+Rule names and parameter names use the kebab-case forms of the names in the GitHub REST API and ruleset JSON exports.
+For example, the API rule `non_fast_forward` is written as `rules.non-fast-forward`.
+A tag ruleset can contain only the rules that GitHub supports for tags.
+Those tag rules are `creation`, `update`, `deletion`, `required-linear-history`, `required-deployments`, `required-signatures`, `required-status-checks`, `non-fast-forward`, `tag-name-pattern` and the three commit metadata pattern rules.
+The `tag-name-pattern` rule applies only to tag rulesets, and `check` rejects any rule placed in the wrong ruleset target.
+Any omitted rule parameter uses the default value from the GitHub ruleset creation page, which is `false`, `0` or empty.
+Two parameters have non-empty defaults: `pull-request.allowed-merge-methods` defaults to all three merge methods, and `merge-queue` defaults to the standard values on the GitHub page.
 
-Above each rule and parameter whose label on GitHub's ruleset page repoutils knows, `dump` writes that label as a comment.
-These are the names that differ most from their labels:
+Above each rule or parameter whose GitHub UI label is known to `repoutils`, `dump` writes that label as a comment.
+The following table lists the setting names that differ most from their labels in the GitHub UI:
 
 | In `pyproject.toml` | On GitHub's ruleset page |
 |---|---|
@@ -516,274 +538,287 @@ These are the names that differ most from their labels:
 | `merge-queue.max-entries-to-build` | Build concurrency |
 | `merge-queue.grouping-strategy` | Require all queue entries to pass required checks (`"ALLGREEN"`) or not (`"HEADGREEN"`) |
 
-A required status check is `{ context = "test", app = "github-actions" }`.
-`app` is the slug of the GitHub App that must report the check.
-Leave it out to accept the check from any source.
-`check` and `ensure` look up the app's ID themselves, and refuse an ID in `pyproject.toml`.
+Configure each required status check as `{ context = "test", app = "github-actions" }`.
+The `app` key is the slug of the GitHub App that must report the check status.
+Omit `app` to accept the status check from any source.
+`check` and `ensure` resolve the numeric app ID from the slug automatically, and reject a numeric app ID in `pyproject.toml`.
 
-`repoutils rulesets ensure` creates each missing ruleset.
-It replaces each one that differs with the table's, sending every parameter of each rule.
-Then it fails if GitHub didn't apply a change.
-It ignores a rule parameter repoutils doesn't know, so `ensure` may reset one.
-It never deletes a ruleset.
+`repoutils rulesets ensure` creates every missing ruleset.
+It replaces every ruleset that differs from `pyproject.toml`, sending all parameters for every configured rule.
+It then reads the updated ruleset back and fails if GitHub did not apply a change.
+It ignores rule parameters that `repoutils` does not recognize, so `ensure` can reset unknown parameters to their defaults.
+It never deletes an existing ruleset.
 
-`repoutils rulesets check` changes nothing, and fails in exactly the cases where `ensure` would change something.
-`--exit-zero` and `--fail-on-unexpected` work as they do for `labels check`.
-Here `--fail-on-unexpected` fails on branch and tag rulesets that `pyproject.toml` doesn't define.
+`repoutils rulesets check` does not modify the repository, and fails in the exact cases where `ensure` would create or update a ruleset.
+`--exit-zero` and `--fail-on-unexpected` work in the same way as in `labels check`.
+For `rulesets check`, `--fail-on-unexpected` fails when the repository has branch or tag rulesets that `pyproject.toml` does not define.
 
-All three need a token that can administer the repository, because GitHub shows a ruleset's bypass list only to such a token.
-For a fine-grained token, that's Administration write for `ensure`, and read for `check` and `dump`.
-GitHub Actions' `GITHUB_TOKEN` can't be given it.
-If a bypass list names a team, the token also needs the organization's Members read permission, to look the team up.
+The `check`, `ensure` and `dump` subcommands require a token with repository administration access, because GitHub shows the `bypass` list only to administrators.
+For a fine-grained personal access token, grant Administration `write` for `ensure`, and grant Administration `read` for `check` and `dump`.
+The `GITHUB_TOKEN` provided by GitHub Actions cannot have the Administration permission.
+When a `bypass` entry references a team, the token also requires the organization Members `read` permission to resolve the team slug.
 
-`repoutils rulesets dump` prints every branch and tag ruleset the repository has as these tables.
-You can paste them into `pyproject.toml`.
-If you paste them in unchanged, `check --fail-on-unexpected` passes, unless `dump` warned about something `check` refuses.
-With `--from-file`, it prints the rulesets in JSON files exported from GitHub's ruleset page instead.
-That lets you design a ruleset in GitHub's UI, on any repository, and convert it.
-`dump` neither reads nor changes `pyproject.toml`.
+`repoutils rulesets dump` prints every branch and tag ruleset in the repository as `[tool.repoutils.rulesets.<name>]` tables.
+You can paste the output into `pyproject.toml`.
+If you paste the output without changes, `repoutils rulesets check --fail-on-unexpected` passes, unless `dump` printed a warning about an unsupported value.
+Pass `--from-file` to convert JSON ruleset files exported from the GitHub ruleset UI instead of querying the repository API.
+Using `--from-file` lets you design a ruleset in the GitHub UI on any repository and convert the exported JSON into `pyproject.toml` format.
+`dump` does not read or modify `pyproject.toml`.
 
-GitHub has no API that gives a GitHub App's slug from its ID.
-So `dump` collects the slugs of the apps that ran checks on the latest commit of the default branch, and of each branch the rulesets name.
-If it can't find an app's or a team's slug, it prints the ID and warns.
-Replace that ID with the slug before you run `check`.
+The GitHub REST API provides no endpoint to look up a GitHub App slug from its numeric app ID.
+Instead, `dump` collects app slugs from the check runs on the latest commit of the default branch and of each branch named in the rulesets.
+When `dump` cannot find the slug for an app or team ID, it prints the numeric ID and writes a warning to standard error.
+Replace that numeric ID with the corresponding slug before you run `check`.
 
 ### Environments
 
-Each `[tool.repoutils.environments.<name>]` table is one of the repository's deployment environments, which a GitHub Actions job names with `environment:`.
-An empty table only asks for the environment to exist.
-A setting the table leaves out stays as it is on GitHub.
-Environment names match regardless of case, as on GitHub, which can't rename one.
+Each `[tool.repoutils.environments.<name>]` table defines one deployment environment in the repository, which a GitHub Actions job references with `environment:`.
+An empty table verifies or creates the environment without checking or changing its settings.
+Any setting omitted from the table keeps its current value on GitHub.
+Environment names match case-insensitively, as on GitHub, and GitHub cannot rename an existing environment.
 
 | Setting | Values | On GitHub |
 |---|---|---|
-| `deployment-branches` | `"all"`, `"protected"` or `"selected"` | Which branches and tags can deploy: any, protected branches only, or selected ones. |
-| `allowed-branches`, `allowed-tags` | name patterns, such as `["v*"]` | The selected branches and tags that can deploy. Each list is the complete one, and giving either implies `"selected"`. |
-| `wait-timer` | minutes, from 0 to 43200 | How long a job waits before it deploys. |
-| `reviewers` | up to six users (`"login"`) or the owner's teams (`"owner/team-slug"`) | Required reviewers, one of whom must approve a deployment. |
-| `prevent-self-review` | `true` or `false` | Stop whoever started a run from approving it. |
-| `can-admins-bypass` | `true` or `false` | Allow administrators to bypass these protection rules. |
+| `deployment-branches` | `"all"`, `"protected"` or `"selected"` | Controls which branches and tags can deploy to this environment (all, protected only, or a custom selection). |
+| `allowed-branches`, `allowed-tags` | lists of name patterns, such as `["v*"]` | Selected branch and tag patterns allowed to deploy. Each list defines the complete set of patterns, and setting either list implies `deployment-branches = "selected"`. |
+| `wait-timer` | integer from 0 to 43200 (minutes) | Number of minutes that a job waits before deploying to the environment. |
+| `reviewers` | list of up to six user logins (`"login"`) or organization teams (`"owner/team-slug"`) | Required reviewers, where one reviewer must approve each deployment. |
+| `prevent-self-review` | `true` or `false` | Prevent the user who triggered the workflow run from approving the deployment. |
+| `can-admins-bypass` | `true` or `false` | Allow repository administrators to bypass the environment protection rules. |
 
-Wait timers and required reviewers need a public repository or a paid plan.
-Otherwise GitHub refuses them, and `ensure` reports an HTTP error.
+Wait timers and required reviewers require a public repository or a paid GitHub plan.
+On an unsupported plan, GitHub rejects those settings and `ensure` reports the HTTP error.
 
-`repoutils environments ensure` creates each missing environment and changes every setting that differs.
-It adds and deletes allowed branches and tags to match their lists.
-Then it fails if GitHub didn't apply a change.
-It never deletes an environment, and never changes its secrets, variables or custom deployment protection rules.
+`repoutils environments ensure` creates every missing environment and updates every setting that differs from `pyproject.toml`.
+It adds and removes branch and tag patterns so that the environment matches `allowed-branches` and `allowed-tags`.
+It then verifies the environment and fails if GitHub did not apply a change.
+It never deletes an environment, and never modifies environment secrets, environment variables or custom deployment protection rules.
 
-`repoutils environments check` changes nothing, and fails in exactly the cases where `ensure` would change something.
-`--exit-zero` and `--fail-on-unexpected` work as they do for `labels check`.
+`repoutils environments check` does not modify the repository, and fails in the exact cases where `ensure` would create or update an environment.
+`--exit-zero` and `--fail-on-unexpected` work in the same way as in `labels check`.
 
-`ensure` needs a token that can administer the repository, such as a fine-grained token with the Administration write permission.
-The `GITHUB_TOKEN` that GitHub Actions provides can't be given that permission.
+`ensure` requires a token with administration write access to the repository, such as a fine-grained personal access token with the Administration `write` permission.
+The `GITHUB_TOKEN` provided by GitHub Actions cannot have the Administration permission.
 
-`repoutils environments dump` prints every environment the repository has, with all of its settings.
-It gives the allowed branches and tags only for `"selected"`.
-Paste the output into `pyproject.toml` and trim it down to the settings you want to keep the same.
-If you paste it in unchanged, `check --fail-on-unexpected` passes.
-`dump` neither reads nor changes `pyproject.toml`.
+`repoutils environments dump` prints every environment in the repository along with all of its settings.
+It includes `allowed-branches` and `allowed-tags` only when `deployment-branches` is `"selected"`.
+Paste the output into `pyproject.toml` and remove the settings that you do not want to manage.
+If you paste the output without changes, `repoutils environments check --fail-on-unexpected` passes.
+`dump` does not read or modify `pyproject.toml`.
 
 ### Secrets
 
-`[tool.repoutils.secrets]` names the secrets a repository's workflows need.
-`actions` lists its Actions secrets.
-`dependabot` lists its Dependabot secrets, the ones a workflow that Dependabot triggers can read.
-`environments.<name>` lists the secrets of the deployment environment called `<name>`.
-A list the table leaves out isn't checked.
-Names match regardless of case, as on GitHub.
-`other` lists the secrets workflows use that the repository doesn't hold, such as an organization's.
-`check` and `dump` ignore `other`, and only `check-workflows` reads it.
+`[tool.repoutils.secrets]` lists the names of the secrets that the workflows in the repository use.
+The `actions` key lists repository Actions secrets.
+The `dependabot` key lists Dependabot secrets, which are available to workflows triggered by Dependabot.
+Each `environments.<name>` key lists the secrets stored in the deployment environment `<name>`.
+The command ignores any list that the table omits.
+Secret names match case-insensitively, as on GitHub.
+The `other` key lists secrets used by workflows that are not stored in the repository itself, such as organization secrets.
+The `check` and `dump` subcommands ignore `other`, and only `check-workflows` reads `other`.
 
-`repoutils secrets` only ever reads secrets' names.
-GitHub's API never returns a value, so there's no `ensure`.
-Set a missing secret with `gh secret set NAME`, or on the repository's settings page.
-Add `--app dependabot` for a Dependabot secret, or `--env ENVIRONMENT` for an environment's.
+`repoutils secrets` reads only secret names from the GitHub API.
+The GitHub API never returns secret values, so `repoutils secrets` has no `ensure` subcommand.
+Set a missing secret with `gh secret set NAME` or on the repository settings page.
+Pass `--app dependabot` for a Dependabot secret, or pass `--env ENVIRONMENT` for an environment secret.
 
-`repoutils secrets check` fails if the repository lacks a secret the table names, or one of its environments.
-It doesn't create a missing environment, which `repoutils environments ensure` can do.
-`--exit-zero` and `--fail-on-unexpected` work as they do for `labels check`.
-Here `--fail-on-unexpected` fails on secrets of a listed kind that the table doesn't name.
-So `dependabot = []` means there must be no Dependabot secrets.
-Once the table has `environments`, that covers the secrets of every environment, including those it doesn't name.
-So `environments = {}` means no environment may have secrets.
+`repoutils secrets check` fails if the repository lacks any secret or environment listed in the table.
+It does not create missing environments, whereas `repoutils environments ensure` can create them.
+`--exit-zero` and `--fail-on-unexpected` work in the same way as in `labels check`.
+For `secrets check`, `--fail-on-unexpected` fails when a configured secret store contains a secret that its list does not name.
+For example, `dependabot = []` requires the repository to have no Dependabot secrets.
+When the table includes any `environments` key, `--fail-on-unexpected` covers the secrets of every environment in the repository, including environments not listed in the table.
+Setting `environments = {}` requires every environment to have no secrets.
 
-`check` and `dump` need a token that can list the repository's secrets.
-For a fine-grained token, that's the Secrets and Dependabot secrets read permissions.
-Environment secrets need the Actions and Environments read permissions too.
-GitHub Actions' `GITHUB_TOKEN` can't be given them.
+`check` and `dump` require a token that can list the secrets in the repository.
+For a fine-grained personal access token, grant the Secrets `read` and Dependabot secrets `read` permissions.
+Checking or dumping environment secrets also requires the Actions `read` and Environments `read` permissions.
+The `GITHUB_TOKEN` provided by GitHub Actions cannot have those permissions.
 
-`repoutils secrets dump` prints the name of every secret the repository has, as `[tool.repoutils.secrets]`.
-It gives both repository lists, and a list for each environment that has secrets.
-You can paste it into `pyproject.toml`.
-If you paste it in unchanged, `check --fail-on-unexpected` passes.
-`dump` neither reads nor changes `pyproject.toml`.
+`repoutils secrets dump` prints the name of every secret in the repository as a `[tool.repoutils.secrets]` table.
+The output includes `actions`, `dependabot`, and an `environments.<name>` list for each environment that holds at least one secret.
+You can paste the output into `pyproject.toml`.
+If you paste the output without changes, `repoutils secrets check --fail-on-unexpected` passes.
+`dump` does not read or modify `pyproject.toml`.
 
-`repoutils secrets check-workflows` needs no token, so it can run with a project's other checks.
-It reads every workflow in `.github/workflows` for the secrets it uses, as `secrets.NAME` or `secrets['NAME']`.
-It fails if a workflow uses a secret that none of the lists names.
-It also fails if a list names a secret that no workflow uses.
-So the table can't fall behind the workflows.
-A job gets an environment's secrets only if it names that environment as its `environment`.
-So `check-workflows` also fails if a job uses a secret that only environments hold, without naming one of them.
-It can't tell a job's environment when an expression gives it, so it doesn't check that job.
-It skips `GITHUB_TOKEN`, which GitHub provides, and anything in a comment.
+`repoutils secrets check-workflows` requires no GitHub token, so you can run it alongside local lint checks.
+It scans every workflow file in `.github/workflows` for secret references written as `secrets.NAME` or `secrets['NAME']`.
+It fails if a workflow references a secret not listed in `[tool.repoutils.secrets]`.
+It also fails if `[tool.repoutils.secrets]` lists a secret which no workflow references.
+This check keeps `[tool.repoutils.secrets]` synchronized with `.github/workflows`.
+A workflow job can access an environment secret only when the job specifies that environment in `environment:`.
+Therefore, `check-workflows` also fails when a job references an environment-only secret without specifying one of the environments that hold that secret.
+When a job sets `environment:` to an expression, `check-workflows` cannot determine the environment name statically and skips environment secret checks for that job.
+The command ignores `GITHUB_TOKEN` (which GitHub provides automatically) and ignores text inside YAML comments.
 
-`repoutils secrets inspect` runs in a workflow, and reports what each secret is without ever showing a value.
-It's for finding the token on GitHub's settings pages that a secret holds, and for noticing when one is about to expire.
-The workflow passes it the job's secrets as `SECRETS_JSON: ${{ toJSON(secrets) }}`.
-It inspects the `actions` and `other` lists, or with `--environment NAME` the list for that environment.
-A job gets an environment's secrets only if it deploys to it, so each environment needs a job of its own.
-Dependabot secrets can't be inspected, as only Dependabot's runs get them.
+`repoutils secrets inspect` runs inside a GitHub Actions workflow and reports metadata about each secret without printing secret values.
+Use `inspect` to identify which token or key a secret contains and to detect tokens that will expire soon.
+Pass the job secrets to the command in the environment variable `SECRETS_JSON: ${{ toJSON(secrets) }}`.
+By default, `inspect` reports on the secrets in `actions` and `other`, or on the secrets for one environment when you pass `--environment NAME`.
+A workflow job receives the secrets of an environment only when the job deploys to that environment, so inspect each environment in a separate job.
+Workflows not triggered by Dependabot cannot read Dependabot secrets, so `inspect` skips `dependabot`.
 
-For a value that looks like a GitHub token, it makes a request with that token.
-It reports the token's type (from its prefix), its owner, and its expiry.
-It also reports the scopes of a classic token, and the repositories a fine-grained or app installation token can reach.
-An installation token lasts an hour, so one stored in a secret is always reported as expiring.
-For an OpenSSH private key, it reports the public key's fingerprint, which GitHub's deploy key page shows too.
-Anything else is reported by name only.
-It writes a table to `$GITHUB_STEP_SUMMARY` (or `--summary FILE`), which is as public as the run's logs.
+When a secret value has the format of a GitHub token, `inspect` sends a read-only API request with that token.
+It reports the token type (from the token prefix), the token owner, and the expiration date.
+It also reports the scopes of a classic personal access token, or the accessible repositories of a fine-grained token or GitHub App installation token.
+An installation token expires after one hour, so `inspect` always reports an installation token stored in a secret as expiring.
+When a secret value is an OpenSSH private key, `inspect` reports the public key fingerprint, which also appears on the GitHub deploy keys page.
+For any other secret value, `inspect` reports only the secret name.
+The command writes a Markdown summary table to `$GITHUB_STEP_SUMMARY` (or to `--summary FILE`), which has the same visibility as the workflow logs.
 
-It fails if GitHub rejects a token, if a token expires in fewer than 14 days (`--expires-within DAYS`), or if a token has whitespace around it.
-`--exit-zero` forgives those, but a request that fails for any other reason, or an expiry it can't read, still fails the command.
+`inspect` fails in these cases:
 
-`repoutils secrets export` also runs in a workflow, and backs up the secrets' values, encrypted with [age](https://age-encryption.org).
-The workflow passes it the job's secrets in `SECRETS_JSON`, as for `inspect`.
-It exports the `actions` list, or with `--environment NAME` the list for that environment, and fails if the job lacks any of them.
-It doesn't export `other`, as those secrets aren't the repository's.
-It writes them as TOML, as an `[actions]` or `[environments.NAME]` table, and passes that to `age` on its standard input.
-So the plaintext is never written to disk, and only the encrypted file (`--output FILE`) is.
+- GitHub rejects a token.
+- A token expires within 14 days (`--expires-within DAYS`).
+- A token has surrounding whitespace.
 
-Each `--recipient` is an age recipient (`age1...`) or an SSH public key, passed to `age` as it is.
-`--github-key USER/SHA256:...` encrypts to the SSH key of a GitHub user's that has that fingerprint, as `ssh-keygen -l` prints it.
-It fetches the user's keys from `https://github.com/USER.keys`, and fails if none has the fingerprint.
-age can only encrypt to `ssh-ed25519` and `ssh-rsa` keys, and only decrypts with a private key in a file.
-So a key held in a security key or a password manager's agent won't do, and a dedicated `age-keygen` key is an alternative.
-`--armor` makes `age` write ASCII text rather than binary, which `age --decrypt` reads all the same.
-`--age PATH` names the `age` program if it isn't on the `PATH`.
-It writes the names it exported, and the command that decrypts the file, to `$GITHUB_STEP_SUMMARY` (or `--summary FILE`).
+Passing `--exit-zero` ignores those three findings, but the command still exits non-zero on a failed network request or an unparseable expiration date.
 
-The workflow then uploads the file as an artifact.
-Anyone signed in to GitHub can download a public repository's artifacts, so give it a short `retention-days`, and delete it once downloaded.
-Otherwise a later leak of the private key would expose every export still around.
+`repoutils secrets export` also runs inside a GitHub Actions workflow and writes an encrypted backup of the secret values using [age](https://age-encryption.org).
+Pass the job secrets in `SECRETS_JSON` in the same way as for `inspect`.
+The command exports the `actions` list, or exports `environments.NAME` when you pass `--environment NAME`, and fails if `SECRETS_JSON` lacks any listed secret.
+It does not export `other` because those secrets belong to the organization rather than the repository.
+It formats the secrets as a TOML table (`[actions]` or `[environments.NAME]`) and pipes the TOML text to the standard input of `age`.
+The command never writes plaintext secrets to disk, and writes only the encrypted output file (`--output FILE`).
+
+Each `--recipient` argument takes an `age` recipient string (`age1...`) or an SSH public key and passes it directly to `age`.
+Pass `--github-key USER/SHA256:...` to encrypt to the SSH public key of the GitHub user `USER` that matches that `ssh-keygen -l` fingerprint.
+The command downloads the user's public keys from `https://github.com/USER.keys` and fails if none of the keys matches the fingerprint.
+`age` supports only `ssh-ed25519` and `ssh-rsa` SSH keys, and requires a plaintext private key file for decryption.
+A key stored on a hardware security key or in a password manager agent cannot decrypt the backup.
+Use a dedicated `age-keygen` key in that case.
+Pass `--armor` to write ASCII-armored output instead of binary output (`age --decrypt` accepts both formats).
+Pass `--age PATH` to specify the path to the `age` executable when `age` is not on `PATH`.
+The command writes the exported secret names and the decryption command to `$GITHUB_STEP_SUMMARY` (or to `--summary FILE`).
+
+The command writes the encrypted file only to the runner, so add a workflow step after `export` to upload that file as a workflow artifact.
+Any signed-in GitHub user can download artifacts from a public repository, so set a short `retention-days` and delete the artifact after download.
+Deleting old artifacts prevents a future compromise of the private key from decrypting earlier backups left on GitHub.
 
 ### Variables
 
-`[tool.repoutils.variables]` names the Actions variables a repository's workflows need, in the same way as `[tool.repoutils.secrets]`.
-`actions` lists the repository's own variables, and `environments.<name>` lists those of the environment called `<name>`.
-`other` lists the variables workflows use that the repository doesn't hold, such as an organization's, and only `check-workflows` reads it.
-The table only ever holds names, never values, so there's no `ensure`.
-Set a missing variable with `gh variable set NAME`, adding `--env ENVIRONMENT` for an environment's, or on the repository's settings page.
+`[tool.repoutils.variables]` lists the GitHub Actions variables that the workflows in the repository use, following the same structure as `[tool.repoutils.secrets]`.
+The `actions` key lists repository variables, and each `environments.<name>` key lists variables for the deployment environment `<name>`.
+The `other` key lists variables used by workflows that are not stored in the repository (such as organization variables), and only `check-workflows` reads `other`.
+The configuration table stores only variable names and never stores variable values, so `repoutils variables` has no `ensure` subcommand.
+Set a missing variable with `gh variable set NAME` (with `--env ENVIRONMENT` for an environment variable) or on the repository settings page.
 
-`repoutils variables check` fails if the repository lacks a variable the table names, or one of its environments.
-Unlike a secret, a variable's value can be read, so `check` also fails on one whose value is empty or only whitespace.
-`--exit-zero` and `--fail-on-unexpected` work as they do for `secrets check`.
+`repoutils variables check` fails if the repository lacks any variable or environment listed in the table.
+Unlike secret values, variable values are readable through the API, so `check` also fails when a variable value is empty or contains only whitespace.
+`--exit-zero` and `--fail-on-unexpected` work in the same way as in `secrets check`.
 
-`check` needs a token with the Variables read permission.
-Environment variables need the Actions and Environments read permissions too.
-GitHub Actions' `GITHUB_TOKEN` can't be given them.
+`check` requires a token with the Variables `read` permission.
+Checking environment variables also requires the Actions `read` and Environments `read` permissions.
+The `GITHUB_TOKEN` provided by GitHub Actions cannot have those permissions.
 
-`repoutils variables dump` prints the name of every variable the repository has, as `[tool.repoutils.variables]`.
-It leaves out their values, though it reads them.
+`repoutils variables dump` prints the name of every variable in the repository as a `[tool.repoutils.variables]` table.
+It reads the variables from the API but omits their values from the output.
 
-`repoutils variables check-workflows` needs no token, like `secrets check-workflows`.
-It reads the workflows for the variables they use, as `vars.NAME` or `vars['NAME']`.
-It fails if a workflow uses a variable that none of the lists names, or a list names one that no workflow uses.
-A variable that no workflow uses yet on purpose, such as one set up ahead of the workflow that will read it, can go under `unused` as well as its own list.
-`check-workflows` then doesn't report it, but fails once a workflow does use it, so the mark is removed when it's no longer true.
-It also fails if a job uses a variable that only environments hold, without naming one of them as its `environment`.
-GitHub evaluates a job's `if`, `runs-on`, `name` and its environment's name before the job enters its environment, so an environment's variables are always empty there ([actions/runner#2472](https://github.com/actions/runner/issues/2472)).
-So `check-workflows` also fails if one of those keys uses a variable that only environments hold, even in a job that deploys to one of them.
+`repoutils variables check-workflows` requires no GitHub token, just like `secrets check-workflows`.
+It scans `.github/workflows` for variable references written as `vars.NAME` or `vars['NAME']`.
+It fails if a workflow references a variable that no configured list names, or if a configured list names a variable that no workflow references.
+If you create a variable before any workflow uses it, list its name in `unused` in addition to its store list (`actions` or `environments.<name>`).
+`check-workflows` then allows the unused variable, and fails once a workflow references that variable so that you remove it from `unused`.
+The command also fails when a job references an environment-only variable without specifying one of the environments that hold that variable in `environment:`.
+GitHub Actions evaluates a job's `if`, `runs-on`, `name`, and `environment` name expressions before loading the job environment ([actions/runner#2472](https://github.com/actions/runner/issues/2472)).
+Variables scoped to a deployment environment always evaluate to empty strings in those fields.
+Therefore, `check-workflows` also fails when any of those fields references an environment-only variable, even when the job deploys to that environment.
 
 ### Deploy keys
 
-Each `[tool.repoutils.deploy-keys.<title>]` table is one of the repository's deploy keys, which the table's key names by its title.
-`write = true` gives the key write access, and leaving it out makes it read-only, as on GitHub.
-`secret` names the Actions secret that holds the key's private half, as `{ name = "NAME" }` for a repository secret.
-For an environment's secret, add `environment = "ENVIRONMENT"`.
-The public key isn't in `pyproject.toml`, so replacing a key needs no commit.
-An empty `[tool.repoutils.deploy-keys]` table declares that the repository has no keys with write access.
+Each `[tool.repoutils.deploy-keys.<title>]` table declares one repository deploy key whose GitHub title is `<title>`.
+Set `write = true` to grant write access to the key, or omit `write` to make the key read-only.
+The `secret` key specifies the Actions secret that stores the private half of the deploy key, written as `{ name = "NAME" }` for a repository secret.
+Add `environment = "ENVIRONMENT"` inside `secret` to store the private key in a deployment environment secret.
+`pyproject.toml` does not store the public key material, so rotating a key requires no commit to the repository.
+An empty `[tool.repoutils.deploy-keys]` table declares that the repository has no write-capable deploy keys.
 
-`repoutils deploy-keys ensure` creates each missing key that has a `secret`.
-It generates an Ed25519 key pair with `ssh-keygen`, in a private temporary directory that it always deletes.
-It adds the public half to the repository, and then sets the secret to the private half with `gh secret set`, passing it on stdin.
-`gh` acts with the same token as the rest of the command, given as `GH_TOKEN`.
-If setting the secret fails, `ensure` deletes the key it just added.
-So `ssh-keygen` and `gh` are needed to create a key, but `check` and `dump` don't use them.
+`repoutils deploy-keys ensure` creates every missing deploy key that specifies `secret`.
+It runs `ssh-keygen` to generate an Ed25519 key pair in a private temporary directory, and deletes that directory before exiting.
+It uploads the public key to the repository and pipes the private key on standard input to `gh secret set`.
+It passes its GitHub token to `gh` in the `GH_TOKEN` environment variable.
+If `gh secret set` fails, `ensure` deletes the newly created deploy key from the repository.
+Creating or rotating a key requires `ssh-keygen` and `gh`, whereas `check` and `dump` do not run either tool.
 
-GitHub can't change a key's access, so `ensure` replaces a key with the wrong access with a new pair, setting its secret as it does for a new key.
-For a key without a `secret`, it adds the same public key again instead.
-`ensure --rotate <title>` replaces a key and its secret with a new pair, adding the new key before it deletes the old one.
-`ensure` refuses to create a key without a `secret`, as nothing would hold its private half.
-It also refuses when an environment that holds a secret is missing, which `repoutils environments ensure` can create.
-It never deletes a key that `pyproject.toml` doesn't declare.
+GitHub cannot change the read/write access of an existing deploy key.
+If a key has the wrong access, the behavior of `ensure` depends on whether the key has a `secret`.
+If it has a `secret`, `ensure` generates a new key pair, replaces the deploy key, and updates that `secret`.
+If it lacks a `secret`, `ensure` re-adds the existing public key with the configured access.
+Run `ensure --rotate <title>` to replace a deploy key and its secret, adding the new key before deleting the old key.
+`ensure` refuses to create a missing key that omits `secret`, because the generated private key would not be saved anywhere.
+It also fails when the target environment for `secret` does not exist, which `repoutils environments ensure` can create.
+It never deletes a deploy key that `pyproject.toml` does not declare.
 
-`repoutils deploy-keys check` changes nothing.
-It fails if a declared key is missing, has the wrong access, or shares its title with another key.
-It also fails if the key's secret is missing, or was last set before the key was added, since then it can't hold the key's private half.
-`ensure` can't fix a missing or stale secret without the private half, so it tells you to use `--rotate`.
-`check` also fails on every key with write access that `pyproject.toml` doesn't declare, because a ruleset's deploy key bypass covers them all.
-With `--fail-on-unexpected` it fails on undeclared read-only keys too.
-`--exit-zero` works as it does for `labels check`.
+`repoutils deploy-keys check` does not modify the repository.
+It fails in the following cases:
 
-`ensure` needs a token that can administer the repository, such as a fine-grained token with the Administration write permission and the Secrets write permission.
-An environment's secret needs the Environments write and Actions read permissions instead of Secrets.
-`check` needs read access to the same things.
+- a declared key is missing, has the wrong read/write access, or shares its title with another key in the repository
+- the configured secret is missing
+- the secret was updated before the deploy key was created – such a secret may not hold the private key of that deploy key
 
-`repoutils deploy-keys dump` prints every deploy key the repository has as these tables, with its access.
-It can't tell which secret holds a key's private half, so add each `secret` yourself.
-If two keys share a title, it prints that title once and warns.
-`dump` neither reads nor changes `pyproject.toml`.
+Because `ensure` cannot recover a lost private key to fix a missing or outdated secret, it instructs you to run `ensure --rotate <title>`.
+`check` always fails on any undeclared write-capable deploy key, because a ruleset deploy-key bypass covers all write-capable deploy keys in the repository.
+Pass `--fail-on-unexpected` to fail on undeclared read-only deploy keys as well.
+`--exit-zero` works in the same way as in `labels check`.
+
+`ensure` requires a token that can administer the repository, such as a fine-grained token with the Administration `write` and Secrets `write` permissions.
+Storing a private key in an environment secret requires the Environments `write` and Actions `read` permissions instead of Secrets `write`.
+`check` requires `read` access for the same permissions.
+
+`repoutils deploy-keys dump` prints every deploy key in the repository as `[tool.repoutils.deploy-keys.<title>]` tables with their access settings.
+The GitHub API does not link a deploy key to a secret, so add the `secret` setting to each dumped table manually.
+If multiple deploy keys share the same title, `dump` prints that title once and writes a warning to standard error.
+`dump` does not read or modify `pyproject.toml`.
 
 ### Security settings
 
-`[tool.repoutils.security-settings]` covers the settings on a repository's Advanced Security settings page that GitHub's REST API can read and change, and release immutability.
-Each one is `true` or `false`.
-All of them are optional, but `check` and `ensure` fail if the table doesn't set any.
-A setting the table leaves out stays as it is on GitHub.
+`[tool.repoutils.security-settings]` configures the repository security settings on the Advanced Security settings page that the GitHub REST API supports, plus release immutability.
+Every setting takes `true` or `false`.
+Every setting is optional, but `check` and `ensure` fail if the table contains no settings.
+Any setting omitted from the table keeps its current value on GitHub.
 
 | Setting | On GitHub's settings pages |
 |---|---|
 | `private-vulnerability-reporting` | Private vulnerability reporting |
 | `dependabot-alerts` | Dependabot alerts |
 | `dependabot-security-updates` | Dependabot security updates |
-| `codeql-default-setup` | CodeQL analysis, with the default setup (on) or not set up (off) |
+| `codeql-default-setup` | CodeQL analysis, with the default setup (`true`) or not set up (`false`) |
 | `secret-protection` | Secret Protection |
 | `push-protection` | Push protection, under Secret Protection |
 | `immutable-releases` | Enable release immutability, under Releases on the General page |
 
-The page has other settings that GitHub's API can't read or change on their own, so the table rejects them.
-They are the dependency graph, automatic dependency submission, Dependabot malware alerts, grouped security updates and Copilot Autofix.
-Turning on `dependabot-alerts` also turns on the dependency graph.
-`codeql-default-setup` only turns CodeQL on or off, and leaves its languages and query suite to GitHub.
-Immutable releases stop anyone changing a published release's assets, or moving or deleting its tag.
-They protect a release only once it's published, so they don't replace a tag ruleset that limits who can push a release tag.
+The Advanced Security page includes additional settings that the GitHub REST API cannot read or update independently, so `[tool.repoutils.security-settings]` rejects them.
+Those unsupported settings are the dependency graph, automatic dependency submission, Dependabot malware alerts, grouped security updates, and Copilot Autofix.
+Enabling `dependabot-alerts` automatically enables the dependency graph.
+The `codeql-default-setup` setting only enables or disables CodeQL default setup, and leaves the analyzed languages and query suite to GitHub.
+Enabling `immutable-releases` prevents anyone from modifying the assets of a published release or moving or deleting its Git tag.
+Release immutability protects a tag only after release publication, so it does not replace a tag ruleset that restricts who can push release tags.
 
-Some settings need others.
-Dependabot security updates need Dependabot alerts, and push protection needs secret protection.
-The table can't turn one on while turning the one it needs off.
-If it turns one on and leaves out the one it needs, which is off on GitHub, GitHub refuses or ignores the change and `ensure` fails.
-`ensure` turns settings off before it turns any on, and does each in an order that respects this.
+Some security settings depend on another setting.
+`dependabot-security-updates` requires `dependabot-alerts`, and `push-protection` requires `secret-protection`.
+The configuration table cannot enable a dependent setting while disabling the setting that it requires.
+If the table enables a dependent setting and omits the required setting while that required setting is disabled on GitHub, `ensure` fails.
+`ensure` disables settings before enabling settings, and applies changes in dependency order.
 
-`repoutils security-settings ensure` changes every setting that differs, then reads them all back.
-It fails if GitHub didn't apply one.
-That can happen when the repository's plan doesn't offer the setting, such as CodeQL on a private repository without GitHub Code Security.
-It can also happen when an organization's settings control it, such as a security configuration or an organization that enforces immutable releases.
-GitHub turns on CodeQL default setup by starting a run, so `ensure` waits up to two minutes for it.
+`repoutils security-settings ensure` updates every differing setting and then reads all settings back from GitHub.
+It fails if GitHub did not apply every requested change.
+GitHub can ignore or reject a change when the repository plan lacks the feature, such as CodeQL on a private repository without Code Security.
+GitHub can also ignore a change when an organization policy or security configuration controls the setting, such as organization-wide immutable releases.
+When enabling `codeql-default-setup`, GitHub configures CodeQL asynchronously, so `ensure` polls for up to two minutes until the setup completes.
 
-`repoutils security-settings check` changes nothing, and fails in exactly the cases where `ensure` would change something.
-`--exit-zero` works the same way as it does for `labels check`.
+`repoutils security-settings check` does not modify the repository, and fails in the exact cases where `ensure` would update a setting.
+`--exit-zero` works in the same way as in `labels check`.
 
-All three need a token that can administer the repository, because GitHub shows these settings only to such a token.
-For a fine-grained token, that's Administration write for `ensure`, and read for `check` and `dump`.
-GitHub Actions' `GITHUB_TOKEN` can't be given it.
-`check` fails if the token can't see them, rather than treating them as off.
+The `check`, `ensure` and `dump` subcommands require a token with repository administration access, because GitHub hides these settings from other tokens.
+For a fine-grained personal access token, grant Administration `write` for `ensure`, and grant Administration `read` for `check` and `dump`.
+The `GITHUB_TOKEN` provided by GitHub Actions cannot have the Administration permission.
+When a token lacks permission to view a security setting, `check` fails instead of treating the setting as disabled.
 
-`repoutils security-settings dump` prints every setting in the table above with the value the repository has for it, under a comment giving its label on GitHub.
-Paste it into `pyproject.toml` and trim it down to the settings you want to keep the same.
-If you paste it in unchanged, `check` passes.
-`dump` neither reads nor changes `pyproject.toml`.
-If GitHub refuses to give a setting, `dump` leaves it out and says so on stderr.
+`repoutils security-settings dump` prints every setting from the table above with its current repository value, under a comment with its GitHub UI label.
+Paste the output into `pyproject.toml` and remove the settings that you do not want to manage.
+If you paste the output without changes, `repoutils security-settings check` passes.
+`dump` does not read or modify `pyproject.toml`.
+If GitHub refuses to return a setting, `dump` omits that setting and prints a warning to standard error.
 
 ## Development
 

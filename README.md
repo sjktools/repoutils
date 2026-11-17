@@ -110,12 +110,12 @@ Copy it to another project, and change its `setup-uv` version and the way that i
 - The first job runs `dependabot-uv bump` with a read-only `GITHUB_TOKEN` that has the Actions `read` and Contents `read` permissions.
   That command re-locks `uv.lock` with the new `uv`.
   The job passes `uv.lock` to the second job as an artifact.
-- The second job runs `dependabot-uv bump --pr --lock-file <file>`.
+- The second job runs `dependabot-uv bump --pr --version <version> --lock-file <file>`, with the `uv` version that the first job found.
   With `--lock-file`, the command copies that file to `uv.lock`, and does not run `uv`.
   The command makes all other changes itself.
 - The second job uses a token that is stored in an environment that only the default branch can deploy to.
   The pull request changes workflow files, so the token needs the Workflows `write` permission.
-  The token also needs the Contents `write`, Pull requests `write` and Actions `read` permissions.
+  The token also needs the Contents `write` and Pull requests `write` permissions.
 - Do not use the `GITHUB_TOKEN` of the workflow to open the pull request, because GitHub starts no CI for a pull request that a `GITHUB_TOKEN` opens.
 
 Do not run `dependabot-uv check` in pull request CI.

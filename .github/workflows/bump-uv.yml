@@ -18,13 +18,13 @@ name: Bump uv
 #   uv.lock on as an artifact.
 # - push makes the PR with UV_BUMP_TOKEN, which lives in the uv-bump
 #   environment that only main can deploy to. It runs only main's repoutils,
-#   with the runner's python3, installing nothing. It makes every change but
-#   uv.lock itself, and takes uv.lock from bump as data (`--lock-file`).
+#   with the runner's python3, installing nothing. It bumps to the version
+#   bump found (`--version`), makes every change but uv.lock itself, and takes
+#   uv.lock from bump as data (`--lock-file`).
 #
 # The PR changes workflows, so UV_BUMP_TOKEN needs the Workflows write
-# permission, as well as Contents and Pull requests write and Actions read (to
-# read Dependabot's log). It's a token rather than the GITHUB_TOKEN as a PR a
-# GITHUB_TOKEN opens starts no CI.
+# permission, as well as Contents and Pull requests write. It's a token rather
+# than the GITHUB_TOKEN as a PR a GITHUB_TOKEN opens starts no CI.
 on:
   schedule:
     - cron: "23 6 * * 1"
@@ -46,6 +46,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       bumped: ${{ steps.bump.outputs.bumped }}
+      version: ${{ steps.bump.outputs.version }}
 
     steps:
       - uses: actions/checkout@v7.0.1
@@ -72,7 +73,12 @@ jobs:
           else
             mkdir "$RUNNER_TEMP/lock"
             cp uv.lock "$RUNNER_TEMP/lock/uv.lock"
-            echo "bumped=true" >> "$GITHUB_OUTPUT"
+            version=$(PYTHONPATH=src python3 -c \
+              'from pathlib import Path; from repoutils.commands.check_pins import uv_minimum; print(uv_minimum(Path()))')
+            {
+              echo "bumped=true"
+              echo "version=$version"
+            } >> "$GITHUB_OUTPUT"
           fi
 
       - name: Upload uv.lock
@@ -84,9 +90,6 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # If Dependabot's uv changed between the jobs, this bumps to the newer one
-  # with a uv.lock from the older, which CI's lock-check fails on if the two
-  # write it differently.
   push:
     needs: bump
     if: needs.bump.outputs.bumped == 'true'
@@ -129,10 +132,14 @@ jobs:
           name: uv-lock
           path: ${{ runner.temp }}/lock
 
+      # The version bump re-locked with, rather than Dependabot's again, which
+      # may have changed since.
       - name: Open the pull request
         env:
           GITHUB_TOKEN: ${{ secrets.UV_BUMP_TOKEN }}
+          VERSION: ${{ needs.bump.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          PYTHONPATH=src python3 -m repoutils dependabot-uv bump --pr --lock-file "$RUNNER_TEMP/lock/uv.lock"
+          PYTHONPATH=src python3 -m repoutils dependabot-uv bump --pr \
+            --version "$VERSION" --lock-file "$RUNNER_TEMP/lock/uv.lock"

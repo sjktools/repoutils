@@ -372,9 +372,8 @@ def inspect(listed: Listed, environment: str | None, *, within: int, exit_zero: 
     secrets_json = os.environ.get(secret_inspect.ENV_VAR)
     if secrets_json is None:
         raise ValueError(f"${secret_inspect.ENV_VAR} isn't set: set it to ${{{{ toJSON(secrets) }}}} in the workflow")
-    # An environment's job also gets the repository's and organization's
-    # secrets, and a job Dependabot starts gets Dependabot's instead.
-    expected = [name for key in ("actions", OTHER, "dependabot") for name in listed.lists.get(key, [])]
+    # An environment's job also gets the repository's and organization's secrets.
+    expected = [name for key in ("actions", OTHER) for name in listed.lists.get(key, [])]
     return secret_inspect.inspect(
         title, wanted, expected, secrets_json, within=within, exit_zero=exit_zero, summary=summary
     )

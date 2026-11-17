@@ -395,7 +395,7 @@ def test_inspect_environment_expects_repository_secrets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # An environment's job gets the repository's and organization's secrets too, and only inspects its own.
-    values = {"CLASSIC": CLASSIC, "ORG_TOKEN": "o", "DEPENDABOT_ONLY": "d", "DEPLOY_KEY": "k", "APP": "a"}
+    values = {"CLASSIC": CLASSIC, "ORG_TOKEN": "o", "DEPLOY_KEY": "k", "APP": "a"}
     assert _inspect(tmp_path, monkeypatch, values, ["--environment", "release"], FakeAPI({})) == 0
     assert capsys.readouterr().out == (
         "DEPLOY_KEY: not a GitHub token or SSH key\n"

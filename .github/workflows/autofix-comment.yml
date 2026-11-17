@@ -27,8 +27,8 @@ jobs:
     permissions:
       actions: write
       pull-requests: write
-    # The wait for PR Fixes gives up well before this, so the report still
-    # runs: a job that times out is cancelled, and runs no failure() steps.
+    # The waits for PR Fixes and PR Fixes Push give up before this, so the report
+    # still runs: a job that times out is cancelled, and runs no failure() steps.
     timeout-minutes: 45
 
     steps:
@@ -102,7 +102,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ steps.start-fix.outputs.run_id }}
         run: |
-          deadline=$((SECONDS + 35 * 60))
+          deadline=$((SECONDS + 30 * 60))
           while true; do
             # A failed request is retried, as is any other status.
             status=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .status) || status=unknown
@@ -117,25 +117,61 @@ jobs:
           done
           echo "PR Fixes run $RUN_ID has finished."
 
-      # fix-push.yml reports on the PR itself from here on, whether the fix run
-      # failed, found nothing to fix, or made fixes.
+      # fix-push.yml reports on the PR itself, whether the fix run failed,
+      # found nothing to fix, or made fixes.
       - name: Push the fixes
+        id: start-push
         if: steps.start-fix.outputs.run_id
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ steps.start-fix.outputs.run_id }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          if ! gh workflow run fix-push.yml --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH" \
-            -f run-id="$RUN_ID"; then
+          if ! push_run_id=$(gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/fix-push.yml/dispatches" \
+            -f ref="$DEFAULT_BRANCH" -f "inputs[run-id]=$RUN_ID" -F return_run_details=true \
+            --jq .workflow_run_id); then
             echo "::error::Couldn't start PR Fixes Push for PR Fixes run $RUN_ID."
             exit 1
           fi
-          echo "Started PR Fixes Push for PR Fixes run $RUN_ID."
+          if ! [[ $push_run_id =~ ^[0-9]+$ ]]; then
+            echo "::error::Started PR Fixes Push, but GitHub didn't give its run ID."
+            exit 1
+          fi
+          echo "run_id=$push_run_id" >> "$GITHUB_OUTPUT"
+          echo "Started PR Fixes Push: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$push_run_id"
+
+      # fix-push.yml can report only once it has read the fix run's branch, so
+      # if its report job doesn't succeed, this reports instead, as it knows
+      # the PR from the comment.
+      - name: Wait for PR Fixes Push to report
+        id: wait-push
+        if: steps.start-push.outputs.run_id
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.start-push.outputs.run_id }}
+        run: |
+          deadline=$((SECONDS + 10 * 60))
+          while true; do
+            status=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .status) || status=unknown
+            if [ "$status" = completed ]; then
+              break
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::PR Fixes Push run $RUN_ID still hasn't finished; it's $status."
+              exit 1
+            fi
+            sleep 10
+          done
+          report=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" \
+            --jq '[.jobs[] | select(.name == "report")][0].conclusion // "missing"')
+          if [ "$report" != success ]; then
+            echo "::error::PR Fixes Push run $RUN_ID didn't report on the pull request (its report job: $report)."
+            exit 1
+          fi
 
       # If PR Fixes didn't start (the PR isn't one it can fix, or the dispatch
-      # failed), or its fixes couldn't be handed to fix-push.yml, say so on the
-      # PR, in the comment fix-push.yml reports in.
+      # failed), its fixes couldn't be handed to fix-push.yml, or fix-push.yml
+      # didn't report, say so on the PR, in the comment fix-push.yml reports in.
       - name: Checkout repoutils' source
         if: failure() && steps.check-comment.outputs.matched == 'true'
         uses: actions/checkout@v7.0.1
@@ -153,6 +189,7 @@ jobs:
           NUMBER: ${{ github.event.issue.number }}
           START_RESULT: ${{ steps.start-fix.outcome }}
           FIX_RUN_ID: ${{ steps.start-fix.outputs.run_id }}
+          PUSH_RUN_ID: ${{ steps.start-push.outputs.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           body="$RUNNER_TEMP/autofix.md"
@@ -160,7 +197,12 @@ jobs:
             echo "/autofix [couldn't start PR Fixes]($RUN_URL)." > "$body"
           else
             fix_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$FIX_RUN_ID"
-            echo "/autofix started [PR Fixes]($fix_url), but [couldn't start pushing its fixes]($RUN_URL)." > "$body"
+            if [ -z "$PUSH_RUN_ID" ]; then
+              echo "/autofix started [PR Fixes]($fix_url), but [couldn't start pushing its fixes]($RUN_URL)." > "$body"
+            else
+              push_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$PUSH_RUN_ID"
+              echo "/autofix started [PR Fixes]($fix_url), but [PR Fixes Push]($push_url) didn't report whether it pushed the fixes." > "$body"
+            fi
           fi
           PYTHONPATH=src python3 -m repoutils post-comment "$NUMBER" "$body" \
             --name autofix --author "github-actions[bot]"

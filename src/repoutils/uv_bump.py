@@ -22,6 +22,35 @@ def version_key(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in version.split("."))
 
 
+_CLAUSE_RE = re.compile(r"(?P<op><=|>=|==|!=|<|>)\s*(?P<version>\d+(?:\.\d+)*)")
+_COMPARE = {
+    "<": lambda a, b: a < b,
+    "<=": lambda a, b: a <= b,
+    ">": lambda a, b: a > b,
+    ">=": lambda a, b: a >= b,
+    "==": lambda a, b: a == b,
+    "!=": lambda a, b: a != b,
+}
+
+
+def _check_allowed(required: str, new: str) -> None:
+    """Fail unless uv new meets every clause of required-version after its
+    minimum (such as `<0.14`), as uv refuses to run outside it. A clause this
+    doesn't understand (`~=`, a wildcard, a pre-release) is left to a person."""
+    new_key = version_key(new)
+    for clause in (part.strip() for part in required.split(",")[1:]):
+        match = _CLAUSE_RE.fullmatch(clause)
+        if match is None:
+            raise RuntimeError(f"[tool.uv] required-version has `{clause}`, which bump can't check, so bump it by hand")
+        bound = tuple(int(part) for part in match["version"].split("."))
+        # Pad both to compare 0.14 with 0.14.0 as equal.
+        width = max(len(bound), len(new_key))
+        if not _COMPARE[match["op"]](new_key + (0,) * (width - len(new_key)), bound + (0,) * (width - len(bound))):
+            raise RuntimeError(
+                f"[tool.uv] required-version {required!r} excludes uv {new}, so change its `{clause}` by hand"
+            )
+
+
 def _pyproject(text: str, old: str, new: str) -> str:
     """text with [tool.uv] required-version's minimum set to new."""
     # A table's keys can come in any order, so this finds the key by name, and
@@ -60,6 +89,7 @@ def bump(root: Path, old: str, new: str) -> tuple[list[Path], bool]:
     if found:
         raise RuntimeError("check-pins fails, so fix these first:\n" + "\n".join(found))
     pyproject = root / config.PYPROJECT
+    _check_allowed(str(config.read_pyproject(pyproject)["tool"]["uv"]["required-version"]), new)
     texts = {pyproject: pyproject.read_text()}
     for path in check_pins.workflow_files(root):
         texts[path] = path.read_text()

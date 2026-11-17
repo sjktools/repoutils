@@ -1,3 +1,4 @@
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -126,3 +127,26 @@ def test_lock_without_lockfile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(subprocess, "run", unexpected)
     assert not uv_bump.lock(tmp_path, "0.13.7")
+
+
+@pytest.mark.parametrize(
+    ("bounds", "error"),
+    [
+        (", <0.14", "excludes uv 0.14.0, so change its `<0.14` by hand"),
+        (", !=0.14.0", "excludes uv 0.14.0"),
+        (", ~=0.13.6", "has `~=0.13.6`, which bump can't check"),
+    ],
+)
+def test_bump_refuses_a_version_the_other_bounds_exclude(tmp_path: Path, bounds: str, error: str) -> None:
+    root = make_project(tmp_path)
+    (root / "pyproject.toml").write_text(PYPROJECT.replace(", <0.14", bounds))
+    with pytest.raises(RuntimeError, match=re.escape(error)):
+        uv_bump.bump(root, "0.13.6", "0.14.0")
+    assert (root / "pyproject.toml").read_text() == PYPROJECT.replace(", <0.14", bounds)
+
+
+def test_bump_meets_every_other_bound(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    (root / "pyproject.toml").write_text(PYPROJECT.replace(", <0.14", ", <=0.14, >0.13, ==0.14, !=0.13.6"))
+    uv_bump.bump(root, "0.13.6", "0.14.0")
+    assert ">=0.14.0, <=0.14" in (root / "pyproject.toml").read_text()

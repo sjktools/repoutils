@@ -192,6 +192,7 @@ def test_token_with_bad_characters_is_not_sent(monkeypatch: pytest.MonkeyPatch, 
     monkeypatch.setattr(secret_inspect, "get", FakeAPI({}))
     finding = secret_inspect.describe("T", value, NOW, 14)
     assert finding.problems == ["has characters a GitHub token can't, so it wasn't tried"]
+    assert finding.sha256 == ""
 
 
 def test_oauth_token_without_expiry_header(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -367,7 +368,7 @@ def test_inspect_unexpected_secrets(
     assert f"AUTOFIX: fine-grained personal access token, owner bob, expires never, SHA-256 starts {fine}\n" in out
     for name in ("AUTOFIX", "DEPLOY_KEY", "STRAY"):
         assert f"{name}: {secret_inspect.UNEXPECTED}\n" in out
-    assert out.endswith("Inspected 6 secret(s), with no problems.\n")
+    assert out.endswith("Inspected 6 secret(s), with no problems in the 3 pyproject.toml lists for this job.\n")
     summary = (tmp_path / "summary.md").read_text()
     assert "| `STRAY` (unexpected) | not a GitHub token or SSH key |" in summary
     assert (
@@ -394,7 +395,7 @@ def test_inspect_environment_expects_repository_secrets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     # An environment's job gets the repository's and organization's secrets too, and only inspects its own.
-    values = {"CLASSIC": CLASSIC, "ORG_TOKEN": "o", "DEPLOY_KEY": "k", "APP": "a"}
+    values = {"CLASSIC": CLASSIC, "ORG_TOKEN": "o", "DEPENDABOT_ONLY": "d", "DEPLOY_KEY": "k", "APP": "a"}
     assert _inspect(tmp_path, monkeypatch, values, ["--environment", "release"], FakeAPI({})) == 0
     assert capsys.readouterr().out == (
         "DEPLOY_KEY: not a GitHub token or SSH key\n"
@@ -414,7 +415,7 @@ def test_inspect_environment(
     out = capsys.readouterr().out
     assert out.startswith("DEPLOY_KEY: OpenSSH private key (ssh-ed25519), SHA256:")
     assert "APP: GitHub rejects it (HTTP 401)" in out
-    assert "1 problem(s) with the 2 secret(s) inspected.\n" in out
+    assert "1 problem(s) with the 2 secret(s) pyproject.toml lists for this job.\n" in out
     summary = (tmp_path / "summary.md").read_text()
     assert summary.startswith("## Environment RELEASE's secrets\n")
     assert "### Problems\n\n- `APP`: GitHub rejects it" in summary

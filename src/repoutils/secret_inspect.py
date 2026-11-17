@@ -229,10 +229,12 @@ def describe(name: str, value: str, now: datetime, within: int) -> Finding:
     stripped = value.strip()
     kind = token_type(stripped)
     if kind is not None:
-        finding = Finding(name, kind, sha256=token_hash(stripped))
+        finding = Finding(name, kind)
         if stripped != value:
             finding.problems.append("has whitespace around the token, which breaks most uses of it")
         if _TOKEN_RE.fullmatch(stripped):
+            # Only a well-formed token: a malformed value may not be random enough to hash.
+            finding.sha256 = token_hash(stripped)
             _inspect_token(finding, stripped, now, within)
         else:
             finding.problems.append("has characters a GitHub token can't, so it wasn't tried")
@@ -356,13 +358,19 @@ def inspect(
     problems = sum(len(finding.problems) for finding in listed)
     errors = sum(1 for finding in listed if finding.error)
     if problems:
-        print(f"{problems} problem(s) with the {len(findings)} secret(s) inspected.")
+        print(f"{problems} problem(s) with the {len(listed)} secret(s) pyproject.toml lists for this job.")
     if errors:
         print(f"{errors} secret(s) couldn't be inspected.", file=sys.stderr)
         return 1
     if problems:
         return 0 if exit_zero else 1
-    print(f"Inspected {len(findings)} secret(s), with no problems.")
+    if len(listed) < len(findings):
+        print(
+            f"Inspected {len(findings)} secret(s), with no problems in the {len(listed)} "
+            "pyproject.toml lists for this job."
+        )
+    else:
+        print(f"Inspected {len(findings)} secret(s), with no problems.")
     return 0
 
 

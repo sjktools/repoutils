@@ -118,6 +118,8 @@ dependabot = ["DEPENDABOT_FIX_TOKEN"]
 environments.release = ["GH_ACTIONS_TOKEN", "RELEASE_DEPLOY_KEY"]
 # fix-push.yml pushes /autofix's commits to a PR's branch with this.
 environments.autofix = ["AUTOFIX_TOKEN"]
+# bump-uv.yml opens its PR, which changes workflows, with this.
+environments.uv-bump = ["UV_BUMP_TOKEN"]
 
 # The variables `repoutils variables` checks the repository has, names only.
 # SECRETS_EXPORT_KEY is the key export-secrets.yml encrypts to (and ci.yml's
@@ -138,6 +140,13 @@ allowed-tags = []
 # fix-push.yml. It's apart from release, so the job that pushes a PR's
 # branch can't read the release deploy key.
 [tool.repoutils.environments.autofix]
+deployment-branches = "selected"
+allowed-branches = ["main"]
+allowed-tags = []
+
+# Only main can deploy to uv-bump either, which holds UV_BUMP_TOKEN for
+# bump-uv.yml. It's apart from autofix, as UV_BUMP_TOKEN can change workflows.
+[tool.repoutils.environments.uv-bump]
 deployment-branches = "selected"
 allowed-branches = ["main"]
 allowed-tags = []

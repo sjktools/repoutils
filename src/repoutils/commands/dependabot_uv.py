@@ -163,9 +163,19 @@ def _open_pr(repo: str, branch: str, token: str) -> str | None:
     return str(pulls[0]["html_url"]) if pulls else None
 
 
-def bump(root: Path, repo: str, token: str, minimum: str, version: str | None, *, pr: bool = False) -> int:
+def bump(
+    root: Path,
+    repo: str,
+    token: str,
+    minimum: str,
+    version: str | None,
+    *,
+    pr: bool = False,
+    lock_file: Path | None = None,
+) -> int:
     """Bump the project's uv to Dependabot's, or to version if given, and with
-    pr, commit that to a new branch, push it and open a pull request."""
+    pr, commit that to a new branch, push it and open a pull request. With
+    lock_file, take uv.lock from that file rather than re-lock it."""
     run_url = ""
     if version is None:
         found = dependabot_uv(repo, token)
@@ -200,7 +210,7 @@ def bump(root: Path, repo: str, token: str, minimum: str, version: str | None, *
                 f"Branch {branch} already exists, here or on {REMOTE}, so delete it, or open its pull request by hand"
             )
 
-    changed, relocked = uv_bump.bump(root, minimum, version)
+    changed, relocked = uv_bump.bump(root, minimum, version, lock_file)
     names = [path.relative_to(root).as_posix() for path in changed] + (["uv.lock"] if relocked else [])
     print(f"Bumped uv from {minimum} to {version} in {', '.join(names)}")
     if not pr:
@@ -270,6 +280,12 @@ def main(argv: list[str]) -> int:
         help="bump to this uv version rather than Dependabot's, without asking GitHub for it",
     )
     bump_parser.add_argument(
+        "--lock-file",
+        type=Path,
+        help="copy this file over uv.lock rather than re-lock it, so that bump runs no uv: for a job that holds "
+        "a token that can push, given a uv.lock that a job without one re-locked by running bump",
+    )
+    bump_parser.add_argument(
         "--pr",
         action="store_true",
         help=f"commit the bump to a new branch, {BRANCH_PREFIX}<version>, push it to {REMOTE} and open a "
@@ -299,7 +315,7 @@ def main(argv: list[str]) -> int:
         if args.mode == "show":
             return show(repo, token)
         if args.mode == "bump":
-            return bump(Path(), repo, token, minimum, args.version, pr=args.pr)
+            return bump(Path(), repo, token, minimum, args.version, pr=args.pr, lock_file=args.lock_file)
         return check(repo, token, minimum, exit_zero=args.exit_zero)
     except subprocess.CalledProcessError as e:
         # A command run without capturing its output (uv lock) has already shown its stderr.

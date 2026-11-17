@@ -419,3 +419,26 @@ def test_bump_pr_open_failure(
     assert "Pushed uv-0.13.7, but opening its pull request failed (HTTP 422):\ninvalid\n" in err
     assert "https://github.com/o/r/compare/main...uv-0.13.7" in err
     assert _git(project, "rev-parse", "origin/uv-0.13.7")
+
+
+def test_bump_pr_with_lock_file(
+    project: Path, install: Install, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def unexpected(root: Path, version: str) -> NoReturn:
+        raise AssertionError("re-locked")
+
+    fake = FakePulls([])
+    install(fake)
+    monkeypatch.setattr(uv_bump, "lock", unexpected)
+    given = project.parent / "given.lock"
+    given.write_text("version = 1\nrevision = 3\n")
+    assert dependabot_uv.run(["bump", "--repo", "o/r", "--pr", "--lock-file", str(given)]) == 0
+    assert capsys.readouterr().out.endswith(", pyproject.toml, uv.lock\nOpened https://github.com/o/r/pull/5\n")
+    assert len(fake.created) == 1
+    assert _git(project, "show", "origin/uv-0.13.7:uv.lock") == "version = 1\nrevision = 3"
+
+
+def test_bump_missing_lock_file(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert dependabot_uv.run(["bump", "--version", "0.13.7", "--lock-file", "missing.lock"]) == 1
+    assert "missing.lock" in capsys.readouterr().err
+    assert not _git(project, "status", "--porcelain")

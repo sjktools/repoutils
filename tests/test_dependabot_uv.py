@@ -378,6 +378,10 @@ def test_bump_lock_failure(project: Path, monkeypatch: pytest.MonkeyPatch, capsy
     assert capsys.readouterr().err == "uv lock failed\n"
     # Every file is put back, so a rerun bumps and re-locks again.
     assert not _git(project, "status", "--porcelain")
+    monkeypatch.setattr(uv_bump, "lock", _relock)
+    assert dependabot_uv.run(["bump", "--version", "0.13.7"]) == 0
+    assert capsys.readouterr().out.endswith(", pyproject.toml, uv.lock\n")
+    assert (project / "uv.lock").read_text() == "version = 1\nrevision = 3\n"
 
 
 def test_bump_pr_refuses_a_branch_on_origin(

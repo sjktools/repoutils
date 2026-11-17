@@ -332,7 +332,8 @@ class MainTests(_GitRepoTestCase):
     def test_post_looks_up_repo_for_links(self) -> None:
         gh = FakeGitHub([])
         with (
-            mock.patch.dict("os.environ", {"GITHUB_REPOSITORY": ""}),
+            # gh runs Git, which mustn't follow a GIT_DIR to another repository.
+            mock.patch.dict("os.environ", {"GITHUB_REPOSITORY": "", "GIT_DIR": "/elsewhere/.git"}),
             mock.patch.object(github_comments, "gh_output", return_value="o/r") as gh_output,
         ):
             code, _, _ = self._run(["--base", "", "--repo", "", "--post", "7", "--author", "bot"], gh)
@@ -340,6 +341,7 @@ class MainTests(_GitRepoTestCase):
         gh_output.assert_called_once_with(
             "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner", cwd=self.repo, env=mock.ANY
         )
+        self.assertNotIn("GIT_DIR", gh_output.call_args.kwargs["env"])
         [(_, url, body)] = gh.writes()
         self.assertEqual(url, f"{github_comments.API_URL}/repos/o/r/issues/7/comments")
         self.assertIn("](https://github.com/o/r/blob/", body["body"])

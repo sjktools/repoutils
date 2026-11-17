@@ -131,8 +131,9 @@ jobs:
         run: just sync
 
       - name: Report coverage
-        run: just coverage --cov-report="markdown-append:${GITHUB_STEP_SUMMARY}"
-
+        run: |
+          trap 'mkdir -p "$RUNNER_TEMP/step-summaries" && cp "$GITHUB_STEP_SUMMARY" "$RUNNER_TEMP/step-summaries/coverage.md"' EXIT
+          just coverage --cov-report="markdown-append:${GITHUB_STEP_SUMMARY}"
 
       # The lines a PR changes, or on main the lines the commit changes.
       - name: Report patch coverage
@@ -177,10 +178,22 @@ jobs:
       # The comment post-patch-coverage posts, in the job summary, so it's
       # there for fork and Dependabot PRs too, which can't post it.
       - name: Summarise coverage
-        run: just patch-coverage-post --output "$GITHUB_STEP_SUMMARY" --coverage-report coverage.xml ${BASE_SHA:+--base "$BASE_SHA"}
+        run: |
+          trap 'mkdir -p "$RUNNER_TEMP/step-summaries" && cp "$GITHUB_STEP_SUMMARY" "$RUNNER_TEMP/step-summaries/patch-coverage.md"' EXIT
+          just patch-coverage-post --output "$GITHUB_STEP_SUMMARY" --coverage-report coverage.xml ${BASE_SHA:+--base "$BASE_SHA"}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GITHUB_TOKEN: ${{ github.token }}
+
+      # GitHub's API doesn't serve step summaries, so each step that writes one
+      # copies it to step-summaries/ for this artifact (see AGENTS.md).
+      - name: Upload the step summaries
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: step-summaries-${{ github.job }}
+          path: ${{ runner.temp }}/step-summaries/
+          if-no-files-found: ignore
 
   # Post the patch-coverage artifact (diff-cover's Markdown report) to the PR
   # as a github-actions[bot] comment, or edit the one posted before, so it's
@@ -342,7 +355,9 @@ jobs:
       - name: List long files
         env:
           BASE: ${{ github.base_ref && format('origin/{0}', github.base_ref) || '' }}
-        run: just long-files --base "$BASE" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          trap 'mkdir -p "$RUNNER_TEMP/step-summaries" && cp "$GITHUB_STEP_SUMMARY" "$RUNNER_TEMP/step-summaries/long-files.md"' EXIT
+          just long-files --base "$BASE" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post report to the PR
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
@@ -353,6 +368,16 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         # GITHUB_TOKEN can't look up its own login, so name it.
         run: just long-files --base "$BASE" --commit "$HEAD_SHA" --post "$PR_NUMBER" --author 'github-actions[bot]'
+
+      # GitHub's API doesn't serve step summaries, so each step that writes one
+      # copies it to step-summaries/ for this artifact (see AGENTS.md).
+      - name: Upload the step summaries
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: step-summaries-${{ github.job }}
+          path: ${{ runner.temp }}/step-summaries/
+          if-no-files-found: ignore
 
   # Lists the lines a PR adds that have a string pyproject.toml configures (such
   # as `# noqa:`), for information only, in the job summary and as a
@@ -393,7 +418,9 @@ jobs:
       - name: List added strings
         env:
           BASE: origin/${{ github.base_ref }}
-        run: just added-strings --base "$BASE" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          trap 'mkdir -p "$RUNNER_TEMP/step-summaries" && cp "$GITHUB_STEP_SUMMARY" "$RUNNER_TEMP/step-summaries/added-strings.md"' EXIT
+          just added-strings --base "$BASE" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post report to the PR
         if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
@@ -404,6 +431,16 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         # GITHUB_TOKEN can't look up its own login, so name it.
         run: just added-strings --base "$BASE" --commit "$HEAD_SHA" --post "$PR_NUMBER" --author 'github-actions[bot]'
+
+      # GitHub's API doesn't serve step summaries, so each step that writes one
+      # copies it to step-summaries/ for this artifact (see AGENTS.md).
+      - name: Upload the step summaries
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: step-summaries-${{ github.job }}
+          path: ${{ runner.temp }}/step-summaries/
+          if-no-files-found: ignore
 
   # Checks that the Export Secrets workflow's export still works, so a broken age pin,
   # a change to `secrets export` or a wrong or replaced SECRETS_EXPORT_KEY shows

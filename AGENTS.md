@@ -152,6 +152,13 @@ A workflow that uses an Actions variable (`vars.NAME`) needs it listed in `[tool
 `ci.yml`'s `secrets-export` job checks on every PR that this still works, by round-tripping made-up secrets with `just secrets-export-test`.
 Both install age with the `.github/actions/install-age` action, which pins its release by version and SHA-256, so update both together.
 
+GitHub's API doesn't serve step summaries, so every job that writes one also uploads it as an artifact.
+A step that writes to `$GITHUB_STEP_SUMMARY`, itself or through a command such as `secrets inspect`, starts with a `trap` that copies that file to `$RUNNER_TEMP/step-summaries/<name>.md` when the step exits.
+The trap copies it even when the step fails, so a failed step's summary is kept as well.
+The job's last step, `Upload the step summaries`, uploads that directory as the artifact `step-summaries-${{ github.job }}`, with `if: always()` and `if-no-files-found: ignore`.
+Copy both from an existing job, such as `long-files` in `ci.yml`.
+A matrix job adds its matrix values to the artifact's name, as each artifact in a run needs its own name.
+
 ## Issue labels
 
 `pyproject.toml`'s `[[tool.repoutils.labels]]` defines the labels, as exolot and taxtracker use them.

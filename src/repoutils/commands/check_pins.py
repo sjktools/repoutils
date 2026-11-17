@@ -115,19 +115,26 @@ def workflow_files(root: Path) -> list[Path]:
     return sorted([*(github / "workflows").glob("*.y*ml"), *(github / "actions").glob("**/action.y*ml")])
 
 
-def minimums(root: Path) -> dict[tuple[str, str], str]:
+def uv_minimum(root: Path) -> str:
+    """The minimum in ``root/pyproject.toml``'s ``[tool.uv] required-version``."""
     path = root / config.PYPROJECT
     tool = config.read_pyproject(path).get("tool", {})
     uv = tool.get("uv", {}) if isinstance(tool, dict) else {}
     required = uv.get("required-version") if isinstance(uv, dict) else None
-    if not isinstance(required, str) or not required.startswith(">="):
+    # The lower bound of e.g. ">=0.13.6, <0.14".
+    minimum = required.removeprefix(">=").split(",", 1)[0].strip() if isinstance(required, str) else ""
+    if not isinstance(required, str) or not required.startswith(">=") or not minimum:
         found = "is missing" if required is None else f"{required!r} isn't of the form >=X.Y.Z"
         raise config.ConfigError(f"{path}: [tool.uv] required-version {found}")
+    return minimum
+
+
+def minimums(root: Path) -> dict[tuple[str, str], str]:
+    uv = uv_minimum(root)
     match = _JUST_MIN_RE.search((root / "justfile").read_text())
     if match is None:
         raise ValueError("justfile has no `set minimum-version := '...'`")
-    # The lower bound of e.g. ">=0.13.6, <0.14".
-    return {UV: required.removeprefix(">=").split(",", 1)[0].strip(), JUST: match["version"]}
+    return {UV: uv, JUST: match["version"]}
 
 
 def dockerfile_problems(root: Path, uv: str) -> list[str]:

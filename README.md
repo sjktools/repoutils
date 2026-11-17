@@ -43,6 +43,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `requirements-min-versions` | Checks or updates the `>=` minimum versions in `pyproject.toml` to match the versions in `uv.lock`. |
 | `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
 | `check-lock-platforms` | Fails if `uv.lock` contains wheels for platforms that the project does not allow. |
+| `dependabot-uv` | `show` prints the `uv` version from the newest successful Dependabot `uv` update run, and `check` fails unless the minimum in `[tool.uv] required-version` is that version. |
 | `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment (posting nothing with `--update-only` when none exists) or hides it when you pass `--hide-previous`. |
 | `added-strings` | Lists the added lines in a pull request that match strings configured in `pyproject.toml` (such as `# noqa:`), or posts the list to the pull request. |
 | `post-patch-coverage` | Formats the Markdown patch coverage report from `diff-cover`, adds the project coverage and the change from the base commit, posts the report to a pull request, and warns when coverage drops or falls below a limit. |
@@ -65,7 +66,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 These commands require a GitHub token:
 
 - any command that posts to a pull request, and `post-coverage-status`
-- the `github-settings`, `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys` and `security-settings` commands
+- the `github-settings`, `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys`, `security-settings` and `dependabot-uv` commands
 
 These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when `$GITHUB_TOKEN` is not set.
 `wait-for-base-coverage` sends `$GITHUB_TOKEN` when it is set, and does not run `gh auth token`.

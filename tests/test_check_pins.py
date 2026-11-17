@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -183,6 +184,10 @@ def test_main_rejects_unexpected_minimums(repo: Path) -> None:
     (repo / "pyproject.toml").write_text("[tool.uv]\nrequired-version = 3\n")
     with pytest.raises(ConfigError, match="required-version 3 isn't of the form"):
         minimums(repo)
+    for empty in (">=", ">= , <0.14"):
+        (repo / "pyproject.toml").write_text(f'[tool.uv]\nrequired-version = "{empty}"\n')
+        with pytest.raises(ConfigError, match=re.escape(f"required-version '{empty}' isn't of the form")):
+            minimums(repo)
     for text in ("", "tool = 3\n", "[tool]\nuv = 3\n", "[tool.uv]\n"):
         (repo / "pyproject.toml").write_text(text)
         with pytest.raises(ConfigError, match="required-version is missing"):

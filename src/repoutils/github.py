@@ -8,7 +8,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from email.message import Message
-from pathlib import Path
 from typing import IO, Any, override
 
 API_URL = "https://api.github.com"
@@ -87,9 +86,8 @@ def request_bytes(
     raise RuntimeError(f"too many redirects for {method} {url}")
 
 
-def gh_output(*args: str, cwd: Path | None = None) -> str:
-    """gh's output, run in cwd (default: the current directory), which picks the repository gh defaults to."""
-    return subprocess.run(["gh", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
+def gh_output(*args: str) -> str:
+    return subprocess.run(["gh", *args], capture_output=True, text=True, check=True).stdout.strip()
 
 
 def pr_head(repo: str, pr: int, token: str) -> str:

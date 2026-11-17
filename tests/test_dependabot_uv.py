@@ -134,8 +134,10 @@ def test_expired_log(install: Install, code: int) -> None:
 
 def test_log_other_http_error(install: Install) -> None:
     install(FakeGitHub(log=_http_error(500)))
-    with pytest.raises(urllib.error.HTTPError):
+    with pytest.raises(urllib.error.HTTPError) as raised:
         dependabot_uv.dependabot_uv("o/r", "tok")
+    # Close it, as Python 3.15 warns about an HTTPError left to the garbage collector.
+    raised.value.close()
 
 
 @pytest.fixture

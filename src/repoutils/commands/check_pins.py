@@ -24,7 +24,7 @@ _WITH_RE = re.compile(r"^with:\s*(?:#.*)?$")
 _JUST_MIN_RE = re.compile(r"^set minimum-version := '(?P<version>[^']+)'$", re.MULTILINE)
 # The tag, without any @sha256: digest.
 # A FROM line's flags (e.g. --platform=$BUILDPLATFORM) come before the image.
-_DOCKER_UV_RE = re.compile(
+DOCKER_UV_RE = re.compile(
     r"^FROM\s+(?:--\S+\s+)*ghcr\.io/astral-sh/uv:(?P<version>[^\s@]+)", re.MULTILINE | re.IGNORECASE
 )
 
@@ -34,21 +34,25 @@ def steps(text: str) -> list[list[str]]:
     not a list nested in one), each as its lines: an item runs from its `- `
     line up to the next line (ignoring blanks and comments) indented no deeper
     than that `- `."""
-    result: list[list[str]] = []
-    current: list[str] | None = None
-    indent = -1
-    for line in text.splitlines():
+    lines = text.splitlines()
+    return [lines[span] for span in step_spans(lines)]
+
+
+def step_spans(lines: list[str]) -> list[slice]:
+    """Where each of steps()' items sits in a workflow's lines."""
+    result: list[slice] = []
+    start = indent = -1
+    for i, line in enumerate(lines):
         stripped = line.strip()
-        if current is not None and (
-            not stripped or stripped.startswith("#") or len(line) - len(line.lstrip()) > indent
-        ):
-            current.append(line)
-        elif match := _STEP_RE.match(line):
-            current = [line]
-            indent = len(match["indent"])
-            result.append(current)
-        else:
-            current = None
+        if start >= 0 and (not stripped or stripped.startswith("#") or len(line) - len(line.lstrip()) > indent):
+            continue
+        if start >= 0:
+            result.append(slice(start, i))
+        start = -1
+        if match := _STEP_RE.match(line):
+            start, indent = i, len(match["indent"])
+    if start >= 0:
+        result.append(slice(start, len(lines)))
     return result
 
 
@@ -56,11 +60,17 @@ def inputs(step: list[str]) -> list[str]:
     """The lines of a step's `with:` mapping that start one of its keys, so
     that a key in another of the step's mappings (`env:`), or a line of a
     multi-line value (`sparse-checkout: |`), isn't taken for an input."""
-    lines = [line for line in step if line.strip() and not line.strip().startswith("#")]
+    return [step[i] for i in input_indexes(step)]
+
+
+def input_indexes(step: list[str]) -> list[int]:
+    """Where each of inputs()' lines sits in the step."""
+    numbered = [(n, line) for n, line in enumerate(step) if line.strip() and not line.strip().startswith("#")]
+    lines = [line for _, line in numbered]
     for i, (indent, key) in enumerate(_keys(lines)):
         if _WITH_RE.match(key):
-            mapping = list(itertools.takewhile(lambda body: _depth(body) > indent, lines[i + 1 :]))
-            return [key for key in mapping if _depth(key) == _depth(mapping[0])]
+            mapping = list(itertools.takewhile(lambda body: _depth(body[1]) > indent, numbered[i + 1 :]))
+            return [n for n, key in mapping if _depth(key) == _depth(mapping[0][1])]
     return []
 
 
@@ -90,22 +100,51 @@ def _depth(line: str) -> int:
     return len(line) - len(line.lstrip())
 
 
+def _key_re(key: str) -> re.Pattern[str]:
+    """Matches an input line, with the value in whichever of its groups
+    double, single or plain matched. It takes the whole value, less its quotes
+    or a trailing comment, so an unexpected one (`${{ env.UV }}`, `latest`,
+    `"0.13.6 # x"`) is reported as written."""
+    return re.compile(
+        rf"""^\s*{re.escape(key)}:\s*(?:"(?P<double>[^"]*)"|'(?P<single>[^']*)'|(?P<plain>.*?))\s*(?:\s#.*)?$"""
+    )
+
+
+def _value_group(match: re.Match[str]) -> str:
+    return next(name for name in ("double", "single", "plain") if match[name] is not None)
+
+
 def pins(text: str, action: str, key: str) -> list[str | None]:
     """The value of input key in each step of a workflow that uses action, or
     None where that step doesn't set it."""
-    # The whole value, less its quotes or a trailing comment, so an unexpected
-    # one (`${{ env.UV }}`, `latest`, `"0.13.6 # x"`) is reported as written.
-    key_re = re.compile(
-        rf"""^\s*{re.escape(key)}:\s*(?:"(?P<double>[^"]*)"|'(?P<single>[^']*)'|(?P<plain>.*?))\s*(?:\s#.*)?$"""
-    )
+    key_re = _key_re(key)
     found: list[str | None] = []
     for step in steps(text):
         if _uses(step) == action:
-            values = [
-                next(v for v in m.groups() if v is not None) for line in inputs(step) if (m := key_re.match(line))
-            ]
+            values = [m[_value_group(m)] for line in inputs(step) if (m := key_re.match(line))]
             found.append(values[0] if values else None)
     return found
+
+
+def set_pins(text: str, action: str, key: str, old: str, new: str) -> tuple[str, int]:
+    """text with input key set to new, keeping its quotes and any comment, in
+    each step that uses action where key is old, and how many steps changed."""
+    key_re = _key_re(key)
+    bare, lines = text.splitlines(), text.splitlines(keepends=True)
+    changed = 0
+    for span in step_spans(bare):
+        if _uses(bare[span]) != action:
+            continue
+        for i in input_indexes(bare[span]):
+            if m := key_re.match(bare[span.start + i]):
+                if m[_value_group(m)] == old:
+                    # The line's ending follows bare's text, so spans in it hold in lines too.
+                    start, end = m.span(_value_group(m))
+                    line = lines[span.start + i]
+                    lines[span.start + i] = line[:start] + new + line[end:]
+                    changed += 1
+                break
+    return "".join(lines), changed
 
 
 def workflow_files(root: Path) -> list[Path]:
@@ -139,12 +178,12 @@ def minimums(root: Path) -> dict[tuple[str, str], str]:
 
 def dockerfile_problems(root: Path, uv: str) -> list[str]:
     """Each Dockerfile uv stage whose tag isn't uv. A Dockerfile with no such
-    stage is a problem too, as it more likely means _DOCKER_UV_RE no longer
+    stage is a problem too, as it more likely means DOCKER_UV_RE no longer
     recognizes it; a project with no Dockerfile has nothing to check."""
     dockerfile = root / "Dockerfile"
     if not dockerfile.is_file():
         return []
-    tags = [m["version"] for m in _DOCKER_UV_RE.finditer(dockerfile.read_text())]
+    tags = [m["version"] for m in DOCKER_UV_RE.finditer(dockerfile.read_text())]
     if not tags:
         return ["Dockerfile has no FROM ghcr.io/astral-sh/uv:<version> stage"]
     return [f"Dockerfile: FROM ghcr.io/astral-sh/uv:{tag}, not {uv}" for tag in tags if tag != uv]

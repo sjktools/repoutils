@@ -33,6 +33,8 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
 - `src/repoutils/secret_inspect.py` is `secrets inspect`, which reports what each secret a workflow passes it is, kept apart from the command for length.
   `src/repoutils/workflow_summaries.py` is `secrets inspect-remote`, which starts the workflow that runs `secrets inspect` and prints the step summaries it keeps as artifacts.
   `src/repoutils/secret_export.py` is `secrets export`, which encrypts those secrets' values with age for a backup.
+- `src/repoutils/uv_bump.py` is `dependabot-uv bump`'s changes to the files that `check-pins` checks, kept apart from the command for length.
+  It changes them only if `check-pins` passes, before and after.
 - `src/repoutils/workflows.py` reads the workflows in `.github/workflows` for the secrets and variables they use and each job's environment, without a YAML parser.
   `secrets check-workflows` and `variables check-workflows` use it.
 - `src/repoutils/commands/variables.py` shares its table format, and most of its workings, with `secrets.py`.

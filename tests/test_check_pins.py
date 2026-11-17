@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from repoutils.commands.check_pins import UV, main, minimums, pins, steps
+from repoutils.commands.check_pins import UV, main, minimums, pins, set_pins, steps
 from repoutils.config import ConfigError
 
 WORKFLOW = """\
@@ -217,3 +217,21 @@ def test_main_checks_the_dockerfile_uv_stage(repo: Path, capsys: pytest.CaptureF
 
 def test_repo_pins_pass() -> None:
     assert main(Path(__file__).parents[1]) == 0
+
+
+def test_set_pins_changes_only_the_matching_input() -> None:
+    text, changed = set_pins(WORKFLOW, *UV, "0.13.6", "0.13.7")
+    assert changed == 1
+    # Not the other action's `version`, nor a value that only starts with 0.13.6.
+    assert text == WORKFLOW.replace('# pinned\n          version: "0.13.6"', '# pinned\n          version: "0.13.7"')
+    assert pins(text, *UV) == ["0.13.7", None, "${{ env.UV }}", "0.13.6 # not a comment"]
+
+
+def test_set_pins_keeps_line_endings_and_plain_values() -> None:
+    # It also skips other inputs, and a line after the last step.
+    workflow = (
+        "steps:\r\n  - uses: astral-sh/setup-uv@v7\r\n    with:\r\n      enable-cache: false\r\n"
+        "      version: 0.13.6 # pin\r\nafter: steps\r\n"
+    )
+    text, changed = set_pins(workflow, *UV, "0.13.6", "0.13.7")
+    assert (text, changed) == (workflow.replace("0.13.6", "0.13.7"), 1)

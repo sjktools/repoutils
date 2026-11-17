@@ -22,6 +22,7 @@ into a list or a code block.
 
 import argparse
 import re
+import statistics
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,14 +66,16 @@ JOINT_RE = re.compile(r",\s+(?:" + "|".join(CONJUNCTIONS) + r")\b|;|:\s|\s(?:[โ€
 class Metric:
     """A rate over a file's sentences, and the config key of its limit."""
 
-    key: str
-    default: float
+    # Both None for a rate that only --stats reports, with no setting to limit it.
+    key: str | None
+    default: float | None
     name: str
     # What one sentence adds to the rate.
     count: Callable[[str], int]
     unit: str
     # mean: the count per sentence. share: the percentage of sentences that count.
-    kind: Literal["mean", "share"] = "mean"
+    # cv: the counts' coefficient of variation (standard deviation over mean).
+    kind: Literal["mean", "share", "cv"] = "mean"
     # Whether the worst sentences are the ones with the lowest counts, not the highest.
     lowest_first: bool = False
     # Whether the rate leaves out the sentences in list items, and the ones that
@@ -93,6 +96,9 @@ class Metric:
             return 0
         if self.kind == "share":
             return 100 * sum(count > 0 for count in counts) / len(counts)
+        if self.kind == "cv":
+            mean = sum(counts) / len(counts)
+            return statistics.pstdev(counts) / mean if mean > 0 else 0
         return sum(counts) / len(counts)
 
     def over(self, sentences: list[Sentence], limit: float | None) -> bool:
@@ -118,6 +124,7 @@ def metrics(
 
     return [
         Metric("max-words-per-sentence", 18, "words per sentence", _word_count, "words"),
+        Metric(None, None, "sentence-length CV (standard deviation รท mean)", _word_count, "words", "cv"),
         Metric(
             "max-long-sentences", 12, f"% of sentences over {long_sentence_words} words", long_words, "words", "share"
         ),
@@ -194,7 +201,12 @@ def main(paths: list[str] | None = None, *, exit_zero: bool = False, show_stats:
     long_sentence_words = config.integer(table, "long-sentence-words", DEFAULT_LONG_SENTENCE_WORDS, WHERE)
     short_sentence_words = config.integer(table, "short-sentence-words", DEFAULT_SHORT_SENTENCE_WORDS, WHERE)
     limits = [
-        (metric, config.optional_number(table, metric.key, metric.default, WHERE))
+        (
+            metric,
+            None
+            if metric.key is None or metric.default is None
+            else config.optional_number(table, metric.key, metric.default, WHERE),
+        )
         for metric in metrics(long_sentence_words, short_sentence_words)
     ]
     if paths is None:

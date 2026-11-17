@@ -71,6 +71,10 @@ These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when 
 `wait-for-base-coverage` sends `$GITHUB_TOKEN` when it is set, and does not run `gh auth token`.
 Of the `secrets` and `variables` subcommands, only `check`, `dump` and `secrets inspect-remote` use the token.
 
+`long-files` and `added-strings` read the Git checkout in the current directory by default.
+Pass `--directory <dir>` to read another checkout instead.
+The command then reads the files, the Git history and the `pyproject.toml` settings of that checkout.
+
 ### Posting from a trusted checkout
 
 A workflow job that posts to a pull request holds a token that can write.
@@ -82,7 +86,7 @@ Instead, check out the base commit of the pull request (`github.event.pull_reque
   Make the reports in a job without write permission, and pass them to the posting job as artifacts.
 - `long-files` and `added-strings` read the files of the pull request.
   Check out the head of the pull request into a subdirectory, and pass that subdirectory with `--directory`.
-  The command then reads the files, the Git history and the `pyproject.toml` settings of that checkout as data, and runs no code from it.
+  The command then reads that checkout only as data, and runs no code from it.
 
 On a `pull_request` run, the workflow file itself still comes from the pull request.
 These steps therefore do not protect against a pull request that changes the workflow.

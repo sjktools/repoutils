@@ -4,7 +4,7 @@ import subprocess
 import urllib.error
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -14,7 +14,7 @@ from repoutils.commands import dependabot_uv
 API = github.API_URL
 REPO = f"{API}/repos/o/r"
 WORKFLOWS = f"{REPO}/actions/workflows"
-RUNS = f"{WORKFLOWS}/9/runs?status=success"
+RUNS = f"{WORKFLOWS}/9/runs"
 LOG = f"{REPO}/actions/jobs/55/logs"
 PAGE = "https://github.com/o/r/actions/runs/7"
 # Copied from a real Dependabot Updates job log.
@@ -26,8 +26,14 @@ Install = Callable[["FakeGitHub"], "FakeGitHub"]
 PYPROJECT = '[tool.uv]\nrequired-version = ">=0.13.7"\n'
 
 
-def _run(name: str, run_id: int = 7) -> dict[str, Any]:
-    return {"id": run_id, "name": name, "html_url": PAGE, "created_at": "2026-11-17T01:44:22Z"}
+def _run(name: str, run_id: int = 7, conclusion: str | None = "success") -> dict[str, Any]:
+    return {
+        "id": run_id,
+        "name": name,
+        "conclusion": conclusion,
+        "html_url": PAGE,
+        "created_at": "2026-11-17T01:44:22Z",
+    }
 
 
 def _http_error(code: int) -> urllib.error.HTTPError:
@@ -99,12 +105,13 @@ def test_log_version_conflicting() -> None:
         dependabot_uv.log_version(LINE + LINE.replace("0.13.7", "0.14.0"), PAGE)
 
 
-def test_newest_uv_run_skips_other_ecosystems_and_pages(install: Install) -> None:
-    other = [_run("github_actions in /. - Update #1", run_id=n) for n in range(dependabot_uv.PER_PAGE)]
+def test_newest_uv_run_skips_unsuccessful_runs_and_other_ecosystems_and_pages(install: Install) -> None:
+    unsuccessful = [_run("uv in /. - Update #4", 9, None), _run("uv in /. - Update #3", 8, "failure")]
+    other = [*unsuccessful, *(_run("github_actions in /. - Update #1", n) for n in range(dependabot_uv.PER_PAGE))]
     fake = install(FakeGitHub(runs=[*other, _run("uv in /. - Update #2"), _run("uv in /. - Update #1", 6)]))
     found = dependabot_uv.dependabot_uv("o/r", "tok")
     assert found == dependabot_uv.Found("0.13.7", PAGE, "2026-11-17")
-    assert f"{RUNS}&per_page=100&page=2" in fake.urls
+    assert f"{RUNS}?per_page=100&page=2" in fake.urls
 
 
 def test_no_workflow(install: Install) -> None:
@@ -188,9 +195,16 @@ def test_check_http_error_fails_even_with_exit_zero(
     assert f"HTTP 500 from {LOG}:\ngone" in capsys.readouterr().err
 
 
-def test_check_bad_pyproject_asks_nothing(cwd: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_check_bad_pyproject_asks_nothing(
+    cwd: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     (cwd / "pyproject.toml").write_text("[tool.uv]\n")
-    # No fake installed and no gh: a request would fail differently.
+
+    def unexpected(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError("asked GitHub or gh")
+
+    for name in ("request", "request_bytes", "gh_output"):
+        monkeypatch.setattr(github, name, unexpected)
     assert dependabot_uv.run(["check", "--repo", "o/r", "--exit-zero"]) == 1
     assert "[tool.uv] required-version is missing" in capsys.readouterr().err
 

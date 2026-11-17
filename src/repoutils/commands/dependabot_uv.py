@@ -72,9 +72,10 @@ def workflow_id(repo: str, token: str) -> int:
 
 def newest_uv_run(repo: str, token: str) -> dict[str, Any]:
     """The newest successful run of Dependabot Updates that updated uv."""
-    url = f"{github.API_URL}/repos/{repo}/actions/workflows/{workflow_id(repo, token)}/runs?status=success"
+    # Not ?status=success, as GitHub returns at most 1,000 runs for a filtered listing.
+    url = f"{github.API_URL}/repos/{repo}/actions/workflows/{workflow_id(repo, token)}/runs"
     for run in _pages(url, "workflow_runs", token):
-        if str(run.get("name", "")).startswith(RUN_PREFIX):
+        if run.get("conclusion") == "success" and str(run.get("name", "")).startswith(RUN_PREFIX):
             found: dict[str, Any] = run
             return found
     raise RuntimeError(

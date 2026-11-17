@@ -31,7 +31,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | Command | What it does |
 | --- | --- |
 | `check-whitespace` | Fails on trailing whitespace, a leading blank line, or a missing or extra final newline in any Git-tracked text file. |
-| `check-sentence-per-line` | Fails if a configured Markdown file (by default `AGENTS.md` and `README.md`) has two sentences on one line. |
+| `check-sentence-per-line` | Fails if a Markdown file has two sentences on one line. It checks the files named on the command line, or else the configured files (by default `AGENTS.md` and `README.md`). |
 | `check-prose` | Fails if the prose in a configured Markdown file has long sentences, many joined clauses, or too many short sentences. |
 | `check-blame-ignore-revs` | Fails unless `.git-blame-ignore-revs` lists only full commit hashes that are ancestors of a target commit. |
 | `check-screenshots-dir` | Fails unless `.gitignore` is the only tracked file in the screenshots directory and ignores all other files in that directory. |
@@ -246,6 +246,7 @@ For each limit that a file exceeds, the command prints the five sentences that c
 The two limits for long sentences share one list of sentences under the first exceeded limit.
 Pass `--exit-zero` to print the same output and exit with code 0.
 Pass `--stats` to print all rates for every file.
+`--stats` also prints the sentence-length CV, which no setting limits: the standard deviation of sentence length divided by the mean sentence length.
 
 When the command cannot read a file (for example, when the file is not valid UTF-8), it prints `<file>: cannot read (<reason>)`.
 The command checks the remaining files and exits with code 1, even when you pass `--exit-zero`.

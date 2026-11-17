@@ -91,6 +91,7 @@ def test_python_dash_m(tmp_path: Path) -> None:
         (["check-pins"], "pin uv"),
         (["check-prose", "--exit-zero"], "sentences"),
         (["check-sentence-per-line"], "one-sentence-per-line"),
+        (["check-sentence-per-line", "README.md"], "one-sentence-per-line"),
         (["check-whitespace"], "clean whitespace"),
         (["long-files", "--base", ""], "500 lines"),
         (["added-strings", "--base", "HEAD"], "Strings to double check"),

@@ -189,11 +189,12 @@ def bump(root: Path, repo: str, token: str, minimum: str, version: str | None, *
         base = _git(root, "branch", "--show-current")
         if not base:
             raise RuntimeError("HEAD isn't on a branch, so --pr has no base branch for the pull request")
-        if _git(root, "branch", "--list", branch):
-            raise RuntimeError(f"Branch {branch} already exists, so delete it, or push it and open its pull request")
+        if _git(root, "branch", "--list", branch) or _git(root, "ls-remote", "--heads", REMOTE, f"refs/heads/{branch}"):
+            raise RuntimeError(
+                f"Branch {branch} already exists, here or on {REMOTE}, so delete it, or open its pull request by hand"
+            )
 
-    changed = uv_bump.bump(root, minimum, version)
-    relocked = uv_bump.lock(root, version)
+    changed, relocked = uv_bump.bump(root, minimum, version)
     names = [path.relative_to(root).as_posix() for path in changed] + (["uv.lock"] if relocked else [])
     print(f"Bumped uv from {minimum} to {version} in {', '.join(names)}")
     if not pr:
@@ -209,12 +210,21 @@ def bump(root: Path, repo: str, token: str, minimum: str, version: str | None, *
         f"Changes {', '.join(f'`{name}`' for name in names)}.\n\n"
         "Opened by `repoutils dependabot-uv bump --pr`."
     )
-    created = github.request(
-        "POST",
-        f"{github.API_URL}/repos/{repo}/pulls",
-        token,
-        json_body={"title": title, "head": branch, "base": base, "body": body},
-    )
+    try:
+        created = github.request(
+            "POST",
+            f"{github.API_URL}/repos/{repo}/pulls",
+            token,
+            json_body={"title": title, "head": branch, "base": base, "body": body},
+        )
+    except urllib.error.HTTPError as e:
+        with e:
+            detail = e.read().decode(errors="replace")
+        # A rerun would stop at the pushed branch, so say how to finish by hand.
+        raise RuntimeError(
+            f"Pushed {branch}, but opening its pull request failed (HTTP {e.code}):\n{detail}\n"
+            f"Open it at https://github.com/{repo}/compare/{base}...{branch}"
+        ) from None
     print(f"Opened {created['html_url']}")
     return 0
 

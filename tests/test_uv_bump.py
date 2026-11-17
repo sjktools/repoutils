@@ -42,13 +42,15 @@ def make_project(root: Path, *, dockerfile: str | None = DOCKERFILE) -> Path:
 
 def test_version_key() -> None:
     assert uv_bump.version_key("0.13.10") > uv_bump.version_key("0.13.9")
-    with pytest.raises(ValueError, match="uv v1 isn't a version"):
-        uv_bump.version_key("v1")
+    for version in ("v1", "0.13", "0.13.7.1"):
+        with pytest.raises(ValueError, match=f"uv {version} isn't a version"):
+            uv_bump.version_key(version)
 
 
 def test_bump(tmp_path: Path) -> None:
     root = make_project(tmp_path)
-    changed = uv_bump.bump(root, "0.13.6", "0.13.7")
+    changed, relocked = uv_bump.bump(root, "0.13.6", "0.13.7")
+    assert not relocked
     assert changed == sorted([root / "pyproject.toml", root / ".github/workflows/ci.yml", root / "Dockerfile"])
     assert 'required-version = ">=0.13.7, <0.14"' in (root / "pyproject.toml").read_text()
     # Only the setup-uv input changes, keeping its quotes and comment.
@@ -60,7 +62,7 @@ def test_bump(tmp_path: Path) -> None:
 
 def test_bump_without_dockerfile(tmp_path: Path) -> None:
     root = make_project(tmp_path, dockerfile=None)
-    assert root / "Dockerfile" not in uv_bump.bump(root, "0.13.6", "0.13.7")
+    assert root / "Dockerfile" not in uv_bump.bump(root, "0.13.6", "0.13.7")[0]
 
 
 def test_bump_refuses_when_check_pins_fails(tmp_path: Path) -> None:

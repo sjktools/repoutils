@@ -247,6 +247,7 @@ def project(cwd: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _relock(root: Path, version: str) -> bool:
+    assert version == "0.13.7"
     (root / "uv.lock").write_text("version = 1\nrevision = 3\n")
     return True
 
@@ -369,8 +370,41 @@ def test_bump_pr_refuses_changes(project: Path, install: Install, capsys: pytest
 
 def test_bump_lock_failure(project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     def fail(root: Path, version: str) -> bool:
+        (root / "uv.lock").write_text("half written")
         raise subprocess.CalledProcessError(2, ["uv", "lock"])
 
     monkeypatch.setattr(uv_bump, "lock", fail)
     assert dependabot_uv.run(["bump", "--version", "0.13.7"]) == 1
     assert capsys.readouterr().err == "uv lock failed\n"
+    # Every file is put back, so a rerun bumps and re-locks again.
+    assert not _git(project, "status", "--porcelain")
+
+
+def test_bump_pr_refuses_a_branch_on_origin(
+    project: Path, install: Install, capsys: pytest.CaptureFixture[str]
+) -> None:
+    install(FakePulls([]))
+    _git(project, "push", "--quiet", "origin", "main:uv-0.13.7")
+    assert dependabot_uv.run(["bump", "--repo", "o/r", "--pr"]) == 1
+    assert "Branch uv-0.13.7 already exists, here or on origin" in capsys.readouterr().err
+    assert not _git(project, "status", "--porcelain")
+
+
+def test_bump_pr_open_failure(
+    project: Path, install: Install, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = install(FakePulls([]))
+    request = fake.request
+
+    def refuse(method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        if method == "POST":
+            raise urllib.error.HTTPError(url, 422, "error", email.message.Message(), io.BytesIO(b"invalid"))
+        return request(method, url, token)
+
+    monkeypatch.setattr(github, "request", refuse)
+    monkeypatch.setattr(uv_bump, "lock", _relock)
+    assert dependabot_uv.run(["bump", "--repo", "o/r", "--pr"]) == 1
+    err = capsys.readouterr().err
+    assert "Pushed uv-0.13.7, but opening its pull request failed (HTTP 422):\ninvalid\n" in err
+    assert "https://github.com/o/r/compare/main...uv-0.13.7" in err
+    assert _git(project, "rev-parse", "origin/uv-0.13.7")

@@ -17,7 +17,7 @@ from repoutils.commands import check_pins
 
 def version_key(version: str) -> tuple[int, ...]:
     """A uv version (X.Y.Z) as numbers, for comparing."""
-    if not re.fullmatch(r"\d+(?:\.\d+)*", version):
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
         raise ValueError(f"uv {version} isn't a version of the form X.Y.Z")
     return tuple(int(part) for part in version.split("."))
 
@@ -51,10 +51,11 @@ def _dockerfile(text: str, new: str) -> str:
     return "".join([*out, text[pos:]])
 
 
-def bump(root: Path, old: str, new: str) -> list[Path]:
-    """Move the files check-pins checks from uv old to uv new, and return the
-    paths it changed. It writes nothing unless it can change every one, and
-    puts them all back if check-pins then fails."""
+def bump(root: Path, old: str, new: str) -> tuple[list[Path], bool]:
+    """Move the files check-pins checks from uv old to uv new, then re-lock
+    with uv new. Return the paths it changed, and whether uv.lock changed.
+    It writes nothing unless it can change every one, and puts them all back,
+    uv.lock too, if check-pins then fails or re-locking does."""
     found, _ = check_pins.problems(root)
     if found:
         raise RuntimeError("check-pins fails, so fix these first:\n" + "\n".join(found))
@@ -77,6 +78,8 @@ def bump(root: Path, old: str, new: str) -> list[Path]:
         if new_text != text:
             changed[path] = new_text
 
+    lockfile = root / "uv.lock"
+    locked = lockfile.read_bytes() if lockfile.is_file() else None
     try:
         for path, text in changed.items():
             path.write_text(text)
@@ -87,11 +90,14 @@ def bump(root: Path, old: str, new: str) -> list[Path]:
                 f"After the bump, [tool.uv] required-version's minimum is {minimum}, and check-pins reports:\n"
                 + "\n".join(problems or ["nothing"])
             )
+        relocked = lock(root, new)
     except BaseException:
         for path in changed:
             path.write_text(texts[path])
+        if locked is not None:
+            lockfile.write_bytes(locked)
         raise
-    return sorted(changed)
+    return sorted(changed), relocked
 
 
 def lock(root: Path, version: str) -> bool:

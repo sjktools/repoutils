@@ -76,6 +76,24 @@ Of the `secrets` and `variables` subcommands, only `check`, `dump` and `secrets 
 Pass `--directory <dir>` to read another checkout instead.
 The command then reads the files, the Git history and the `pyproject.toml` settings of that checkout.
 
+### Posting from a trusted checkout
+
+A workflow job that posts to a pull request holds a token that can write.
+Do not run code from the pull request in that job, because that code can use the token.
+That code includes the `justfile`, the scripts and any `repoutils` source that the pull request changes.
+Instead, check out the base commit of the pull request (`github.event.pull_request.base.sha`), and run `repoutils` from that checkout.
+
+- `post-patch-coverage` and `post-coverage-status` read the coverage reports, and the `pyproject.toml` settings of the base checkout.
+  A change to `[tool.repoutils.coverage]` in a pull request therefore reaches what these commands post only after the pull request merges.
+  Make the reports in a job without write permission, and pass them to the posting job as artifacts.
+- `long-files` and `added-strings` read the files of the pull request.
+  Check out the head of the pull request into a subdirectory, and pass that subdirectory with `--directory`.
+  The command then reads that checkout only as data, and runs no code from it.
+
+On a `pull_request` run, the workflow file itself still comes from the pull request.
+These steps therefore do not protect against a pull request that changes the workflow.
+The `ci.yml` workflow in this repository shows these jobs.
+
 ## Configuration
 
 Put all configuration settings in `pyproject.toml`.

@@ -109,7 +109,12 @@ def test_classic_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(secret_inspect, "get", api)
     finding = secret_inspect.describe("T", CLASSIC, NOW, 14)
     assert finding == Finding(
-        "T", "classic personal access token", "alice", "2027-01-14 (in 60 days)", "scopes: repo, workflow"
+        "T",
+        "classic personal access token",
+        "alice",
+        "2027-01-14 (in 60 days)",
+        "scopes: repo, workflow",
+        secret_inspect.token_hash(CLASSIC),
     )
     assert api.calls == [("/user", CLASSIC)]
 
@@ -135,48 +140,44 @@ def test_expiry(monkeypatch: pytest.MonkeyPatch, expiry: str, expires: str, prob
     assert (finding.expires, finding.problems) == (expires, problems)
 
 
-def test_fine_grained_token_lists_repositories(monkeypatch: pytest.MonkeyPatch) -> None:
-    repos = [{"full_name": f"o/r{i}"} for i in range(12)]
-    api = FakeAPI(
-        {
-            ("/user", FINE): _user("alice", GitHub_Authentication_Token_Expiration="2027-01-14 00:00:00 UTC"),
-            (f"/user/repos?per_page={secret_inspect.PER_PAGE}", FINE): Response(Message(), repos),
-        }
-    )
+def test_fine_grained_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = FakeAPI({("/user", FINE): _user("alice", GitHub_Authentication_Token_Expiration="2027-01-14 00:00:00 UTC")})
     monkeypatch.setattr(secret_inspect, "get", api)
     finding = secret_inspect.describe("T", FINE, NOW, 14)
-    shown = ", ".join(f"o/r{i}" for i in range(10))
-    assert finding.access == f"12 repositories: {shown} and 2 more"
+    # No repositories: the API can't say which a fine-grained token was given.
+    assert (finding.owner, finding.access) == ("alice", "")
     assert finding.expires == "2027-01-14 (in 60 days)"
+    assert api.calls == [("/user", FINE)]
 
 
-def test_fine_grained_token_with_a_full_page(monkeypatch: pytest.MonkeyPatch) -> None:
-    repos = [{"full_name": f"o/r{i}"} for i in range(secret_inspect.PER_PAGE)]
-    api = FakeAPI(
-        {
-            ("/user", FINE): _user("alice"),
-            (f"/user/repos?per_page={secret_inspect.PER_PAGE}", FINE): Response(Message(), repos),
-        }
-    )
-    monkeypatch.setattr(secret_inspect, "get", api)
-    access = secret_inspect.describe("T", FINE, NOW, 14).access
-    assert access.startswith("100 or more repositories: o/r0,")
-    assert access.endswith("and 90 or more more")
+def test_token_hash() -> None:
+    assert secret_inspect.token_hash(FINE) == hashlib.sha256(FINE.encode()).hexdigest()[:12]
+
+
+def test_token_hash_ignores_surrounding_whitespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(secret_inspect, "get", FakeAPI({("/user", CLASSIC): _user("alice")}))
+    finding = secret_inspect.describe("T", f" {CLASSIC}\n", NOW, 14)
+    assert finding.sha256 == secret_inspect.token_hash(CLASSIC)
+
+
+def test_only_tokens_get_a_hash() -> None:
+    assert secret_inspect.describe("T", "plain", NOW, 14).sha256 == ""
+    assert secret_inspect.describe("T", _openssh_key()[0], NOW, 14).sha256 == ""
 
 
 def test_installation_token(monkeypatch: pytest.MonkeyPatch) -> None:
     body = {"total_count": 1, "repositories": [{"full_name": "o/r", "owner": {"login": "o"}}]}
-    path = f"/installation/repositories?per_page={secret_inspect.PER_PAGE}"
+    path = "/installation/repositories?per_page=1"
     monkeypatch.setattr(secret_inspect, "get", FakeAPI({(path, APP): Response(Message(), body)}))
     finding = secret_inspect.describe("T", APP, NOW, 14)
-    assert (finding.owner, finding.access, finding.expires) == ("o", "1 repositories: o/r", "an hour after it was made")
+    assert (finding.owner, finding.access, finding.expires) == ("o", "1 repository", "an hour after it was made")
     assert finding.problems == ["installation tokens expire an hour after they're made, so a stored one stops working"]
 
 
 def test_installation_token_in_jwt_format(monkeypatch: pytest.MonkeyPatch) -> None:
     token = "ghs_12345_eyJhbGciOi.eyJpc3Mi-Oi.c2lnbmF0dXJl_x"
     body = {"total_count": 0, "repositories": []}
-    path = f"/installation/repositories?per_page={secret_inspect.PER_PAGE}"
+    path = "/installation/repositories?per_page=1"
     headers = _headers(GitHub_Authentication_Token_Expiration="2026-11-15 01:00:00 UTC")
     api = FakeAPI({(path, token): Response(headers, body)})
     monkeypatch.setattr(secret_inspect, "get", api)
@@ -199,7 +200,7 @@ def test_oauth_token_without_expiry_header(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_installation_token_with_no_repositories(monkeypatch: pytest.MonkeyPatch) -> None:
     body = {"total_count": 0, "repositories": []}
-    path = f"/installation/repositories?per_page={secret_inspect.PER_PAGE}"
+    path = "/installation/repositories?per_page=1"
     monkeypatch.setattr(secret_inspect, "get", FakeAPI({(path, APP): Response(Message(), body)}))
     finding = secret_inspect.describe("T", APP, NOW, 14)
     assert (finding.owner, finding.access) == ("", "no repositories")
@@ -208,7 +209,12 @@ def test_installation_token_with_no_repositories(monkeypatch: pytest.MonkeyPatch
 def test_refresh_token_is_not_sent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(secret_inspect, "get", FakeAPI({}))
     finding = secret_inspect.describe("T", "ghr_abc", NOW, 14)
-    assert finding == Finding("T", "GitHub App refresh token", access="a refresh token can't call the API")
+    assert finding == Finding(
+        "T",
+        "GitHub App refresh token",
+        access="a refresh token can't call the API",
+        sha256=secret_inspect.token_hash("ghr_abc"),
+    )
 
 
 def test_rejected_token_is_a_problem(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -321,34 +327,69 @@ def test_inspect_repository(
         {
             ("/user", CLASSIC): _user("a|b", X_OAuth_Scopes="repo"),
             ("/user", FINE): _user("alice"),
-            (f"/user/repos?per_page={secret_inspect.PER_PAGE}", FINE): Response(Message(), [{"full_name": "o/r"}]),
         }
     )
-    values = {"github_token": "x", "CLASSIC": CLASSIC, "FINE": FINE, "STRAY": "s", "APP": APP}
+    values = {"github_token": "x", "CLASSIC": CLASSIC, "FINE": FINE, "ORG_TOKEN": "o"}
     assert _inspect(tmp_path, monkeypatch, values, [], api) == 0
     out = capsys.readouterr().out
+    classic, fine = secret_inspect.token_hash(CLASSIC), secret_inspect.token_hash(FINE)
     assert out == (
-        "CLASSIC: classic personal access token, owner a|b, expires never, scopes: repo\n"
-        "FINE: fine-grained personal access token, owner alice, expires never, 1 repositories: o/r\n"
-        "ORG_TOKEN: not set here\n"
-        "Not listed in pyproject.toml, so not inspected: STRAY\n"
+        f"CLASSIC: classic personal access token, owner a|b, expires never, scopes: repo, SHA-256 starts {classic}\n"
+        f"FINE: fine-grained personal access token, owner alice, expires never, SHA-256 starts {fine}\n"
+        "ORG_TOKEN: not a GitHub token or SSH key\n"
         "Inspected 3 secret(s), with no problems.\n"
     )
     summary = (tmp_path / "summary.md").read_text()
-    assert summary.startswith("## Repository secrets\n\n| Secret | What it is | Owner | Expires | Access |\n")
-    assert "| `CLASSIC` | classic personal access token | a\\|b | never | scopes: repo |\n" in summary
-    assert "| `ORG_TOKEN` | not set here |   |   |   |\n" in summary
-    assert "Not listed in pyproject.toml, so not inspected: `STRAY`." in summary
-    for value in (CLASSIC, FINE, APP):
+    assert summary.startswith(
+        "## Repository secrets\n\n| Secret | What it is | Owner | Expires | Access | SHA-256 starts |\n"
+    )
+    assert f"| `CLASSIC` | classic personal access token | a\\|b | never | scopes: repo | `{classic}` |\n" in summary
+    assert "| `ORG_TOKEN` | not a GitHub token or SSH key |   |   |   |   |\n" in summary
+    assert "### Problems" not in summary
+    for value in (CLASSIC, FINE):
         assert value not in out
         assert value not in summary
+
+
+def test_inspect_unexpected_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The repository's job doesn't expect an environment's secrets, or one pyproject.toml lists nowhere.
+    api = FakeAPI({("/user", CLASSIC): _user("alice"), ("/user", FINE): _user("bob")})
+    values = {"CLASSIC": CLASSIC, "FINE": FINE, "STRAY": "s", "AUTOFIX": FINE, "DEPLOY_KEY": "k"}
+    assert _inspect(tmp_path, monkeypatch, values, [], api) == 1
+    out = capsys.readouterr().out
+    assert "STRAY: not a GitHub token or SSH key\n" in out
+    # An unexpected token is inspected like any other, so it can be matched to the declared one.
+    fine = secret_inspect.token_hash(FINE)
+    assert f"AUTOFIX: fine-grained personal access token, owner bob, expires never, SHA-256 starts {fine}\n" in out
+    for name in ("AUTOFIX", "DEPLOY_KEY", "STRAY"):
+        assert f"{name}: {secret_inspect.UNEXPECTED}\n" in out
+    assert "3 problem(s) with the 6 secret(s) inspected.\n" in out
+    summary = (tmp_path / "summary.md").read_text()
+    assert "| `STRAY` (unexpected) | not a GitHub token or SSH key |" in summary
+    assert f"- `STRAY`: {secret_inspect.UNEXPECTED}\n" in summary
+    assert _inspect(tmp_path, monkeypatch, values, ["--exit-zero"], api) == 0
+
+
+def test_inspect_environment_expects_repository_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An environment's job gets the repository's and organization's secrets too, and only inspects its own.
+    values = {"CLASSIC": CLASSIC, "ORG_TOKEN": "o", "DEPLOY_KEY": "k", "APP": "a"}
+    assert _inspect(tmp_path, monkeypatch, values, ["--environment", "release"], FakeAPI({})) == 0
+    assert capsys.readouterr().out == (
+        "DEPLOY_KEY: not a GitHub token or SSH key\n"
+        "APP: not a GitHub token or SSH key\n"
+        "Inspected 2 secret(s), with no problems.\n"
+    )
 
 
 def test_inspect_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     key, _ = _openssh_key()
-    path = f"/installation/repositories?per_page={secret_inspect.PER_PAGE}"
+    path = "/installation/repositories?per_page=1"
     api = FakeAPI({(path, APP): _http_error(401)})
     values = {"CLASSIC": CLASSIC, "DEPLOY_KEY": key, "APP": APP}
     assert _inspect(tmp_path, monkeypatch, values, ["--environment", "RELEASE"], api) == 1
@@ -385,7 +426,6 @@ def test_inspect_expires_within(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         {
             ("/user", CLASSIC): _user("alice", **expiry),
             ("/user", FINE): _user("alice", **expiry),
-            (f"/user/repos?per_page={secret_inspect.PER_PAGE}", FINE): Response(Message(), []),
         }
     )
     values = {"CLASSIC": CLASSIC, "FINE": FINE}
@@ -461,7 +501,7 @@ def test_inspect_without_a_summary(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_installation_token_without_expiry_header_and_no_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
     body = {"total_count": 0, "repositories": []}
-    path = f"/installation/repositories?per_page={secret_inspect.PER_PAGE}"
+    path = "/installation/repositories?per_page=1"
     monkeypatch.setattr(secret_inspect, "get", FakeAPI({(path, APP): Response(Message(), body)}))
     finding = secret_inspect.describe("T", APP, NOW, 0)
     assert (finding.expires, finding.problems) == ("an hour after it was made", [])

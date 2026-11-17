@@ -3,8 +3,11 @@ finding the matching token on GitHub's settings pages, without ever showing a
 value or any part of one. Kept apart from the secrets command for length.
 
 The workflow passes the secrets as ``${{ toJSON(secrets) }}`` in $SECRETS_JSON.
-A value that looks like a GitHub token is used for one or two API requests of
-its own, which give its owner, its expiry and what it can reach. An OpenSSH
+It inspects every secret the job gets, and reports any that pyproject.toml
+doesn't list for the job as unexpected. A value that looks like a GitHub token
+is used for an API request of its own, which gives its owner and its expiry,
+and is reported with the start of its SHA-256 hash, so that two secrets holding
+the same token can be told apart from two holding different ones. An OpenSSH
 private key gives its public key's fingerprint, as GitHub's deploy key page
 shows it. Anything else is reported by name only.
 Stdlib-only, like every repoutils module."""
@@ -48,9 +51,10 @@ TOKEN_TYPES = (
 _TOKEN_RE = re.compile(r"(?:gh[pour]_|github_pat_)[A-Za-z0-9_]+|ghs_[A-Za-z0-9_.-]+")
 _PEM_RE = re.compile(r"-----BEGIN ([A-Z0-9 ]+)-----(.*?)-----END \1-----", re.DOTALL)
 _OPENSSH_MAGIC = b"openssh-key-v1\0"
-# The repositories a report names before it only counts the rest.
-SHOWN_REPOS = 10
-PER_PAGE = 100
+# The hex digits of a token's SHA-256 hash a report shows: enough to tell a
+# repository's tokens apart. A GitHub token is far too random for its hash to
+# lead back to it, but other secrets may not be, so only tokens get one.
+HASH_DIGITS = 12
 EXPIRY_HEADER = "GitHub-Authentication-Token-Expiration"
 
 
@@ -63,6 +67,10 @@ class Finding:
     owner: str = ""
     expires: str = ""
     access: str = ""
+    # The start of a GitHub token's SHA-256 hash.
+    sha256: str = ""
+    # Whether pyproject.toml doesn't list it for the job.
+    unexpected: bool = False
     # What breaks a rule: a token GitHub rejects or that expires soon, or a malformed value.
     problems: list[str] = field(default_factory=list)
     # Why it couldn't be inspected, such as a failed request.
@@ -101,15 +109,9 @@ def parse_expiry(text: str) -> datetime | None:
     return None
 
 
-def _repos(names: list[str], total: int, more: bool = False) -> str:
-    """A list of the first repositories in names, of total; more if there may be others."""
-    if not names:
-        return "no repositories"
-    or_more = " or more" if more else ""
-    rest = total - min(len(names), SHOWN_REPOS)
-    return f"{total}{or_more} repositories: {', '.join(names[:SHOWN_REPOS])}" + (
-        f" and {rest}{or_more} more" if rest else ""
-    )
+def token_hash(token: str) -> str:
+    """The first HASH_DIGITS hex digits of token's SHA-256 hash."""
+    return hashlib.sha256(token.encode()).hexdigest()[:HASH_DIGITS]
 
 
 def _expiry(finding: Finding, token: str, headers: Message, now: datetime, within: int) -> None:
@@ -157,11 +159,15 @@ def _inspect_token(finding: Finding, token: str, now: datetime, within: int) -> 
     path = ""
     try:
         if token.startswith("ghs_"):
-            path = f"/installation/repositories?per_page={PER_PAGE}"
+            # An installation token's repositories are the only ones the API
+            # reports truly. A fine-grained token's aren't reported at all:
+            # /user/repos lists every public repository, which any token can read.
+            path = "/installation/repositories?per_page=1"
             response = get(path, token)
             repos = response.body["repositories"]
             finding.owner = repos[0]["owner"]["login"] if repos else ""
-            finding.access = _repos([repo["full_name"] for repo in repos], response.body["total_count"])
+            total = response.body["total_count"]
+            finding.access = {0: "no repositories", 1: "1 repository"}.get(total, f"{total} repositories")
         else:
             path = "/user"
             response = get(path, token)
@@ -169,11 +175,6 @@ def _inspect_token(finding: Finding, token: str, now: datetime, within: int) -> 
             scopes = response.headers.get("X-OAuth-Scopes")
             if scopes is not None:
                 finding.access = f"scopes: {scopes.strip() or 'none'}"
-            if token.startswith("github_pat_"):
-                path = f"/user/repos?per_page={PER_PAGE}"
-                repos = get(path, token).body
-                names = [repo["full_name"] for repo in repos]
-                finding.access = _repos(names, len(names), more=len(names) == PER_PAGE)
         _expiry(finding, token, response.headers, now, within)
     except urllib.error.HTTPError as e:
         if e.code == 401:
@@ -227,7 +228,7 @@ def describe(name: str, value: str, now: datetime, within: int) -> Finding:
     stripped = value.strip()
     kind = token_type(stripped)
     if kind is not None:
-        finding = Finding(name, kind)
+        finding = Finding(name, kind, sha256=token_hash(stripped))
         if stripped != value:
             finding.problems.append("has whitespace around the token, which breaks most uses of it")
         if _TOKEN_RE.fullmatch(stripped):
@@ -254,19 +255,23 @@ def _cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ") or " "
 
 
-def summary_markdown(title: str, findings: list[Finding], unlisted: list[str]) -> str:
-    lines = [f"## {title}", "", "| Secret | What it is | Owner | Expires | Access |", "| --- | --- | --- | --- | --- |"]
+def summary_markdown(title: str, findings: list[Finding]) -> str:
+    lines = [
+        f"## {title}",
+        "",
+        "| Secret | What it is | Owner | Expires | Access | SHA-256 starts |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
     for f in findings:
-        lines.append(f"| `{f.name}` | {' | '.join(_cell(cell) for cell in (f.what, f.owner, f.expires, f.access))} |")
+        name = f"`{f.name}` (unexpected)" if f.unexpected else f"`{f.name}`"
+        cells = (f.what, f.owner, f.expires, f.access, f"`{f.sha256}`" if f.sha256 else "")
+        lines.append(f"| {name} | {' | '.join(_cell(cell) for cell in cells)} |")
     problems = [f"- `{f.name}`: {problem}" for f in findings for problem in f.problems]
     errors = [f"- `{f.name}`: {f.error}" for f in findings if f.error]
     if problems:
         lines += ["", "### Problems", "", *problems]
     if errors:
         lines += ["", "### Errors", "", *errors]
-    if unlisted:
-        names = ", ".join(f"`{name}`" for name in unlisted)
-        lines += ["", f"Not listed in pyproject.toml, so not inspected: {names}."]
     return "".join(f"{line}\n" for line in lines) + "\n"
 
 
@@ -278,6 +283,8 @@ def _line(f: Finding) -> str:
         parts.append(f"expires {f.expires}")
     if f.access:
         parts.append(f.access)
+    if f.sha256:
+        parts.append(f"SHA-256 starts {f.sha256}")
     return f"{f.name}: {', '.join(parts)}"
 
 
@@ -293,10 +300,14 @@ def read_secrets(text: str) -> dict[str, str]:
     return {name.upper(): value for name, value in secrets.items()}
 
 
+# What makes a secret unexpected, for the report.
+UNEXPECTED = "unexpected: pyproject.toml doesn't list it for this job"
+
+
 def inspect(
     title: str,
     wanted: list[str],
-    listed: Iterable[str],
+    expected: Iterable[str],
     secrets_json: str,
     *,
     within: int,
@@ -304,16 +315,21 @@ def inspect(
     summary: Path | None = None,
     now: datetime | None = None,
 ) -> int:
-    """Report on each secret in wanted, which the job has in secrets_json.
-    listed is every name pyproject.toml lists, so that the rest can be named."""
+    """Report on each secret in wanted, and on every other secret the job has
+    in secrets_json that isn't in expected, which is unexpected. expected is
+    every name pyproject.toml lists that the job can get, inspected here or not."""
     now = now or datetime.now(UTC)
     values = read_secrets(secrets_json)
     findings = [
         describe(name, values[name.upper()], now, within) if name.upper() in values else Finding(name, "not set here")
         for name in wanted
     ]
-    known = {name.upper() for name in listed} | {_BUILT_IN}
-    unlisted = sorted(name for name in values if name not in known)
+    known = {name.upper() for name in [*wanted, *expected]} | {_BUILT_IN}
+    for name in sorted(name for name in values if name not in known):
+        finding = describe(name, values[name], now, within)
+        finding.unexpected = True
+        finding.problems.insert(0, UNEXPECTED)
+        findings.append(finding)
     for finding in findings:
         print(_line(finding))
     for finding in findings:
@@ -321,11 +337,9 @@ def inspect(
             print(f"{finding.name}: {problem}")
         if finding.error:
             print(f"{finding.name}: {finding.error}", file=sys.stderr)
-    if unlisted:
-        print(f"Not listed in pyproject.toml, so not inspected: {', '.join(unlisted)}")
     if summary is not None:
         with summary.open("a") as file:
-            file.write(summary_markdown(title, findings, unlisted))
+            file.write(summary_markdown(title, findings))
     problems = sum(len(finding.problems) for finding in findings)
     errors = sum(1 for finding in findings if finding.error)
     if problems:
@@ -353,9 +367,10 @@ def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]"
         "inspect",
         help="report what each secret a workflow passes in $SECRETS_JSON is, never its value",
         description="Report what each secret pyproject.toml lists is, from the values a workflow passes "
-        f"as ${{{{ toJSON(secrets) }}}} in ${ENV_VAR}: each GitHub token's type, owner, expiry "
-        "and access, from requests made with it, and each SSH key's fingerprint. Never shows a value. "
-        "Fails if GitHub rejects a token or it expires soon.",
+        f"as ${{{{ toJSON(secrets) }}}} in ${ENV_VAR}: each GitHub token's type, owner and expiry, "
+        "from a request made with it, and the start of its SHA-256 hash, and each SSH key's fingerprint. "
+        "Also reports every secret the job gets that pyproject.toml doesn't list for it, as unexpected. "
+        "Never shows a value. Fails if GitHub rejects a token, a token expires soon, or a secret is unexpected.",
     )
     inspect_parser.add_argument(
         "--environment",
@@ -377,6 +392,6 @@ def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]"
     inspect_parser.add_argument(
         "--exit-zero",
         action="store_true",
-        help="exit 0 even if a token is rejected or expires soon "
+        help="exit 0 even if a token is rejected or expires soon, or a secret is unexpected "
         "(still exit 1 if one can't be inspected, unlike `|| true`)",
     )

@@ -655,12 +655,17 @@ The command ignores `GITHUB_TOKEN` (which GitHub provides automatically) and ign
 Use `inspect` to identify which token or key a secret contains and to detect tokens that will expire soon.
 Pass the job secrets to the command in the environment variable `SECRETS_JSON: ${{ toJSON(secrets) }}`.
 By default, `inspect` reports on the secrets in `actions` and `other`, or on the secrets for one environment when you pass `--environment NAME`.
+`inspect` also reports on every other secret in `SECRETS_JSON` that `pyproject.toml` does not list for the job, and marks each one as unexpected.
+A job that deploys to an environment also receives the repository and organization secrets, so `inspect --environment NAME` expects the secrets in `actions` and `other` as well, but does not report on them.
 A workflow job receives the secrets of an environment only when the job deploys to that environment, so inspect each environment in a separate job.
 Workflows not triggered by Dependabot cannot read Dependabot secrets, so `inspect` skips `dependabot`.
 
 When a secret value has the format of a GitHub token, `inspect` sends a read-only API request with that token.
 It reports the token type (from the token prefix), the token owner, and the expiration date.
-It also reports the scopes of a classic personal access token, or the accessible repositories of a fine-grained token or GitHub App installation token.
+It also reports the scopes of a classic personal access token, or the number of repositories of a GitHub App installation token.
+The GitHub API does not report which repositories a fine-grained token can access, so `inspect` does not report them.
+`inspect` also reports the first 12 hexadecimal digits of the SHA-256 hash of each GitHub token, so you can see whether two secrets hold the same token.
+A GitHub token is too random for anyone to recover it from its hash, but other secret values can be less random, so `inspect` does not hash them.
 An installation token expires after one hour, so `inspect` always reports an installation token stored in a secret as expiring.
 When a secret value is an OpenSSH private key, `inspect` reports the public key fingerprint, which also appears on the GitHub deploy keys page.
 For any other secret value, `inspect` reports only the secret name.
@@ -671,8 +676,9 @@ The command writes a Markdown summary table to `$GITHUB_STEP_SUMMARY` (or to `--
 - GitHub rejects a token.
 - A token expires within 14 days (`--expires-within DAYS`).
 - A token has surrounding whitespace.
+- A secret is unexpected.
 
-Passing `--exit-zero` ignores those three findings, but the command still exits non-zero on a failed network request or an unparseable expiration date.
+Passing `--exit-zero` ignores those four findings, but the command still exits non-zero on a failed network request or an unparseable expiration date.
 
 `repoutils secrets export` also runs inside a GitHub Actions workflow and writes an encrypted backup of the secret values using [age](https://age-encryption.org).
 Pass the job secrets in `SECRETS_JSON` in the same way as for `inspect`.

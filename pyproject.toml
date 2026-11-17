@@ -196,8 +196,9 @@ required-status-checks = [
     { context = "test (macos-latest, 3.15)", app = "github-actions" },
     { context = "check-and-build", app = "github-actions" },
     { context = "coverage", app = "github-actions" },
-    # These three report on the PR, but also run repoutils' own long-files,
-    # added-strings and post-patch-coverage, so they fail if a PR breaks one.
+    # These three report on the PR, so they fail if the base's long-files,
+    # added-strings or post-patch-coverage is broken. The coverage job runs
+    # the PR's own copy of each, with --output for post-patch-coverage.
     { context = "long-files", app = "github-actions" },
     { context = "added-strings", app = "github-actions" },
     { context = "post-patch-coverage", app = "github-actions" },

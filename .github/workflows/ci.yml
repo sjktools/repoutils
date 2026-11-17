@@ -185,6 +185,17 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GITHUB_TOKEN: ${{ github.token }}
 
+      # The long-files and added-strings jobs run the PR's base's repoutils, so
+      # they'd miss a PR that breaks either command. Run the PR's own here,
+      # where the token can't write, so a required check still fails on one.
+      - name: Run the PR's long-files and added-strings
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: origin/${{ github.base_ref }}
+        run: |
+          just long-files --base "$BASE" >/dev/null
+          just added-strings --base "$BASE" >/dev/null
+
       # GitHub's API doesn't serve step summaries, so each step that writes one
       # copies it to step-summaries/ for this artifact (see AGENTS.md).
       - name: Upload the step summaries
@@ -206,7 +217,8 @@ jobs:
   # is read-only. Queued per PR, and posts only if HEAD_SHA is still the PR's
   # head, so an older commit's run that finishes last can't overwrite a newer
   # report. Needs no secrets, and installs nothing alongside its token: it runs
-  # the PR's repoutils from source (stdlib only) with `uv run --no-project`.
+  # repoutils from source (stdlib only) with `uv run --no-project`, from the
+  # PR's base commit, so no code the PR changes runs beside the token.
   post-patch-coverage:
     needs: coverage
     if: ${{ !cancelled() && needs.coverage.outputs.patch-report == 'success' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' }}
@@ -221,9 +233,12 @@ jobs:
       cancel-in-progress: false
 
     steps:
+      # The PR's base, not the PR: the job only reads the coverage job's
+      # artifacts, so it needs none of the PR's files.
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
 
       # Keep version in step with pyproject.toml's [tool.uv] required-version.
       - name: Install uv
@@ -270,7 +285,7 @@ jobs:
   # Only where GITHUB_TOKEN can post them, so not on a fork's or Dependabot's PR.
   # A token with statuses: write can post a status named like any required
   # check, so, like post-patch-coverage, this job installs nothing and runs
-  # repoutils from source with `uv run --no-project`.
+  # repoutils from source with `uv run --no-project`, on a PR from its base.
   post-coverage-status:
     needs: coverage
     if: ${{ !cancelled() && needs.coverage.outputs.coverage-report == 'success' && (github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')) }}
@@ -280,10 +295,12 @@ jobs:
       statuses: write
 
     steps:
-      # Two commits deep on main, for the commit's parent.
+      # On a PR, its base, not the PR, as the job only reads the coverage job's
+      # artifacts. On main, the commit, two deep for its parent.
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
           fetch-depth: 2
 
       # Keep version in step with pyproject.toml's [tool.uv] required-version.
@@ -321,7 +338,8 @@ jobs:
   # place, with the files the PR changes first. The report is cheap to make and
   # repoutils needs only the standard library, so one job both makes and posts
   # it: only same-repo, non-Dependabot PRs post; queued per PR; posts only if
-  # HEAD_SHA is still the PR's head; installs nothing.
+  # HEAD_SHA is still the PR's head; installs nothing. On a PR, the justfile and
+  # repoutils come from the PR's base, and the PR's checkout is only data.
   long-files:
     runs-on: ubuntu-latest
     permissions:
@@ -332,13 +350,22 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      # The PR's head, so line counts and links match the PR's code. Full
-      # history for the merge base with the base branch.
+      # The code to run: on a PR its base, so nothing the PR changes runs
+      # beside the token, and on main the commit.
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+
+      # The files to report on, in head/: the PR's head, so line counts and
+      # links match the PR's code. Full history for the merge base with the
+      # base branch.
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: head
 
       # Keep version in step with pyproject.toml's [tool.uv] required-version.
       - name: Install uv
@@ -357,7 +384,7 @@ jobs:
           BASE: ${{ github.base_ref && format('origin/{0}', github.base_ref) || '' }}
         run: |
           trap 'mkdir -p "$RUNNER_TEMP/step-summaries" && cp "$GITHUB_STEP_SUMMARY" "$RUNNER_TEMP/step-summaries/long-files.md"' EXIT
-          just long-files --base "$BASE" >> "$GITHUB_STEP_SUMMARY"
+          just long-files --directory head --base "$BASE" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post report to the PR
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
@@ -367,7 +394,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         # GITHUB_TOKEN can't look up its own login, so name it.
-        run: just long-files --base "$BASE" --commit "$HEAD_SHA" --post "$PR_NUMBER" --author 'github-actions[bot]'
+        run: just long-files --directory head --base "$BASE" --commit "$HEAD_SHA" --post "$PR_NUMBER" --author 'github-actions[bot]'
 
       # GitHub's API doesn't serve step summaries, so each step that writes one
       # copies it to step-summaries/ for this artifact (see AGENTS.md).
@@ -383,7 +410,8 @@ jobs:
   # as `# noqa:`), for information only, in the job summary and as a
   # github-actions[bot] comment edited in place. Like long-files: only
   # same-repo, non-Dependabot PRs post; queued per PR; posts only if HEAD_SHA is
-  # still the PR's head; installs nothing.
+  # still the PR's head; installs nothing; runs the base's justfile and
+  # repoutils, with the PR's checkout only as data.
   added-strings:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -395,13 +423,21 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      # The PR's head, so lines and links match the PR's code. Full history
-      # for the merge base with the base branch.
+      # The code to run: the PR's base, so nothing the PR changes runs beside
+      # the token.
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      # The files to search, in head/: the PR's head, so lines and links match
+      # the PR's code. Full history for the merge base with the base branch.
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
+          path: head
 
       # Keep version in step with pyproject.toml's [tool.uv] required-version.
       - name: Install uv
@@ -420,7 +456,7 @@ jobs:
           BASE: origin/${{ github.base_ref }}
         run: |
           trap 'mkdir -p "$RUNNER_TEMP/step-summaries" && cp "$GITHUB_STEP_SUMMARY" "$RUNNER_TEMP/step-summaries/added-strings.md"' EXIT
-          just added-strings --base "$BASE" >> "$GITHUB_STEP_SUMMARY"
+          just added-strings --directory head --base "$BASE" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post report to the PR
         if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
@@ -430,7 +466,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         # GITHUB_TOKEN can't look up its own login, so name it.
-        run: just added-strings --base "$BASE" --commit "$HEAD_SHA" --post "$PR_NUMBER" --author 'github-actions[bot]'
+        run: just added-strings --directory head --base "$BASE" --commit "$HEAD_SHA" --post "$PR_NUMBER" --author 'github-actions[bot]'
 
       # GitHub's API doesn't serve step summaries, so each step that writes one
       # copies it to step-summaries/ for this artifact (see AGENTS.md).

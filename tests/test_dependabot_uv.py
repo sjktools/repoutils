@@ -4,12 +4,13 @@ import subprocess
 import urllib.error
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NoReturn, override
 
 import pytest
 
-from repoutils import github
+from repoutils import github, uv_bump
 from repoutils.commands import dependabot_uv
+from tests.test_uv_bump import make_project
 
 API = github.API_URL
 REPO = f"{API}/repos/o/r"
@@ -218,3 +219,203 @@ def test_gh_failure(cwd: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.C
     monkeypatch.setattr(github, "gh_output", fail)
     assert dependabot_uv.run(["show", "--repo", "o/r"]) == 1
     assert "gh auth token failed:\nnot logged in" in capsys.readouterr().err
+
+
+@pytest.fixture
+def project(cwd: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A project pinning uv 0.13.6, committed on main, with a bare repository as its origin."""
+    (cwd / "pyproject.toml").unlink()
+    make_project(cwd)
+    (cwd / "uv.lock").write_text("version = 1\nrevision = 2\n")
+    for name, value in {
+        "GIT_AUTHOR_NAME": "a",
+        "GIT_COMMITTER_NAME": "a",
+        "GIT_AUTHOR_EMAIL": "a@b",
+        "GIT_COMMITTER_EMAIL": "a@b",
+    }.items():
+        monkeypatch.setenv(name, value)
+    origin = cwd.parent / f"{cwd.name}-origin.git"
+    for args in (
+        ["init", "--quiet", "--bare", str(origin)],
+        ["init", "--quiet", "--initial-branch=main"],
+        ["remote", "add", "origin", str(origin)],
+        ["add", "--all"],
+        ["commit", "--quiet", "--message", "start"],
+    ):
+        subprocess.run(["git", *args], cwd=cwd, check=True)
+    return cwd
+
+
+def _relock(root: Path, version: str) -> bool:
+    assert version == "0.13.7"
+    (root / "uv.lock").write_text("version = 1\nrevision = 3\n")
+    return True
+
+
+class FakePulls(FakeGitHub):
+    """FakeGitHub, also answering the pull request listing and creation."""
+
+    def __init__(self, open_pulls: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self.open_pulls = open_pulls
+        self.created: list[Any] = []
+
+    @override
+    def request(self, method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        if url == f"{REPO}/pulls?state=open&head=o%3Auv-0.13.7":
+            return self.open_pulls
+        if (method, url) == ("POST", f"{REPO}/pulls"):
+            self.created.append(json_body)
+            return {"html_url": "https://github.com/o/r/pull/5"}
+        return super().request(method, url, token)
+
+
+def _git(root: Path, *args: str) -> str:
+    return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def test_bump_to_given_version_asks_github_nothing(
+    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def unexpected(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError("asked GitHub or gh")
+
+    for name in ("request", "request_bytes", "gh_output"):
+        monkeypatch.setattr(github, name, unexpected)
+    monkeypatch.setattr(uv_bump, "lock", lambda root, version: False)
+    assert dependabot_uv.run(["bump", "--version", "0.13.7"]) == 0
+    out = capsys.readouterr().out
+    assert out == "Bumped uv from 0.13.6 to 0.13.7 in .github/workflows/ci.yml, Dockerfile, pyproject.toml\n"
+    assert 'required-version = ">=0.13.7, <0.14"' in (project / "pyproject.toml").read_text()
+
+
+def test_bump_already_current(cwd: Path, install: Install, capsys: pytest.CaptureFixture[str]) -> None:
+    install(FakeGitHub())
+    assert dependabot_uv.run(["bump", "--repo", "o/r", "--pr"]) == 0
+    assert "already uv 0.13.7, so there's nothing to bump" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(("version", "error"), [("0.13.5", "older than"), ("v1", "isn't a version")])
+def test_bump_refuses(project: Path, capsys: pytest.CaptureFixture[str], version: str, error: str) -> None:
+    assert dependabot_uv.run(["bump", "--version", version]) == 1
+    assert error in capsys.readouterr().err
+    assert not _git(project, "status", "--porcelain")
+
+
+def test_bump_pr(
+    project: Path, install: Install, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakePulls([])
+    install(fake)
+    monkeypatch.setattr(uv_bump, "lock", _relock)
+    assert dependabot_uv.run(["bump", "--repo", "o/r", "--pr"]) == 0
+    assert capsys.readouterr().out.endswith(
+        "in .github/workflows/ci.yml, Dockerfile, pyproject.toml, uv.lock\nOpened https://github.com/o/r/pull/5\n"
+    )
+    source = f"Bumps uv from 0.13.6 to 0.13.7, which Dependabot used in its newest uv run: {PAGE}"
+    assert fake.created == [
+        {
+            "title": "Bump uv to 0.13.7",
+            "head": "uv-0.13.7",
+            "base": "main",
+            "body": f"{source}\n\nChanges `.github/workflows/ci.yml`, `Dockerfile`, `pyproject.toml`, `uv.lock`.\n\n"
+            "Opened by `repoutils dependabot-uv bump --pr`.",
+        }
+    ]
+    assert _git(project, "log", "-1", "--format=%B", "origin/uv-0.13.7") == f"Bump uv to 0.13.7\n\n{source}"
+    assert _git(project, "diff", "--name-only", "main", "origin/uv-0.13.7").splitlines() == [
+        ".github/workflows/ci.yml",
+        "Dockerfile",
+        "pyproject.toml",
+        "uv.lock",
+    ]
+    assert not _git(project, "status", "--porcelain")
+
+
+def test_bump_pr_already_open(
+    project: Path, install: Install, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    install(FakePulls([{"html_url": "https://github.com/o/r/pull/4"}]))
+    monkeypatch.setattr(uv_bump, "lock", _relock)
+    assert dependabot_uv.run(["bump", "--repo", "o/r", "--pr"]) == 0
+    assert capsys.readouterr().out == "Pull request https://github.com/o/r/pull/4 already bumps uv to 0.13.7\n"
+    assert not _git(project, "status", "--porcelain")
+    assert _git(project, "branch", "--show-current") == "main"
+
+
+@pytest.mark.parametrize(
+    ("setup", "error"),
+    [
+        (["switch", "--quiet", "--detach"], "HEAD isn't on a branch"),
+        (["branch", "uv-0.13.7"], "Branch uv-0.13.7 already exists"),
+    ],
+)
+def test_bump_pr_refuses(
+    project: Path, install: Install, capsys: pytest.CaptureFixture[str], setup: list[str], error: str
+) -> None:
+    install(FakePulls([]))
+    _git(project, *setup)
+    assert dependabot_uv.run(["bump", "--repo", "o/r", "--pr"]) == 1
+    assert error in capsys.readouterr().err
+    assert not _git(project, "status", "--porcelain")
+
+
+def test_bump_pr_refuses_changes(project: Path, install: Install, capsys: pytest.CaptureFixture[str]) -> None:
+    install(FakePulls([]))
+    (project / "new.txt").write_text("x")
+    assert dependabot_uv.run(["bump", "--repo", "o/r", "--pr"]) == 1
+    assert "The working tree has changes" in capsys.readouterr().err
+    assert 'required-version = ">=0.13.6' in (project / "pyproject.toml").read_text()
+
+
+def test_bump_refuses_a_short_minimum(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    pyproject = project / "pyproject.toml"
+    pyproject.write_text(pyproject.read_text().replace(">=0.13.6", ">=0.13"))
+    assert dependabot_uv.run(["bump", "--version", "0.13.7"]) == 1
+    assert "minimum, 0.13, isn't of the form X.Y.Z, so bump it by hand" in capsys.readouterr().err
+
+
+def test_bump_lock_failure(project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    def fail(root: Path, version: str) -> bool:
+        (root / "uv.lock").write_text("half written")
+        raise subprocess.CalledProcessError(2, ["uv", "lock"])
+
+    monkeypatch.setattr(uv_bump, "lock", fail)
+    assert dependabot_uv.run(["bump", "--version", "0.13.7"]) == 1
+    assert capsys.readouterr().err == "uv lock failed\n"
+    # Every file is put back, so a rerun bumps and re-locks again.
+    assert not _git(project, "status", "--porcelain")
+    monkeypatch.setattr(uv_bump, "lock", _relock)
+    assert dependabot_uv.run(["bump", "--version", "0.13.7"]) == 0
+    assert capsys.readouterr().out.endswith(", pyproject.toml, uv.lock\n")
+    assert (project / "uv.lock").read_text() == "version = 1\nrevision = 3\n"
+
+
+def test_bump_pr_refuses_a_branch_on_origin(
+    project: Path, install: Install, capsys: pytest.CaptureFixture[str]
+) -> None:
+    install(FakePulls([]))
+    _git(project, "push", "--quiet", "origin", "main:uv-0.13.7")
+    assert dependabot_uv.run(["bump", "--repo", "o/r", "--pr"]) == 1
+    assert "Branch uv-0.13.7 already exists, here or on origin" in capsys.readouterr().err
+    assert not _git(project, "status", "--porcelain")
+
+
+def test_bump_pr_open_failure(
+    project: Path, install: Install, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = install(FakePulls([]))
+    request = fake.request
+
+    def refuse(method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        if method == "POST":
+            raise urllib.error.HTTPError(url, 422, "error", email.message.Message(), io.BytesIO(b"invalid"))
+        return request(method, url, token)
+
+    monkeypatch.setattr(github, "request", refuse)
+    monkeypatch.setattr(uv_bump, "lock", _relock)
+    assert dependabot_uv.run(["bump", "--repo", "o/r", "--pr"]) == 1
+    err = capsys.readouterr().err
+    assert "Pushed uv-0.13.7, but opening its pull request failed (HTTP 422):\ninvalid\n" in err
+    assert "https://github.com/o/r/compare/main...uv-0.13.7" in err
+    assert _git(project, "rev-parse", "origin/uv-0.13.7")

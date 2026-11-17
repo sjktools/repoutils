@@ -48,7 +48,7 @@ GROUPS: dict[str, list[Command]] = {
         ),
         Command("dependabot-relock", "dependabot_relock", "Re-lock a Dependabot branch's uv.lock with this uv"),
         Command("check-lock-platforms", "check_lock_platforms", "Check uv.lock only has wheels for allowed platforms"),
-        Command("dependabot-uv", "dependabot_uv", "Print Dependabot's uv version, or check the project requires it"),
+        Command("dependabot-uv", "dependabot_uv", "Print, check or bump to Dependabot's uv version"),
     ],
     "PR reporting": [
         Command("post-comment", "post_comment", "Post a Markdown file to a PR, editing or hiding the last one"),

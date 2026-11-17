@@ -86,7 +86,7 @@ Write exact values as code: exit codes, `true` and `false`, and permission names
 Turn a sentence that lists several conditions into a bulleted list.
 `README.md` is public, so it spells out "pull request", though this file can say "PR".
 
-`just lint` runs ruff without its cache, and fails on an invalid noqa directive, which ruff itself only warns about.
+`just lint` runs ruff without its cache, and fails on an invalid noqa directive or rule code list, which ruff itself only warns about.
 
 `just mypy` type-checks `src` and `tests` in strict mode, so all new code, tests included, needs full type annotations.
 `just pyright`, part of `just check`, type-checks them again with pyright in strict mode, as it catches some mistakes that mypy and ruff miss.

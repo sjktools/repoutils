@@ -322,7 +322,7 @@ line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "PGH004", "PLC0415", "RUF100"]
+select = ["E", "F", "W", "I", "UP", "PGH004", "PLC0415", "RUF100", "RUF102"]
 
 [tool.mypy]
 files = ["src", "tests"]

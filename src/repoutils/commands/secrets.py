@@ -34,6 +34,8 @@ it reports what it is: a GitHub token's type, owner, expiry and the start of
 its SHA-256 hash, or an SSH key's fingerprint, never the value. It also reports
 every other secret the job gets, with a warning that it's unexpected (see
 repoutils.secret_inspect).
+``inspect-remote`` runs the workflow that runs ``inspect`` and prints its step
+summaries (see repoutils.workflow_summaries).
 ``export`` writes the same secrets' values as TOML encrypted with age, for a
 workflow to upload as a backup (see repoutils.secret_export).
 Stdlib-only, like every repoutils command."""
@@ -50,7 +52,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from repoutils import config, github, secret_export, secret_inspect, workflows
+from repoutils import config, github, secret_export, secret_inspect, workflow_summaries, workflows
 from repoutils.commands import environments as environments_command
 from repoutils.docstrings import summary
 
@@ -389,7 +391,7 @@ def main(argv: list[str]) -> int:
         "Organization secrets don't count.",
     )
     subparsers = parser.add_subparsers(
-        dest="mode", required=True, metavar="{check,dump,check-workflows,inspect,export}"
+        dest="mode", required=True, metavar="{check,dump,check-workflows,inspect,inspect-remote,export}"
     )
     check_parser = subparsers.add_parser(
         "check",
@@ -409,6 +411,7 @@ def main(argv: list[str]) -> int:
         "or a job uses an environment's secret without deploying to that environment. Needs no token.",
     )
     secret_inspect.add_parser(subparsers)
+    workflow_summaries.add_parser(subparsers)
     secret_export.add_parser(subparsers)
     for sub in (check_parser, dump_parser):
         sub.add_argument(
@@ -438,6 +441,18 @@ def main(argv: list[str]) -> int:
                 within=args.expires_within,
                 exit_zero=args.exit_zero,
                 summary=args.summary,
+            )
+        if args.mode == "inspect-remote":
+            token = os.environ.get("GITHUB_TOKEN") or github.gh_output("auth", "token")
+            repo = args.repo or github.gh_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+            return workflow_summaries.inspect_remote(
+                repo,
+                token,
+                workflow=args.workflow,
+                ref=args.ref,
+                run_id=args.run_id,
+                interval=args.interval,
+                timeout=args.timeout * 60,
             )
         if args.mode == "export":
             listed = _load(Path())

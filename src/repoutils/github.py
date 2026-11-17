@@ -56,6 +56,15 @@ def request(
     if json_body is not None:
         data = json.dumps(json_body).encode()
         content_type = "application/json"
+    payload = request_bytes(method, url, token, data=data, content_type=content_type)
+    return json.loads(payload) if payload else None
+
+
+def request_bytes(
+    method: str, url: str, token: str, *, data: bytes | None = None, content_type: str | None = None
+) -> bytes:
+    """Send an API request and return its raw response body, such as an
+    artifact's zip, following redirects as request() does."""
     origin = _origin(url)
     for _ in range(5):
         req = urllib.request.Request(url, data=data, method=method)
@@ -66,8 +75,8 @@ def request(
             req.add_header("Authorization", f"Bearer {token}")
         try:
             with no_redirect_opener.open(req, timeout=60) as response:
-                payload = response.read()
-            return json.loads(payload) if payload else None
+                payload: bytes = response.read()
+            return payload
         except urllib.error.HTTPError as e:
             location = e.headers.get("Location")
             if e.code not in (301, 302, 307, 308) or not location:

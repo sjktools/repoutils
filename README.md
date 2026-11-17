@@ -31,7 +31,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | Command | What it does |
 | --- | --- |
 | `check-whitespace` | Fails on trailing whitespace, a leading blank line, or a missing or extra final newline in any Git-tracked text file. |
-| `check-sentence-per-line` | Fails if a Markdown file has two sentences on one line. It checks the files named on the command line, or else the configured files (by default `AGENTS.md` and `README.md`). |
+| `check-sentence-per-line` | Fails if a Markdown file has two sentences on one line. It reads the files named on the command line, or else the configured files (by default `AGENTS.md` and `README.md`). |
 | `check-prose` | Fails if the prose in a configured Markdown file has long sentences, many joined clauses, or too many short sentences. |
 | `check-blame-ignore-revs` | Fails unless `.git-blame-ignore-revs` lists only full commit hashes that are ancestors of a target commit. |
 | `check-screenshots-dir` | Fails unless `.gitignore` is the only tracked file in the screenshots directory and ignores all other files in that directory. |
@@ -244,12 +244,12 @@ The limits apply to the average rates across the whole file rather than to indiv
 A file can contain a few long sentences and still pass.
 For each limit that a file exceeds, the command prints the five sentences that contribute the most to that rate.
 The two limits for long sentences share one list of sentences under the first exceeded limit.
-Pass `--exit-zero` to print the same output and exit with code 0.
+Pass `--exit-zero` to print the same output and exit with code `0`.
 Pass `--stats` to print all rates for every file.
 `--stats` also prints the sentence-length CV, which no setting limits: the standard deviation of sentence length divided by the mean sentence length.
 
 When the command cannot read a file (for example, when the file is not valid UTF-8), it prints `<file>: cannot read (<reason>)`.
-The command checks the remaining files and exits with code 1, even when you pass `--exit-zero`.
+The command still reads the remaining files, and exits with code `1` even when you pass `--exit-zero`.
 `repoutils check-sentence-per-line` handles unreadable files in the same way.
 
 The default limits for long sentences come from a sample of 17 documents, both pre-LLM README files and recent machine-generated documents.
@@ -257,7 +257,7 @@ The default limit for short sentences comes from a smaller sample of rewrites of
 
 ### Added strings
 
-`repoutils added-strings` checks the lines added in the working tree since the merge base of `--base` and `HEAD`.
+`repoutils added-strings` searches the lines added in the working tree since the merge base of `--base` and `HEAD`.
 It lists every added line that matches any configured pattern in `strings`.
 Each entry in `strings` specifies either `string` (a literal substring) or `regex` (a Python regular expression).
 The default `message` asks the author to verify that the matched text is necessary.
@@ -269,7 +269,7 @@ The `include` and `exclude` settings take glob patterns for file paths, where `*
 The patterns in `[tool.repoutils.added-strings]` apply to all entries, and the patterns on a single entry narrow the search for that entry.
 Exclude `pyproject.toml` and documentation files because those files often mention the configured strings.
 
-The report is for information only, so the command exits with code 0 even when it finds matches.
+The report is for information only, so the command exits with code `0` even when it finds matches.
 The command exits non-zero when it cannot run the check, such as on an invalid setting, failed `git` command or failed GitHub request.
 When you pass `--post <PR>`, the command posts a pull request comment only when the pull request adds a matching string.
 If a later push removes all matches, the command updates the previous comment to state that none remain.
@@ -328,7 +328,7 @@ Run `repoutils wait-for-base-coverage <owner/repo> <base>` before `post-patch-co
 This command polls the `coverage/project` commit status on the base commit and exits as soon as that status exists.
 While the status is absent, the command checks the `post-coverage-status` check run (`--check-name`) on that commit, exiting when that check run finishes.
 The command also stops after 10 minutes (`--timeout`).
-If the check run finishes or the wait times out without a status, the command prints a warning and exits with code 0.
+If the check run finishes or the wait times out without a status, the command prints a warning and exits with code `0`.
 A broken base commit therefore does not fail the checks on the pull request.
 This command requires the `checks: read` and `statuses: read` permissions.
 
@@ -369,7 +369,7 @@ When you pass `--fail-on-unexpected`, `check` also lists any labels in the repos
 Use `--fail-on-unexpected` when `pyproject.toml` must define every label in the repository.
 `ensure` still ignores unexpected labels, so you must delete them on GitHub or add them to `pyproject.toml`.
 
-When you pass `--exit-zero`, `check` prints the same report and exits with code 0, unless an error prevents the check (such as a bad token).
+When you pass `--exit-zero`, `check` prints the same report and exits with code `0`, unless an error (such as a bad token) stops it from comparing.
 Using `--exit-zero` is safer than `|| true` in a shell script because `|| true` also hides runtime and authentication errors.
 
 In GitHub Actions, `ensure` requires the `issues: write` permission, and `check` requires `issues: read` on a private repository.
@@ -545,7 +545,7 @@ Omit `app` to accept the status check from any source.
 
 `repoutils rulesets ensure` creates every missing ruleset.
 It replaces every ruleset that differs from `pyproject.toml`, sending all parameters for every configured rule.
-It then checks the updated ruleset and fails if GitHub did not apply a change.
+It then reads the updated ruleset back and fails if GitHub did not apply a change.
 It ignores rule parameters that `repoutils` does not recognize, so `ensure` can reset unknown parameters to their defaults.
 It never deletes an existing ruleset.
 
@@ -612,7 +612,7 @@ If you paste the output without changes, `repoutils environments check --fail-on
 The `actions` key lists repository Actions secrets.
 The `dependabot` key lists Dependabot secrets, which are available to workflows triggered by Dependabot.
 Each `environments.<name>` key lists the secrets stored in the deployment environment `<name>`.
-The command does not check any list that the table omits.
+The command ignores any list that the table omits.
 Secret names match case-insensitively, as on GitHub.
 The `other` key lists secrets used by workflows that are not stored in the repository itself, such as organization secrets.
 The `check` and `dump` subcommands ignore `other`, and only `check-workflows` reads `other`.
@@ -627,7 +627,7 @@ It does not create missing environments, whereas `repoutils environments ensure`
 `--exit-zero` and `--fail-on-unexpected` work in the same way as in `labels check`.
 For `secrets check`, `--fail-on-unexpected` fails when a configured secret store contains a secret that its list does not name.
 For example, `dependabot = []` requires the repository to have no Dependabot secrets.
-When the table includes any `environments` key, `--fail-on-unexpected` checks the secrets of every environment in the repository, including environments not listed in the table.
+When the table includes any `environments` key, `--fail-on-unexpected` covers the secrets of every environment in the repository, including environments not listed in the table.
 Setting `environments = {}` requires every environment to have no secrets.
 
 `check` and `dump` require a token that can list the secrets in the repository.
@@ -654,9 +654,9 @@ The command ignores `GITHUB_TOKEN` (which GitHub provides automatically) and ign
 `repoutils secrets inspect` runs inside a GitHub Actions workflow and reports metadata about each secret without printing secret values.
 Use `inspect` to identify which token or key a secret contains and to detect tokens that will expire soon.
 Pass the job secrets to the command in the environment variable `SECRETS_JSON: ${{ toJSON(secrets) }}`.
-By default, `inspect` checks the secrets in `actions` and `other`, or checks the secrets for one environment when you pass `--environment NAME`.
+By default, `inspect` reports on the secrets in `actions` and `other`, or on the secrets for one environment when you pass `--environment NAME`.
 A workflow job receives the secrets of an environment only when the job deploys to that environment, so inspect each environment in a separate job.
-Workflows not triggered by Dependabot cannot read Dependabot secrets, so `inspect` does not check `dependabot`.
+Workflows not triggered by Dependabot cannot read Dependabot secrets, so `inspect` skips `dependabot`.
 
 When a secret value has the format of a GitHub token, `inspect` sends a read-only API request with that token.
 It reports the token type (from the token prefix), the token owner, and the expiration date.
@@ -666,7 +666,12 @@ When a secret value is an OpenSSH private key, `inspect` reports the public key 
 For any other secret value, `inspect` reports only the secret name.
 The command writes a Markdown summary table to `$GITHUB_STEP_SUMMARY` (or to `--summary FILE`), which has the same visibility as the workflow logs.
 
-`inspect` fails when GitHub rejects a token, when a token expires within 14 days (`--expires-within DAYS`), or when a token has surrounding whitespace.
+`inspect` fails in these cases:
+
+- GitHub rejects a token.
+- A token expires within 14 days (`--expires-within DAYS`).
+- A token has surrounding whitespace.
+
 Passing `--exit-zero` ignores those three findings, but the command still exits non-zero on a failed network request or an unparseable expiration date.
 
 `repoutils secrets export` also runs inside a GitHub Actions workflow and writes an encrypted backup of the secret values using [age](https://age-encryption.org).

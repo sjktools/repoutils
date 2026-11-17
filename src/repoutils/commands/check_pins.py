@@ -121,11 +121,12 @@ def uv_minimum(root: Path) -> str:
     tool = config.read_pyproject(path).get("tool", {})
     uv = tool.get("uv", {}) if isinstance(tool, dict) else {}
     required = uv.get("required-version") if isinstance(uv, dict) else None
-    if not isinstance(required, str) or not required.startswith(">="):
+    # The lower bound of e.g. ">=0.13.6, <0.14".
+    minimum = required.removeprefix(">=").split(",", 1)[0].strip() if isinstance(required, str) else ""
+    if not isinstance(required, str) or not required.startswith(">=") or not minimum:
         found = "is missing" if required is None else f"{required!r} isn't of the form >=X.Y.Z"
         raise config.ConfigError(f"{path}: [tool.uv] required-version {found}")
-    # The lower bound of e.g. ">=0.13.6, <0.14".
-    return required.removeprefix(">=").split(",", 1)[0].strip()
+    return minimum
 
 
 def minimums(root: Path) -> dict[tuple[str, str], str]:

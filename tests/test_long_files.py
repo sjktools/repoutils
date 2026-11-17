@@ -271,7 +271,9 @@ class MainTests(_GitRepoTestCase):
         with tempfile.TemporaryDirectory() as elsewhere:
             # The current directory's settings don't apply, only the checkout's.
             Path(elsewhere, "pyproject.toml").write_text("[tool.repoutils.long-files]\nlimit = 1\n")
-            code, out, err = self._run(["--base", "", "--directory", str(self.repo)], cwd=Path(elsewhere))
+            # Nor does a Git hook's GIT_DIR, which would point Git elsewhere.
+            with mock.patch.dict("os.environ", {"GIT_DIR": str(Path(elsewhere, ".git"))}):
+                code, out, err = self._run(["--base", "", "--directory", str(self.repo)], cwd=Path(elsewhere))
         self.assertEqual((code, err), (0, ""))
         self.assertIn(f"| [`src/big.py`](https://github.com/o/r/blob/{head}/src/big.py) | 7 |", out)
         self.assertIn("## Files over 5 lines", out)

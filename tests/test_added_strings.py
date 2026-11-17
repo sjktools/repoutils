@@ -337,7 +337,9 @@ class MainTests(_GitRepoTestCase):
             # The current directory's settings don't apply, only the checkout's.
             settings = "[tool.repoutils.added-strings]\nstrings = [{ string = 'a = 1' }]\n"
             Path(elsewhere, "pyproject.toml").write_text(settings)
-            code, out, err = self._run(["--base", "main", "--directory", str(self.repo)], cwd=Path(elsewhere))
+            # Nor does a Git hook's GIT_DIR, which would point Git elsewhere.
+            with mock.patch.dict("os.environ", {"GIT_DIR": str(Path(elsewhere, ".git"))}):
+                code, out, err = self._run(["--base", "main", "--directory", str(self.repo)], cwd=Path(elsewhere))
         self.assertEqual((code, err), (0, ""))
         self.assertIn(f"[`src/app.py:3`](https://github.com/o/r/blob/{head}/src/app.py?plain=1#L3)", out)
         self.assertNotIn("a = 1", out)

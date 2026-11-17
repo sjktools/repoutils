@@ -21,6 +21,7 @@ from typing import TypeGuard
 
 from repoutils import config as repoutils_config
 from repoutils import github as github_comments
+from repoutils.checkout import use_checkout
 from repoutils.docstrings import summary
 
 # Marks the comment this posts, so the next run can find and edit it. This is
@@ -285,7 +286,7 @@ def main(argv: list[str]) -> int:
         "looked up, which only works for a user token)",
     )
     args = parser.parse_args(argv)
-    cwd = args.directory or Path.cwd()
+    cwd = use_checkout(args.directory)
 
     try:
         config = load_config(cwd / "pyproject.toml")

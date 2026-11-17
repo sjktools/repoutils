@@ -67,8 +67,9 @@ def files() -> list[str]:
     return config.string_list(table, "files", DEFAULT_FILES, "[tool.repoutils.sentence-per-line]")
 
 
-def main() -> int:
-    paths = [path for path in files() if Path(path).is_file()]
+def main(paths: list[str] | None = None) -> int:
+    if paths is None:
+        paths = [path for path in files() if Path(path).is_file()]
     failures = []
     for path in paths:
         try:
@@ -88,5 +89,10 @@ def main() -> int:
 
 
 def run(argv: list[str]) -> int:
-    argparse.ArgumentParser(prog="repoutils check-sentence-per-line", description=summary(__doc__)).parse_args(argv)
-    return main()
+    parser = argparse.ArgumentParser(prog="repoutils check-sentence-per-line", description=summary(__doc__))
+    parser.add_argument("files", nargs="*", metavar="FILE", help="files to check (default: configured files)")
+    args = parser.parse_args(argv)
+    for path in args.files:
+        if not Path(path).is_file():
+            parser.error(f"{path} is not a file")
+    return main(args.files or None)

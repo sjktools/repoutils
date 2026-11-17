@@ -77,6 +77,15 @@ It runs `python -m repoutils` from `src/` with `uv run --no-project`, installing
 Its limits are ceilings and not targets, so reword the sentences it lists and leave the rest alone.
 A file cut up into very short sentences fails too, and reads no better than one made of long ones.
 
+When you reword documentation, keep every condition and reason it gives.
+Dropping a "when" or "only" clause can make a true sentence false.
+Use one verb for one action.
+Don't use a subcommand's name, such as `ensure` or `check`, as an ordinary verb.
+Name the command or setting wherever "it" or "that" could mean more than one thing.
+Write exact values as code: exit codes, `true` and `false`, and permission names such as `read`.
+Turn a sentence that lists several conditions into a bulleted list.
+`README.md` is public, so it spells out "pull request", though this file can say "PR".
+
 `just mypy` type-checks `src` and `tests` in strict mode, so all new code, tests included, needs full type annotations.
 `just pyright`, part of `just check`, type-checks them again with pyright in strict mode, as it catches some mistakes that mypy and ruff miss.
 Its checks for unknown types are off, as they mostly flag JSON values and code that mypy infers fully.

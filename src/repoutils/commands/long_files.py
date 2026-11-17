@@ -21,6 +21,7 @@ from typing import TypeGuard
 
 from repoutils import config as repoutils_config
 from repoutils import github as github_comments
+from repoutils.checkout import git_env
 from repoutils.docstrings import summary
 
 # Marks the comment this posts, so the next run can find and edit it. This is
@@ -97,7 +98,7 @@ def _is_limit(value: object) -> TypeGuard[int]:
 
 
 def _git(cwd: Path, *args: str) -> str:
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout
+    return subprocess.run(["git", *args], cwd=cwd, env=git_env(), capture_output=True, text=True, check=True).stdout
 
 
 def _count_lines(data: bytes) -> int:
@@ -108,7 +109,7 @@ def _count_lines(data: bytes) -> int:
 def _lines_at(cwd: Path, rev: str, path: str) -> int:
     """The number of lines in path as it is at rev."""
     return _count_lines(
-        subprocess.run(["git", "show", f"{rev}:{path}"], cwd=cwd, capture_output=True, check=True).stdout
+        subprocess.run(["git", "show", f"{rev}:{path}"], cwd=cwd, env=git_env(), capture_output=True, check=True).stdout
     )
 
 
@@ -274,12 +275,18 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("--post", type=int, metavar="PR", help="post the report to this pull request")
     parser.add_argument(
+        "--directory",
+        type=Path,
+        metavar="DIR",
+        help="the Git checkout to report on, whose pyproject.toml settings apply (default: the current directory)",
+    )
+    parser.add_argument(
         "--author",
         help="with --post, the login $GITHUB_TOKEN comments as, e.g. github-actions[bot] (default: "
         "looked up, which only works for a user token)",
     )
     args = parser.parse_args(argv)
-    cwd = Path.cwd()
+    cwd = args.directory or Path.cwd()
 
     try:
         config = load_config(cwd / "pyproject.toml")
@@ -289,7 +296,9 @@ def main(argv: list[str]) -> int:
         commit = args.commit or _git(cwd, "rev-parse", "HEAD").strip()
         repo = args.repo
         if args.post is not None and not repo:
-            repo = github_comments.gh_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+            repo = github_comments.gh_output(
+                "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner", cwd=cwd, env=git_env()
+            )
         body = render(report, base=args.base or None, commit=commit, repo=repo, policy=config.policy)
         if args.post is None:
             print(body, end="")

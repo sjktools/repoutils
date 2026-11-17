@@ -20,6 +20,7 @@ NOW = datetime(2026, 11, 15, tzinfo=UTC)
 CLASSIC = "ghp_" + "A1" * 18
 FINE = "github_pat_" + "B2" * 30
 APP = "ghs_" + "C3" * 18
+APP_USER = "ghu_" + "D4" * 18
 CONFIG = """
 [tool.repoutils.secrets]
 actions = ["CLASSIC", "FINE"]
@@ -373,6 +374,20 @@ def test_inspect_unexpected_secrets(
         "> [!WARNING]\n> pyproject.toml doesn't list these secrets for this job: `AUTOFIX`, `DEPLOY_KEY`, `STRAY`.\n"
     ) in summary
     assert "### Problems" not in summary
+
+
+def test_inspect_unexpected_secrets_never_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    api = FakeAPI({("/user", FINE): _http_error(401), ("/user", APP_USER): _http_error(502)})
+    values = {"REJECTED": FINE, "UNREACHABLE": APP_USER}
+    assert _inspect(tmp_path, monkeypatch, values, [], api) == 0
+    captured = capsys.readouterr()
+    assert "REJECTED: GitHub rejects it (HTTP 401)" in captured.out
+    assert "UNREACHABLE: HTTP 502 from GET /user\n" in captured.err
+    summary = (tmp_path / "summary.md").read_text()
+    assert "### Problems\n\n- `REJECTED`: GitHub rejects it" in summary
+    assert "### Errors\n\n- `UNREACHABLE`: HTTP 502 from GET /user\n" in summary
 
 
 def test_inspect_environment_expects_repository_secrets(

@@ -656,7 +656,7 @@ Use `inspect` to identify which token or key a secret contains and to detect tok
 Pass the job secrets to the command in the environment variable `SECRETS_JSON: ${{ toJSON(secrets) }}`.
 By default, `inspect` reports on the secrets in `actions` and `other`, or on the secrets for one environment when you pass `--environment NAME`.
 `inspect` also reports on every other secret in `SECRETS_JSON` that `pyproject.toml` does not list for the job, and warns that each one is unexpected.
-An unexpected secret does not make `inspect` fail.
+An unexpected secret does not make `inspect` fail, even when GitHub rejects it or `inspect` cannot inspect it.
 A job that deploys to an environment also receives the repository and organization secrets, so `inspect --environment NAME` expects the secrets in `actions` and `other` as well, but does not report on them.
 A workflow job receives the secrets of an environment only when the job deploys to that environment, so inspect each environment in a separate job.
 Workflows not triggered by Dependabot cannot read Dependabot secrets, so `inspect` skips `dependabot`.

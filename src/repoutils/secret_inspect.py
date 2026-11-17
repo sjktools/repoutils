@@ -350,8 +350,11 @@ def inspect(
     if summary is not None:
         with summary.open("a") as file:
             file.write(summary_markdown(title, findings))
-    problems = sum(len(finding.problems) for finding in findings)
-    errors = sum(1 for finding in findings if finding.error)
+    # An unexpected secret's problems and errors are reported, but never fail:
+    # the job only answers for the secrets pyproject.toml lists for it.
+    listed = [finding for finding in findings if not finding.unexpected]
+    problems = sum(len(finding.problems) for finding in listed)
+    errors = sum(1 for finding in listed if finding.error)
     if problems:
         print(f"{problems} problem(s) with the {len(findings)} secret(s) inspected.")
     if errors:

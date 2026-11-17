@@ -62,8 +62,10 @@ name = "if TYPE_CHECKING:"
 
 # A comment, not text inside a one-line string: only whole string literals
 # come before the #. ruff reads noqa case-insensitively, and a bare one too.
+# It also reads one after a later # in the comment, as in
+# `# type: ignore # noqa`.
 [[tool.repoutils.added-strings.strings]]
-regex = '''^(?:[^"'#]|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')*#\s*(?i:noqa)\b'''
+regex = '''^(?:[^"'#]|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')*#(?:.*#)?\s*(?i:noqa)\b'''
 name = "# noqa"
 
 # The repository settings `repoutils repo-settings` checks or changes.
@@ -320,7 +322,7 @@ line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "PLC0415", "RUF100"]
+select = ["E", "F", "W", "I", "UP", "PGH004", "PLC0415", "RUF100"]
 
 [tool.mypy]
 files = ["src", "tests"]

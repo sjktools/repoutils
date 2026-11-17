@@ -432,6 +432,8 @@ class OwnConfigTests(TestCase):
             'x = "a#b"  # noqa: E501',
             "x = 'it\\'s'  # noqa: E501",
             'x = f"{y}" + "z"  # noqa: E501',
+            "import x  # type: ignore # noqa: F401",
+            "import x  # this mentions # noqa and more",
         ):
             with self.subTest(line):
                 self.assertTrue(self.noqa.matches(line))

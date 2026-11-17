@@ -77,6 +77,8 @@ It runs `python -m repoutils` from `src/` with `uv run --no-project`, installing
 Its limits are ceilings and not targets, so reword the sentences it lists and leave the rest alone.
 A file cut up into very short sentences fails too, and reads no better than one made of long ones.
 
+`just lint` runs ruff without its cache, and fails on an invalid noqa directive, which ruff itself only warns about.
+
 `just mypy` type-checks `src` and `tests` in strict mode, so all new code, tests included, needs full type annotations.
 `just pyright`, part of `just check`, type-checks them again with pyright in strict mode, as it catches some mistakes that mypy and ruff miss.
 Its checks for unknown types are off, as they mostly flag JSON values and code that mypy infers fully.

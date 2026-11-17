@@ -83,7 +83,7 @@ That code includes the `justfile`, the scripts and any `repoutils` source that t
 Instead, check out the base commit of the pull request (`github.event.pull_request.base.sha`), and run `repoutils` from that checkout.
 
 - `post-patch-coverage` and `post-coverage-status` read the coverage reports, and the `pyproject.toml` settings of the base checkout.
-  A change to `[tool.repoutils.coverage]` in a pull request therefore applies only after the pull request merges.
+  A change to `[tool.repoutils.coverage]` in a pull request therefore reaches what these commands post only after the pull request merges.
   Make the reports in a job without write permission, and pass them to the posting job as artifacts.
 - `long-files` and `added-strings` read the files of the pull request.
   Check out the head of the pull request into a subdirectory, and pass that subdirectory with `--directory`.

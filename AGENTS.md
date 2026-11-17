@@ -155,7 +155,7 @@ On `main`, that would reach the jobs that publish, tag or bump a release, which 
 Its `bump` job re-locks with the new uv and no token that can write, and hands `uv.lock` to its `push` job as an artifact.
 The `push` job makes the other changes with main's repoutils and `--lock-file`, then opens the PR with the `UV_BUMP_TOKEN` secret.
 That secret lives in the `uv-bump` environment, which only `main` can deploy to.
-It needs the Workflows write permission, as the PR changes the `setup-uv` pins.
+It needs Contents and Pull requests write, Actions read for Dependabot's logs, and Workflows write, as the PR changes the `setup-uv` pins.
 
 `claude.yml` and `claude-code-review.yml` run Claude Code when a comment starts with `@claude` (with the `CLAUDE_CODE_OAUTH_TOKEN` secret).
 Their `route` jobs run `repoutils claude-route` from a sparse checkout of `src/repoutils/` with the runner's `python3`, installing nothing.

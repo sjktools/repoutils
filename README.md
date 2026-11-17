@@ -107,7 +107,7 @@ Copy it to another project, and change its `setup-uv` version and the way that i
 - Schedule the workflow a few hours after the weekly `uv` update of Dependabot.
   Set `day` and `time` for the `uv` entry in `.github/dependabot.yml`, so that the update runs at a known time.
 - Split the workflow into two jobs, so that no job runs the new `uv` while it holds a token that can push.
-- The first job runs `dependabot-uv bump` with a read-only `GITHUB_TOKEN` that has the Actions `read` permission.
+- The first job runs `dependabot-uv bump` with a read-only `GITHUB_TOKEN` that has the Actions `read` and Contents `read` permissions.
   That command re-locks `uv.lock` with the new `uv`.
   The job passes `uv.lock` to the second job as an artifact.
 - The second job runs `dependabot-uv bump --pr --lock-file <file>`.

@@ -184,7 +184,8 @@ def test_bump_lock_file_put_back_if_check_pins_then_fails(tmp_path: Path, monkey
     )
     (root / "uv.lock").write_text("version = 1\n")
     (tmp_path / "given.lock").write_text("version = 1\nrevision = 3\n")
+    before = {path: path.read_text() for path in root.rglob("*") if path.is_file()}
     _no_uv(monkeypatch)
     with pytest.raises(RuntimeError, match="After the bump"):
         uv_bump.bump(root, "0.13.6", "0.13.7", tmp_path / "given.lock")
-    assert (root / "uv.lock").read_text() == "version = 1\n"
+    assert {path: path.read_text() for path in root.rglob("*") if path.is_file()} == before

@@ -436,6 +436,7 @@ def test_bump_pr_with_lock_file(
     assert capsys.readouterr().out.endswith(", pyproject.toml, uv.lock\nOpened https://github.com/o/r/pull/5\n")
     assert len(fake.created) == 1
     assert _git(project, "show", "origin/uv-0.13.7:uv.lock") == "version = 1\nrevision = 3"
+    assert not _git(project, "status", "--porcelain")
 
 
 def test_bump_missing_lock_file(project: Path, capsys: pytest.CaptureFixture[str]) -> None:

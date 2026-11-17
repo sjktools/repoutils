@@ -71,6 +71,10 @@ These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when 
 `wait-for-base-coverage` sends `$GITHUB_TOKEN` when it is set, and does not run `gh auth token`.
 Of the `secrets` and `variables` subcommands, only `check`, `dump` and `secrets inspect-remote` use the token.
 
+`long-files` and `added-strings` read the Git checkout in the current directory by default.
+Pass `--directory <dir>` to read another checkout instead.
+The command then reads the files, the Git history and the `pyproject.toml` settings of that checkout.
+
 ## Configuration
 
 Put all configuration settings in `pyproject.toml`.

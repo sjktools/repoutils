@@ -311,12 +311,12 @@ class MainTests(_GitRepoTestCase):
         self.write("src/app.py", "a = 1\nb = 2  # FIXME\nc = 3  # FIXME\n")
         self.commit()
 
-    def _run(self, argv: list[str], request: Any = None) -> tuple[int, str, str]:
+    def _run(self, argv: list[str], request: Any = None, cwd: Path | None = None) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         with (
             mock.patch.dict("os.environ", {"GITHUB_TOKEN": "tok", "GITHUB_REPOSITORY": "o/r"}),
             mock.patch.object(github_comments, "request", request or FakeGitHub([])),
-            mock.patch.object(Path, "cwd", return_value=self.repo),
+            mock.patch.object(Path, "cwd", return_value=cwd or self.repo),
             contextlib.redirect_stdout(out),
             contextlib.redirect_stderr(err),
         ):
@@ -330,6 +330,19 @@ class MainTests(_GitRepoTestCase):
         self.assertIn(
             f"- [`src/app.py:3`](https://github.com/o/r/blob/{head}/src/app.py?plain=1#L3): `c = 3  # FIXME`", out
         )
+
+    def test_directory_searches_another_checkout(self) -> None:
+        head = self.git("rev-parse", "HEAD").strip()
+        with tempfile.TemporaryDirectory() as elsewhere:
+            # The current directory's settings don't apply, only the checkout's.
+            settings = "[tool.repoutils.added-strings]\nstrings = [{ string = 'a = 1' }]\n"
+            Path(elsewhere, "pyproject.toml").write_text(settings)
+            # Nor does a Git hook's GIT_DIR, which would point Git elsewhere.
+            with mock.patch.dict("os.environ", {"GIT_DIR": str(Path(elsewhere, ".git"))}):
+                code, out, err = self._run(["--base", "main", "--directory", str(self.repo)], cwd=Path(elsewhere))
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn(f"[`src/app.py:3`](https://github.com/o/r/blob/{head}/src/app.py?plain=1#L3)", out)
+        self.assertNotIn("a = 1", out)
 
     def test_posts_new_comment(self) -> None:
         gh = FakeGitHub([{"id": 1, "user": {"login": "someone"}, "body": MARKER + "\nold"}])
@@ -376,12 +389,16 @@ class MainTests(_GitRepoTestCase):
     def test_post_looks_up_repo_for_links(self) -> None:
         gh = FakeGitHub([])
         with (
-            mock.patch.dict("os.environ", {"GITHUB_REPOSITORY": ""}),
+            # gh runs Git, which mustn't follow a GIT_DIR to another repository.
+            mock.patch.dict("os.environ", {"GITHUB_REPOSITORY": "", "GIT_DIR": "/elsewhere/.git"}),
             mock.patch.object(github_comments, "gh_output", return_value="o/r") as gh_output,
         ):
             code, _, _ = self._run(["--base", "main", "--repo", "", "--post", "7", "--author", "bot"], gh)
         self.assertEqual(code, 0)
-        gh_output.assert_called_once_with("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+        gh_output.assert_called_once_with(
+            "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner", cwd=self.repo, env=mock.ANY
+        )
+        self.assertNotIn("GIT_DIR", gh_output.call_args.kwargs["env"])
         [(_, url, _)] = gh.writes()
         self.assertEqual(url, f"{github_comments.API_URL}/repos/o/r/issues/7/comments")
 

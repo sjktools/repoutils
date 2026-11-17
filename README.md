@@ -73,6 +73,7 @@ These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when 
 Of the `secrets` and `variables` subcommands, only `check`, `dump` and `secrets inspect-remote` use the token.
 `dependabot-uv bump --version <version>` uses the token only with `--pr`.
 With `--pr`, `dependabot-uv bump` also needs the token to have the Pull requests `write` permission.
+Its `git push` to `origin` uses Git's own credentials, which need the Contents `write` permission.
 
 `long-files` and `added-strings` read the Git checkout in the current directory by default.
 Pass `--directory <dir>` to read another checkout instead.

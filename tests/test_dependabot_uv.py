@@ -368,6 +368,13 @@ def test_bump_pr_refuses_changes(project: Path, install: Install, capsys: pytest
     assert 'required-version = ">=0.13.6' in (project / "pyproject.toml").read_text()
 
 
+def test_bump_refuses_a_short_minimum(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    pyproject = project / "pyproject.toml"
+    pyproject.write_text(pyproject.read_text().replace(">=0.13.6", ">=0.13"))
+    assert dependabot_uv.run(["bump", "--version", "0.13.7"]) == 1
+    assert "minimum, 0.13, isn't of the form X.Y.Z, so bump it by hand" in capsys.readouterr().err
+
+
 def test_bump_lock_failure(project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     def fail(root: Path, version: str) -> bool:
         (root / "uv.lock").write_text("half written")

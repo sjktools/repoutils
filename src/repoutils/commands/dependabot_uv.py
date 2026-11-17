@@ -170,6 +170,12 @@ def bump(root: Path, repo: str, token: str, minimum: str, version: str | None, *
     if version is None:
         found = dependabot_uv(repo, token)
         version, run_url = found.version, found.run_url
+    try:
+        uv_bump.version_key(minimum)
+    except ValueError:
+        raise RuntimeError(
+            f"[tool.uv] required-version's minimum, {minimum}, isn't of the form X.Y.Z, so bump it by hand"
+        ) from None
     if uv_bump.version_key(version) == uv_bump.version_key(minimum):
         print(f"[tool.uv] required-version's minimum is already uv {version}, so there's nothing to bump")
         return 0

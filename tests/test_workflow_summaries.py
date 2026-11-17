@@ -1,0 +1,197 @@
+import io
+import json
+import zipfile
+from typing import Any, override
+
+import pytest
+
+from repoutils import github, workflow_summaries
+from repoutils.commands import secrets
+
+API = github.API_URL
+RUN = f"{API}/repos/o/r/actions/runs/7"
+PAGE = "https://github.com/o/r/actions/runs/7"
+
+
+def _zip(files: dict[str, str]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, text in files.items():
+            archive.writestr(name, text)
+    return buffer.getvalue()
+
+
+class FakeGitHub:
+    """Answers requests from a table, giving each run poll the next answer in turn."""
+
+    def __init__(self, runs: list[dict[str, Any]], artifacts: list[dict[str, Any]], zips: dict[str, bytes]) -> None:
+        self.runs = runs
+        self.artifacts = artifacts
+        self.zips = zips
+        self.calls: list[tuple[str, str, object]] = []
+
+    def request(self, method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        self.calls.append((method, url, json_body))
+        assert token == "tok"
+        if method == "POST":
+            return {"workflow_run_id": 7, "html_url": PAGE}
+        if url == f"{API}/repos/o/r":
+            return {"default_branch": "trunk"}
+        if url == RUN:
+            return self.runs.pop(0) if len(self.runs) > 1 else self.runs[0]
+        if url.startswith(f"{RUN}/artifacts"):
+            return {"artifacts": self.artifacts}
+        raise AssertionError(url)
+
+    def request_bytes(self, method: str, url: str, token: str) -> bytes:
+        self.calls.append((method, url, None))
+        return self.zips[url]
+
+
+def _artifact(name: str, **extra: Any) -> dict[str, Any]:
+    return {"name": name, "archive_download_url": f"{API}/zip/{name}", **extra}
+
+
+@pytest.fixture
+def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    slept: list[float] = []
+    monkeypatch.setattr(workflow_summaries, "sleep", slept.append)
+    return slept
+
+
+def _install(monkeypatch: pytest.MonkeyPatch, fake: FakeGitHub) -> None:
+    monkeypatch.setattr(github, "request", fake.request)
+    monkeypatch.setattr(github, "request_bytes", fake.request_bytes)
+
+
+def _done(conclusion: str = "success") -> dict[str, Any]:
+    return {"status": "completed", "conclusion": conclusion, "html_url": PAGE}
+
+
+def _remote(**overrides: Any) -> int:
+    options: dict[str, Any] = {
+        "workflow": "inspect-secrets.yml",
+        "ref": None,
+        "run_id": None,
+        "interval": 5,
+        "timeout": 600,
+    }
+    options.update(overrides)
+    return workflow_summaries.inspect_remote("o/r", "tok", **options)
+
+
+def test_dispatches_waits_through_approval_and_prints_summaries(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], no_sleep: list[float]
+) -> None:
+    held = {"status": "completed", "conclusion": "action_required", "html_url": PAGE}
+    runs: list[dict[str, Any]] = [
+        held,
+        held,
+        {"status": "waiting", "conclusion": None, "html_url": PAGE},
+        {"status": "in_progress"},
+        _done(),
+    ]
+    artifacts = [_artifact("step-summaries-release"), _artifact("other"), _artifact("step-summaries-autofix")]
+    zips = {
+        f"{API}/zip/step-summaries-release": _zip({"inspect.md": "## Release\n"}),
+        f"{API}/zip/step-summaries-autofix": _zip({"b.md": "B", "dir/": "", "a.md": "A\n\n"}),
+    }
+    fake = FakeGitHub(runs, artifacts, zips)
+    _install(monkeypatch, fake)
+    assert _remote() == 0
+    captured = capsys.readouterr()
+    assert captured.out == (
+        "<!-- step-summaries-autofix/a.md -->\nA\n\n"
+        "<!-- step-summaries-autofix/b.md -->\nB\n\n"
+        "<!-- step-summaries-release/inspect.md -->\n## Release\n\n"
+    )
+    # Each hold is reported once, with where to approve the run.
+    assert captured.err == (
+        f"Started inspect-secrets.yml on trunk: {PAGE}\n"
+        f"Waiting: GitHub is holding the run for approval. Approve it at {PAGE}\n"
+        f"Waiting: a job is waiting for approval to deploy to an environment. Approve it at {PAGE}\n"
+        f"Run 7 succeeded: {PAGE}\n"
+    )
+    assert fake.calls[1] == (
+        "POST",
+        f"{API}/repos/o/r/actions/workflows/inspect-secrets.yml/dispatches",
+        {"ref": "trunk", "return_run_details": True},
+    )
+    assert no_sleep == [5, 5, 5, 5]
+
+
+def test_run_id_reads_an_existing_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], no_sleep: list[float]
+) -> None:
+    fake = FakeGitHub([_done()], [], {})
+    _install(monkeypatch, fake)
+    assert _remote(run_id=7, ref="ignored") == 0
+    assert all(method == "GET" for method, _, _ in fake.calls)
+    assert "kept no step summaries" in capsys.readouterr().err
+
+
+def test_failed_run_still_prints_its_summaries(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], no_sleep: list[float]
+) -> None:
+    zips = {f"{API}/zip/step-summaries-x": _zip({"s.md": "failed here"})}
+    _install(monkeypatch, FakeGitHub([_done("failure")], [_artifact("step-summaries-x")], zips))
+    assert _remote(ref="main") == 1
+    captured = capsys.readouterr()
+    assert "failed here" in captured.out
+    assert f"Run 7 finished with conclusion failure: {PAGE}" in captured.err
+
+
+def test_expired_artifact_is_an_error(monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]) -> None:
+    _install(monkeypatch, FakeGitHub([_done()], [_artifact("step-summaries-x", expired=True)], {}))
+    with pytest.raises(RuntimeError, match="step-summaries-x of run 7 has expired"):
+        _remote(run_id=7)
+
+
+def test_times_out(monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]) -> None:
+    clock = iter([0.0, 3.0, 11.0])
+    monkeypatch.setattr(workflow_summaries, "monotonic", lambda: next(clock))
+    _install(monkeypatch, FakeGitHub([{"status": "queued", "html_url": PAGE}], [], {}))
+    with pytest.raises(TimeoutError, match=f"Run 7 hadn't finished after 10 seconds: {PAGE}"):
+        _remote(run_id=7, timeout=10)
+    assert no_sleep == [5]
+
+
+@pytest.mark.parametrize("response", [None, {}, {"workflow_run_id": "7"}])
+def test_dispatch_without_a_run_id(monkeypatch: pytest.MonkeyPatch, response: object) -> None:
+    monkeypatch.setattr(github, "request", lambda *a, **k: response)  # pyright: ignore[reportUnknownLambdaType]
+    with pytest.raises(RuntimeError, match="didn't give its run ID"):
+        workflow_summaries.dispatch("o/r", "w.yml", "main", "tok")
+
+
+def test_command_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], no_sleep: list[float]
+) -> None:
+    fake = FakeGitHub([_done()], [], {})
+    _install(monkeypatch, fake)
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+    argv = ["inspect-remote", "--repo", "o/r", "--workflow", "w.yml", "--ref", "dev", "--timeout", "1"]
+    assert secrets.main(argv) == 0
+    assert fake.calls[0] == (
+        "POST",
+        f"{API}/repos/o/r/actions/workflows/w.yml/dispatches",
+        {"ref": "dev", "return_run_details": True},
+    )
+
+
+@pytest.mark.parametrize("option", ["--timeout", "--interval"])
+def test_rejects_non_positive_times(option: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        secrets.main(["inspect-remote", option, "0"])
+    assert "must be more than 0" in capsys.readouterr().err
+
+
+def test_request_bytes_returns_the_raw_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Response(io.BytesIO):
+        @override
+        def __enter__(self) -> "Response":
+            return self
+
+    monkeypatch.setattr(github.no_redirect_opener, "open", lambda *a, **k: Response(b"PK\x03\x04"))  # pyright: ignore[reportUnknownLambdaType]
+    assert github.request_bytes("GET", f"{API}/zip", "tok") == b"PK\x03\x04"
+    monkeypatch.setattr(github.no_redirect_opener, "open", lambda *a, **k: Response(json.dumps({"a": 1}).encode()))  # pyright: ignore[reportUnknownLambdaType]
+    assert github.request("GET", f"{API}/x", "tok") == {"a": 1}

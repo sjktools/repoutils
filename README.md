@@ -56,7 +56,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `rulesets` | Checks, creates or updates the branch and tag rulesets defined in `pyproject.toml`, or prints the current rulesets of the repository. |
 | `environments` | Checks, creates or updates the deployment environments defined in `pyproject.toml`, or prints the current environments of the repository. |
 | `actions-settings` | Checks or updates the GitHub Actions settings defined in `pyproject.toml`, or prints the current settings of the repository. |
-| `secrets` | Checks that the repository has the Actions, Dependabot and environment secrets listed in `pyproject.toml`, or prints the secret names in the repository. Also checks that workflows use only those secrets, inspects token secrets in a workflow, or exports secret values encrypted with `age`. |
+| `secrets` | Checks that the repository has the Actions, Dependabot and environment secrets listed in `pyproject.toml`, or prints the secret names in the repository. Also checks that workflows use only those secrets, inspects token secrets in a workflow (or starts that workflow and prints its report), or exports secret values encrypted with `age`. |
 | `variables` | Checks that the repository has the Actions and environment variables listed in `pyproject.toml` with non-empty values, or prints the variable names in the repository. Also checks that workflows use only those variables. |
 | `deploy-keys` | Checks or creates the deploy keys declared in `pyproject.toml` and the secrets that store their private keys, or prints the deploy keys in the repository. |
 | `security-settings` | Checks or updates the security settings defined in `pyproject.toml` (such as secret protection), or prints the current security settings of the repository. |
@@ -69,7 +69,7 @@ These commands require a GitHub token:
 
 These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when `$GITHUB_TOKEN` is not set.
 `wait-for-base-coverage` sends `$GITHUB_TOKEN` when it is set, and does not run `gh auth token`.
-Of the `secrets` and `variables` subcommands, only `check` and `dump` use the token.
+Of the `secrets` and `variables` subcommands, only `check`, `dump` and `secrets inspect-remote` use the token.
 
 ## Configuration
 
@@ -680,6 +680,15 @@ The command writes a Markdown summary table to `$GITHUB_STEP_SUMMARY` (or to `--
 - A token has surrounding whitespace.
 
 Passing `--exit-zero` ignores those three findings, but the command still exits non-zero on a failed network request or an unparseable expiration date.
+
+`repoutils secrets inspect-remote` runs `inspect` from your own machine.
+It starts the workflow that runs `inspect` (`--workflow FILE`, default `inspect-secrets.yml`) on the default branch of the repository (`--ref BRANCH` to change it), and waits for the run to finish.
+Then it prints the step summaries that the jobs of the run upload as `step-summaries-*` artifacts.
+GitHub can hold a run for approval, and a job can wait for approval to deploy to an environment.
+In both cases, `inspect-remote` prints the address of the run, where you can approve it, and continues to wait.
+Pass `--run-id ID` to print the summaries of an existing run instead of starting one.
+`inspect-remote` fails when the run does not succeed, or when the run does not finish within 30 minutes (`--timeout MINUTES`).
+It uses `$GITHUB_TOKEN`, or `gh auth token` when that variable is not set, and the token needs the Actions write permission to start the workflow.
 
 `repoutils secrets export` also runs inside a GitHub Actions workflow and writes an encrypted backup of the secret values using [age](https://age-encryption.org).
 Pass the job secrets in `SECRETS_JSON` in the same way as for `inspect`.

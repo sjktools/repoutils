@@ -30,8 +30,10 @@ environments hold without declaring one of them as its ``environment``.
 ``inspect`` runs in a workflow, which passes it the secrets as
 ``${{ toJSON(secrets) }}`` in $SECRETS_JSON. For each secret the table lists
 (``actions`` and ``other``, or ``environments.<name>`` with ``--environment``)
-it reports what it is: a GitHub token's type, owner, expiry and access, or an
-SSH key's fingerprint, never the value (see repoutils.secret_inspect).
+it reports what it is: a GitHub token's type, owner, expiry and the start of
+its SHA-256 hash, or an SSH key's fingerprint, never the value. It also reports
+every other secret the job gets, with a warning that it's unexpected (see
+repoutils.secret_inspect).
 ``export`` writes the same secrets' values as TOML encrypted with age, for a
 workflow to upload as a backup (see repoutils.secret_export).
 Stdlib-only, like every repoutils command."""
@@ -370,8 +372,10 @@ def inspect(listed: Listed, environment: str | None, *, within: int, exit_zero: 
     secrets_json = os.environ.get(secret_inspect.ENV_VAR)
     if secrets_json is None:
         raise ValueError(f"${secret_inspect.ENV_VAR} isn't set: set it to ${{{{ toJSON(secrets) }}}} in the workflow")
+    # An environment's job also gets the repository's and organization's secrets.
+    expected = [name for key in ("actions", OTHER) for name in listed.lists.get(key, [])]
     return secret_inspect.inspect(
-        title, wanted, listed.all_names(), secrets_json, within=within, exit_zero=exit_zero, summary=summary
+        title, wanted, expected, secrets_json, within=within, exit_zero=exit_zero, summary=summary
     )
 
 

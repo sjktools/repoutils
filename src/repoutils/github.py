@@ -87,9 +87,9 @@ def request_bytes(
     raise RuntimeError(f"too many redirects for {method} {url}")
 
 
-def gh_output(*args: str, cwd: Path | None = None) -> str:
+def gh_output(*args: str, cwd: Path | None = None, env: dict[str, str] | None = None) -> str:
     """gh's output, run in cwd (default: the current directory), which picks the repository gh defaults to."""
-    return subprocess.run(["gh", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
+    return subprocess.run(["gh", *args], cwd=cwd, env=env, capture_output=True, text=True, check=True).stdout.strip()
 
 
 def pr_head(repo: str, pr: int, token: str) -> str:

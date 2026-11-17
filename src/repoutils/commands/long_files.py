@@ -21,7 +21,7 @@ from typing import TypeGuard
 
 from repoutils import config as repoutils_config
 from repoutils import github as github_comments
-from repoutils.checkout import use_checkout
+from repoutils.checkout import git_env
 from repoutils.docstrings import summary
 
 # Marks the comment this posts, so the next run can find and edit it. This is
@@ -98,7 +98,7 @@ def _is_limit(value: object) -> TypeGuard[int]:
 
 
 def _git(cwd: Path, *args: str) -> str:
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True).stdout
+    return subprocess.run(["git", *args], cwd=cwd, env=git_env(), capture_output=True, text=True, check=True).stdout
 
 
 def _count_lines(data: bytes) -> int:
@@ -109,7 +109,7 @@ def _count_lines(data: bytes) -> int:
 def _lines_at(cwd: Path, rev: str, path: str) -> int:
     """The number of lines in path as it is at rev."""
     return _count_lines(
-        subprocess.run(["git", "show", f"{rev}:{path}"], cwd=cwd, capture_output=True, check=True).stdout
+        subprocess.run(["git", "show", f"{rev}:{path}"], cwd=cwd, env=git_env(), capture_output=True, check=True).stdout
     )
 
 
@@ -286,7 +286,7 @@ def main(argv: list[str]) -> int:
         "looked up, which only works for a user token)",
     )
     args = parser.parse_args(argv)
-    cwd = use_checkout(args.directory)
+    cwd = args.directory or Path.cwd()
 
     try:
         config = load_config(cwd / "pyproject.toml")
@@ -297,7 +297,7 @@ def main(argv: list[str]) -> int:
         repo = args.repo
         if args.post is not None and not repo:
             repo = github_comments.gh_output(
-                "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner", cwd=cwd
+                "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner", cwd=cwd, env=git_env()
             )
         body = render(report, base=args.base or None, commit=commit, repo=repo, policy=config.policy)
         if args.post is None:

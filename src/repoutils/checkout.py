@@ -1,8 +1,7 @@
-"""The Git checkout a command reads, which `--directory` can name instead of
-the current directory."""
+"""Running Git in the checkout a command reads, which is the current
+directory or the one `--directory` names."""
 
 import os
-from pathlib import Path
 
 # The variables that tie Git to one repository, which a Git command run in
 # another checkout would otherwise follow instead of finding that checkout's
@@ -26,15 +25,9 @@ REPOSITORY_VARIABLES = (
 )
 
 
-def use_checkout(directory: Path | None) -> Path:
-    """The checkout to read: directory if given, else the current directory.
-
-    Given a directory, it removes REPOSITORY_VARIABLES from this process's
-    environment, so the Git commands it runs there read that checkout, and not
-    one that such a variable names (as a Git hook's GIT_DIR does).
-    """
-    if directory is None:
-        return Path.cwd()
-    for name in REPOSITORY_VARIABLES:
-        os.environ.pop(name, None)
-    return directory
+def git_env() -> dict[str, str]:
+    """This process's environment without REPOSITORY_VARIABLES, for a Git
+    command (or gh, which runs Git) to find the repository from the directory
+    it runs in, as these commands document, rather than from a variable such
+    as the GIT_DIR a Git hook sets. This process's own environment is unchanged."""
+    return {name: value for name, value in os.environ.items() if name not in REPOSITORY_VARIABLES}

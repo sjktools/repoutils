@@ -24,7 +24,7 @@ from typing import Any
 
 from repoutils import config as repoutils_config
 from repoutils import github as github_comments
-from repoutils.checkout import use_checkout
+from repoutils.checkout import git_env
 from repoutils.docstrings import summary
 
 # Marks the comment this posts, so the next run can find and edit it. This is
@@ -186,7 +186,7 @@ def added_lines(cwd: Path, base: str) -> Iterator[Location]:
     """Each line the working tree adds since the merge base of base and HEAD.
     A renamed file's lines count only where the rename changes them."""
     merge_base = subprocess.run(
-        ["git", "merge-base", base, "HEAD"], cwd=cwd, capture_output=True, text=True, check=True
+        ["git", "merge-base", base, "HEAD"], cwd=cwd, env=git_env(), capture_output=True, text=True, check=True
     ).stdout.strip()
     diff = subprocess.run(
         [
@@ -206,6 +206,7 @@ def added_lines(cwd: Path, base: str) -> Iterator[Location]:
             "--",
         ],
         cwd=cwd,
+        env=git_env(),
         capture_output=True,
         check=True,
     ).stdout.decode(errors="replace")
@@ -333,7 +334,7 @@ def main(argv: list[str]) -> int:
         "looked up, which only works for a user token)",
     )
     args = parser.parse_args(argv)
-    cwd = use_checkout(args.directory)
+    cwd = args.directory or Path.cwd()
 
     try:
         config = load_config(cwd)
@@ -342,13 +343,13 @@ def main(argv: list[str]) -> int:
         commit = (
             args.commit
             or subprocess.run(
-                ["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True, check=True
+                ["git", "rev-parse", "HEAD"], cwd=cwd, env=git_env(), capture_output=True, text=True, check=True
             ).stdout.strip()
         )
         repo = args.repo
         if args.post is not None and not repo:
             repo = github_comments.gh_output(
-                "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner", cwd=cwd
+                "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner", cwd=cwd, env=git_env()
             )
         body = render(findings, base=base, commit=commit, repo=repo)
         if args.post is None:

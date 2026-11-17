@@ -248,12 +248,12 @@ class MainTests(_GitRepoTestCase):
         self.write("src/big.py", _lines(7))
         self.commit()
 
-    def _run(self, argv: list[str], request: Any = None) -> tuple[int, str, str]:
+    def _run(self, argv: list[str], request: Any = None, cwd: Path | None = None) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         with (
             mock.patch.dict("os.environ", {"GITHUB_TOKEN": "tok", "GITHUB_REPOSITORY": "o/r"}),
             mock.patch.object(github_comments, "request", request or FakeGitHub([])),
-            mock.patch.object(Path, "cwd", return_value=self.repo),
+            mock.patch.object(Path, "cwd", return_value=cwd or self.repo),
             contextlib.redirect_stdout(out),
             contextlib.redirect_stderr(err),
         ):
@@ -265,6 +265,16 @@ class MainTests(_GitRepoTestCase):
         code, out, err = self._run(["--base", ""])
         self.assertEqual((code, err), (0, ""))
         self.assertIn(f"| [`src/big.py`](https://github.com/o/r/blob/{head}/src/big.py) | 7 |", out)
+
+    def test_directory_reports_on_another_checkout(self) -> None:
+        head = self.git("rev-parse", "HEAD").strip()
+        with tempfile.TemporaryDirectory() as elsewhere:
+            # The current directory's settings don't apply, only the checkout's.
+            Path(elsewhere, "pyproject.toml").write_text("[tool.repoutils.long-files]\nlimit = 1\n")
+            code, out, err = self._run(["--base", "", "--directory", str(self.repo)], cwd=Path(elsewhere))
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn(f"| [`src/big.py`](https://github.com/o/r/blob/{head}/src/big.py) | 7 |", out)
+        self.assertIn("## Files over 5 lines", out)
 
     def test_posts_new_comment(self) -> None:
         gh = FakeGitHub([{"id": 1, "user": {"login": "someone"}, "body": MARKER + "\nold"}])

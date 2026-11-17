@@ -112,6 +112,10 @@ CI's `check-and-build` job and `fix.yml` install the extension with the `.github
 - The coverage report (patch, project and the change from the PR's base) and the long files report, posted as PR comments on PRs from this repository that aren't Dependabot's.
 - The project and patch coverage, posted as `coverage/project` and `coverage/patch` commit statuses on `main`'s commits and on PRs that get the comments.
 
+The jobs that post to a PR run the `justfile` and `src/repoutils` from the PR's base commit, as their `GITHUB_TOKEN` can write.
+`long-files` and `added-strings` read the PR's own checkout, in `head/`, with `--directory`.
+The `coverage` job runs the PR's own copies of both, where its token can't write, so a PR that breaks either still fails a required check.
+
 Windows isn't supported for development, as `[tool.uv] environments` leaves it out of `uv.lock`, though repoutils itself is pure Python.
 On Dependabot PRs, the `dependabot-fix` job re-locks with our uv and syncs the dependency minimums.
 The `dependabot-push` job then pushes the result with the `DEPENDABOT_FIX_TOKEN` secret (a Dependabot secret with contents write), so the push triggers CI.

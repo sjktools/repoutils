@@ -274,12 +274,18 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("--post", type=int, metavar="PR", help="post the report to this pull request")
     parser.add_argument(
+        "--directory",
+        type=Path,
+        metavar="DIR",
+        help="the Git checkout to report on, whose pyproject.toml settings apply (default: the current directory)",
+    )
+    parser.add_argument(
         "--author",
         help="with --post, the login $GITHUB_TOKEN comments as, e.g. github-actions[bot] (default: "
         "looked up, which only works for a user token)",
     )
     args = parser.parse_args(argv)
-    cwd = Path.cwd()
+    cwd = args.directory or Path.cwd()
 
     try:
         config = load_config(cwd / "pyproject.toml")

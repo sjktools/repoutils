@@ -47,7 +47,7 @@ class Rule:
     message: str | None
     include: list[str] = field(default_factory=lambda: ["*"])
     exclude: list[str] = field(default_factory=list)
-    # What the report calls a regex's matches, e.g. "# noqa", or None to show the regex.
+    # What the report calls a regex's matches, e.g. "if TYPE_CHECKING:", or None to show the regex.
     name: str | None = None
 
     def matches(self, text: str) -> bool:

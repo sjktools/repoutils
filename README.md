@@ -74,6 +74,7 @@ Of the `secrets` and `variables` subcommands, only `check`, `dump` and `secrets 
 `dependabot-uv bump --version <version>` uses the token only with `--pr`.
 With `--pr`, `dependabot-uv bump` also needs the token to have the Pull requests `write` permission.
 Its `git push` to `origin` uses Git's own credentials, which need the Contents `write` permission.
+A push that changes a workflow file also needs the Workflows `write` permission.
 
 `long-files` and `added-strings` read the Git checkout in the current directory by default.
 Pass `--directory <dir>` to read another checkout instead.
@@ -96,6 +97,29 @@ Instead, check out the base commit of the pull request (`github.event.pull_reque
 On a `pull_request` run, the workflow file itself still comes from the pull request.
 These steps therefore do not protect against a pull request that changes the workflow.
 The `ci.yml` workflow in this repository shows these jobs.
+
+### Bumping uv with Dependabot
+
+`dependabot-uv bump --pr` can run on a schedule, so that the `uv` version of the project follows the `uv` version of Dependabot.
+The `.github/workflows/bump-uv.yml` workflow in this repository shows how.
+Copy it to another project, and change its `setup-uv` version and the way that it runs `repoutils`.
+
+- Schedule the workflow a few hours after the weekly `uv` update of Dependabot.
+  Set `day` and `time` for the `uv` entry in `.github/dependabot.yml`, so that the update runs at a known time.
+- Split the workflow into two jobs, so that no job runs the new `uv` while it holds a token that can push.
+- The first job runs `dependabot-uv bump` with a read-only `GITHUB_TOKEN` that has the Actions `read` and Contents `read` permissions.
+  That command re-locks `uv.lock` with the new `uv`.
+  The job passes `uv.lock` to the second job as an artifact.
+- The second job runs `dependabot-uv bump --pr --version <version> --lock-file <file>`, with the `uv` version that the first job found.
+  With `--lock-file`, the command copies that file to `uv.lock`, and does not run `uv`.
+  The command makes all other changes itself.
+- The second job uses a token that is stored in an environment that only the default branch can deploy to.
+  The pull request changes workflow files, so the token needs the Workflows `write` permission.
+  The token also needs the Contents `write` and Pull requests `write` permissions.
+- Do not use the `GITHUB_TOKEN` of the workflow to open the pull request, because GitHub starts no CI for a pull request that a `GITHUB_TOKEN` opens.
+
+Do not run `dependabot-uv check` in pull request CI.
+A new `uv` version for Dependabot would then make unrelated pull requests fail.
 
 ## Configuration
 

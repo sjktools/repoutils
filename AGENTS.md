@@ -151,6 +151,12 @@ The fix runs on the branch rather than on `main` because code in a run can write
 On `main`, that would reach the jobs that publish, tag or bump a release, which use no cache either, as a second line of defence.
 `AUTOFIX_TOKEN` lives in the `autofix` environment, which only `main` can deploy to, as with `release`.
 
+`bump-uv.yml` runs weekly, after Dependabot's uv run, and opens a PR that bumps uv to Dependabot's version with `repoutils dependabot-uv bump --pr`.
+Its `bump` job re-locks with the new uv and no token that can write, and hands `uv.lock` to its `push` job as an artifact.
+The `push` job makes the other changes for the same version with main's repoutils and `--lock-file`, then opens the PR with the `UV_BUMP_TOKEN` secret.
+That secret lives in the `uv-bump` environment, which only `main` can deploy to.
+It needs Contents and Pull requests write, and Workflows write, as the PR changes the `setup-uv` pins.
+
 `claude.yml` and `claude-code-review.yml` run Claude Code when a comment starts with `@claude` (with the `CLAUDE_CODE_OAUTH_TOKEN` secret).
 Their `route` jobs run `repoutils claude-route` from a sparse checkout of `src/repoutils/` with the runner's `python3`, installing nothing.
 `[tool.repoutils.secrets]` in `pyproject.toml` lists the secrets these workflows use, which `repoutils secrets check` confirms the repository has.

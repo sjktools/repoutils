@@ -150,3 +150,42 @@ def test_bump_meets_every_other_bound(tmp_path: Path) -> None:
     (root / "pyproject.toml").write_text(PYPROJECT.replace(", <0.14", ", <=0.14, >0.13, ==0.14, !=0.13.6"))
     uv_bump.bump(root, "0.13.6", "0.14.0")
     assert ">=0.14.0, <=0.14" in (root / "pyproject.toml").read_text()
+
+
+def _no_uv(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unexpected(*args: object, **kwargs: object) -> None:
+        raise AssertionError("ran uv")
+
+    monkeypatch.setattr(subprocess, "run", unexpected)
+
+
+@pytest.mark.parametrize(("given", "relocked"), [("version = 1\nrevision = 3\n", True), ("version = 1\n", False)])
+def test_bump_takes_the_lock_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, given: str, relocked: bool) -> None:
+    root = make_project(tmp_path / "project")
+    (root / "uv.lock").write_text("version = 1\n")
+    (tmp_path / "given.lock").write_text(given)
+    _no_uv(monkeypatch)
+    assert uv_bump.bump(root, "0.13.6", "0.13.7", tmp_path / "given.lock")[1] is relocked
+    assert (root / "uv.lock").read_text() == given
+
+
+def test_bump_lock_file_needs_a_lock(tmp_path: Path) -> None:
+    root = make_project(tmp_path / "project")
+    (tmp_path / "given.lock").write_text("version = 1\n")
+    with pytest.raises(RuntimeError, match="There's no .*uv.lock for .*given.lock to replace"):
+        uv_bump.bump(root, "0.13.6", "0.13.7", tmp_path / "given.lock")
+    assert (root / "pyproject.toml").read_text() == PYPROJECT
+
+
+def test_bump_lock_file_put_back_if_check_pins_then_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = make_project(tmp_path / "project")
+    (root / "pyproject.toml").write_text(
+        "[tool.other]\nrequired-version = '>=0.13.6'\n\n[tool.uv]\nrequired-version = '''>=0.13.6'''\n"
+    )
+    (root / "uv.lock").write_text("version = 1\n")
+    (tmp_path / "given.lock").write_text("version = 1\nrevision = 3\n")
+    before = {path: path.read_text() for path in root.rglob("*") if path.is_file()}
+    _no_uv(monkeypatch)
+    with pytest.raises(RuntimeError, match="After the bump"):
+        uv_bump.bump(root, "0.13.6", "0.13.7", tmp_path / "given.lock")
+    assert {path: path.read_text() for path in root.rglob("*") if path.is_file()} == before

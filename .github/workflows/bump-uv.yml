@@ -1,0 +1,145 @@
+name: Bump uv
+
+# Opens a PR bumping the project's uv (pyproject.toml's [tool.uv]
+# required-version minimum, every setup-uv pin, and uv.lock) to the version
+# Dependabot's newest uv run used, with `repoutils dependabot-uv bump --pr`. It
+# does nothing if uv is already at that version, or if that version's PR is
+# already open.
+#
+# It runs weekly, four hours after the weekly uv run that .github/dependabot.yml
+# schedules for 02:00 UTC on Mondays, so that run's log is there to read. Run
+# it by hand from main to bump sooner.
+#
+# Two jobs, so the code that re-locks never runs alongside a token that can
+# push:
+#
+# - bump re-locks uv.lock with the new uv, which `uv tool run` downloads, and
+#   that can build packages. It has only a read-only GITHUB_TOKEN, and hands
+#   uv.lock on as an artifact.
+# - push makes the PR with UV_BUMP_TOKEN, which lives in the uv-bump
+#   environment that only main can deploy to. It runs only main's repoutils,
+#   with the runner's python3, installing nothing. It bumps to the version
+#   bump found (`--version`), makes every change but uv.lock itself, and takes
+#   uv.lock from bump as data (`--lock-file`).
+#
+# The PR changes workflows, so UV_BUMP_TOKEN needs the Workflows write
+# permission, as well as Contents and Pull requests write. It's a token rather
+# than the GITHUB_TOKEN as a PR a GITHUB_TOKEN opens starts no CI.
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: bump-uv
+
+permissions: {}
+
+jobs:
+  bump:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      # To read Dependabot's run logs.
+      actions: read
+      contents: read
+    timeout-minutes: 10
+    outputs:
+      bumped: ${{ steps.bump.outputs.bumped }}
+      version: ${{ steps.bump.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # Keep version in step with pyproject.toml's [tool.uv] required-version.
+      # It runs the new uv itself with `uv tool run`. No cache: this run is on
+      # main, so a cache it saved would reach main's other jobs.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.6"
+          enable-cache: false
+
+      - name: Bump uv
+        id: bump
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          PYTHONPATH=src python3 -m repoutils dependabot-uv bump
+          if git diff --quiet; then
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+          else
+            mkdir "$RUNNER_TEMP/lock"
+            cp uv.lock "$RUNNER_TEMP/lock/uv.lock"
+            version=$(PYTHONPATH=src python3 -c \
+              'from pathlib import Path; from repoutils.commands.check_pins import uv_minimum; print(uv_minimum(Path()))')
+            {
+              echo "bumped=true"
+              echo "version=$version"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload uv.lock
+        if: steps.bump.outputs.bumped == 'true'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: uv-lock
+          path: ${{ runner.temp }}/lock/uv.lock
+          retention-days: 1
+          if-no-files-found: error
+
+  push:
+    needs: bump
+    if: needs.bump.outputs.bumped == 'true'
+    runs-on: ubuntu-latest
+    environment: uv-bump
+    # UV_BUMP_TOKEN does the writing.
+    permissions:
+      contents: read
+    timeout-minutes: 5
+
+    steps:
+      - name: Check token configuration
+        env:
+          UV_BUMP_TOKEN: ${{ secrets.UV_BUMP_TOKEN }}
+        run: |
+          if [ -z "$UV_BUMP_TOKEN" ]; then
+            echo "::error::UV_BUMP_TOKEN secret is not set"
+            exit 1
+          fi
+
+      # On main as a branch, which the PR is opened into. The stored token is
+      # what `bump --pr` pushes with.
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: main
+          token: ${{ secrets.UV_BUMP_TOKEN }}
+          persist-credentials: true
+
+      # bump re-locked main as it was at the run's commit.
+      - name: Check main hasn't moved on
+        run: |
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
+            echo "::error::main has moved on from $GITHUB_SHA, so run Bump uv again."
+            exit 1
+          fi
+
+      - name: Download uv.lock
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: uv-lock
+          path: ${{ runner.temp }}/lock
+
+      # The version bump re-locked with, rather than Dependabot's again, which
+      # may have changed since.
+      - name: Open the pull request
+        env:
+          GITHUB_TOKEN: ${{ secrets.UV_BUMP_TOKEN }}
+          VERSION: ${{ needs.bump.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          PYTHONPATH=src python3 -m repoutils dependabot-uv bump --pr \
+            --version "$VERSION" --lock-file "$RUNNER_TEMP/lock/uv.lock"

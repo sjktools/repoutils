@@ -80,11 +80,16 @@ def _dockerfile(text: str, new: str) -> str:
     return "".join([*out, text[pos:]])
 
 
-def bump(root: Path, old: str, new: str) -> tuple[list[Path], bool]:
+def bump(root: Path, old: str, new: str, lock_file: Path | None = None) -> tuple[list[Path], bool]:
     """Move the files check-pins checks from uv old to uv new, then re-lock
-    with uv new. Return the paths it changed, and whether uv.lock changed.
-    It writes nothing unless it can change every one, and puts them all back,
-    uv.lock too, if check-pins then fails or re-locking does."""
+    with uv new, or copy lock_file over uv.lock if given. Return the paths it
+    changed, and whether uv.lock changed. It writes nothing unless it can
+    change every one, and puts them all back, uv.lock too, if check-pins then
+    fails or re-locking does."""
+    lockfile = root / "uv.lock"
+    if lock_file is not None and not lockfile.is_file():
+        raise RuntimeError(f"There's no {lockfile} for {lock_file} to replace")
+    new_lock = None if lock_file is None else lock_file.read_bytes()
     found, _ = check_pins.problems(root)
     if found:
         raise RuntimeError("check-pins fails, so fix these first:\n" + "\n".join(found))
@@ -108,7 +113,6 @@ def bump(root: Path, old: str, new: str) -> tuple[list[Path], bool]:
         if new_text != text:
             changed[path] = new_text
 
-    lockfile = root / "uv.lock"
     locked = lockfile.read_bytes() if lockfile.is_file() else None
     try:
         for path, text in changed.items():
@@ -120,7 +124,11 @@ def bump(root: Path, old: str, new: str) -> tuple[list[Path], bool]:
                 f"After the bump, [tool.uv] required-version's minimum is {minimum}, and check-pins reports:\n"
                 + "\n".join(problems or ["nothing"])
             )
-        relocked = lock(root, new)
+        if new_lock is None:
+            relocked = lock(root, new)
+        else:
+            lockfile.write_bytes(new_lock)
+            relocked = new_lock != locked
     except BaseException:
         for path in changed:
             path.write_text(texts[path])

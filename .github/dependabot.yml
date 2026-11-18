@@ -21,8 +21,11 @@ updates:
   # repoutils has no runtime dependencies, so this updates the dev group, in one PR.
   - package-ecosystem: uv
     directory: /
+    # bump-uv.yml runs four hours later, to bump uv to the version this run used.
     schedule:
       interval: weekly
+      day: monday
+      time: "02:00"
     cooldown:
       default-days: 7
     groups:

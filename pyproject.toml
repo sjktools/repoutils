@@ -97,8 +97,9 @@ immutable-subject = true
 
 # The security settings `repoutils security-settings` checks or changes.
 # Secret and push protection are free for a public repository and have no
-# effect on CI. CodeQL default setup only raises code scanning alerts, and
-# fails nothing.
+# effect on CI. CodeQL default setup raises code scanning alerts, and its
+# CodeQL check fails on a new alert of high or higher severity, but no ruleset
+# requires that check, so it doesn't block a merge.
 # Immutable releases stop a published release's assets and tag from changing,
 # alongside the v* tag rulesets.
 [tool.repoutils.security-settings]

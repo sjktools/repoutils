@@ -159,9 +159,11 @@ jobs:
 
       # Runs the repoutils wheel that uv.lock pins, checked against its
       # SHA-256 hash, from the zip file itself, with the runner's python3.
+      # PYTHONSAFEPATH keeps the checkout off Python's import path.
       - name: Open the pull requests
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_RELEASES_BUMP_TOKEN }}
+          PYTHONSAFEPATH: "1"
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

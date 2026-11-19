@@ -26,9 +26,11 @@ from repoutils import config, github, pull_request, release_pins
 from repoutils.docstrings import summary
 
 SECTION = "github-releases"
+# `bump --pr` pushes its commit to BRANCH_PREFIX + <name>/<tag>.
+BRANCH_PREFIX = f"{SECTION}/"
 DEFAULT_COOLDOWN_DAYS = 7
 PER_PAGE = 100
-# A name `bump --pr` can put at the start of a branch name.
+# A name `bump --pr` can put in a branch name, with no / so that the branch's tag can't be confused with it.
 _NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 _REPO_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
@@ -73,6 +75,8 @@ def upstreams(root: Path = Path()) -> list[Upstream]:
         if not assets:
             raise config.ConfigError(f"{where} assets must list at least one glob pattern")
         cooldown = config.integer(table, "cooldown-days", DEFAULT_COOLDOWN_DAYS, where)
+        if not (root / file).resolve().is_relative_to(root.resolve()):
+            raise config.ConfigError(f"{where} file must be inside the project, not {file}")
         found.append(Upstream(name, repo, root / file, assets, cooldown))
     files = [upstream.file.resolve() for upstream in found]
     if len(set(files)) < len(files):
@@ -195,7 +199,7 @@ def bump(upstream: Upstream, token: str, now: datetime, *, root: Path, repo: str
         return
     release, previous = found.newest, found.pins.current
     digests = assets(upstream, release)
-    branch, base = f"{upstream.name}-{release.tag}", ""
+    branch, base = f"{BRANCH_PREFIX}{upstream.name}/{release.tag}", ""
     if pr:
         if existing := pull_request.open_pr(repo, branch, token):
             print(f"{upstream.name}: pull request {existing} already bumps it to {release.tag}")
@@ -287,8 +291,9 @@ def run(argv: list[str]) -> int:
     bump_parser.add_argument(
         "--pr",
         action="store_true",
-        help=f"for each project, commit the bump to a new branch, <name>-<tag>, push it to {pull_request.REMOTE} "
-        "and open a pull request into the current branch; if one from that branch is already open, change nothing",
+        help=f"for each project, commit the bump to a new branch, {BRANCH_PREFIX}<name>/<tag>, "
+        f"push it to {pull_request.REMOTE}"
+        " and open a pull request into the current branch; if one from that branch is already open, change nothing",
     )
     bump_parser.add_argument(
         "--repo",

@@ -963,12 +963,12 @@ If GitHub refuses to return a setting, `dump` omits that setting and prints a wa
 ### GitHub releases
 
 Each `[tool.repoutils.github-releases.<name>]` table names a project on GitHub whose release assets this project pins by digest.
-`<name>` can contain only letters, digits, `_`, `.` and `-`, as it starts the name of the branch that `bump --pr` creates.
+`<name>` must start with a letter or digit, and can contain only letters, digits, `_`, `.` and `-`, as it is part of the name of the branch that `bump --pr` creates.
 
 | Setting | Value |
 |---|---|
 | `repo` | The repository of the project, as `owner/name`. Required. |
-| `file` | The path of the pins file, relative to `pyproject.toml`. Required. Each table needs its own pins file. |
+| `file` | The path of the pins file, relative to `pyproject.toml` and inside its directory. Required. Each table needs its own pins file. |
 | `assets` | A list of glob patterns, such as `["*.vsix"]`, for the names of the assets to pin. Required. |
 | `cooldown-days` | The number of days after its publication that a release must wait before `check` and `bump` use it. The default is `7`, as in the cooldown of Dependabot. |
 
@@ -990,8 +990,9 @@ Do not run `check` in pull request CI, because a new release would then make unr
 It takes the digest of each asset from the GitHub API, and never downloads an asset.
 It fails if a pattern in `assets` matches no asset of the release, or if GitHub gives no `sha256` digest for a matching asset.
 GitHub gives digests only for assets uploaded since June 2025.
-With `--pr`, `bump` commits each change to a new branch, `<name>-<tag>`, pushes the branch to `origin`, and opens a pull request into the current branch.
+With `--pr`, `bump` commits each change to a new branch, `github-releases/<name>/<tag>`, pushes the branch to `origin`, and opens a pull request into the current branch.
 It does nothing for a table if a pull request from that branch is already open.
+It fails if the branch exists without an open pull request, such as after you close the pull request, until you delete the branch.
 Both commands use every table, or only the tables whose names you give.
 
 `repoutils` writes the pins file, and the project reads it at runtime.

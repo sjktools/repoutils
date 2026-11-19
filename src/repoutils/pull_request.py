@@ -65,10 +65,13 @@ def submit(
     as the commit message, push it to REMOTE, switch back to base, and open a
     pull request from branch into base. Returns the pull request's URL."""
     git(root, "switch", "--create", branch)
-    git(root, "add", "--all", "--", *paths)
-    git(root, "commit", "--message", f"{title}\n\n{message}")
-    git(root, "push", "--set-upstream", REMOTE, branch)
-    git(root, "switch", base)
+    try:
+        # Literal, so a path with a glob character in it stages only itself.
+        git(root, "--literal-pathspecs", "add", "--all", "--", *paths)
+        git(root, "commit", "--message", f"{title}\n\n{message}")
+        git(root, "push", "--set-upstream", REMOTE, branch)
+    finally:
+        git(root, "switch", base)
     try:
         created = github.request(
             "POST",
@@ -76,12 +79,14 @@ def submit(
             token,
             json_body={"title": title, "head": branch, "base": base, "body": body},
         )
-    except urllib.error.HTTPError as e:
-        with e:
-            detail = e.read().decode(errors="replace")
+    except OSError as e:
+        reason, detail = str(e), ""
+        if isinstance(e, urllib.error.HTTPError):
+            with e:
+                reason, detail = f"HTTP {e.code}", f":\n{e.read().decode(errors='replace')}"
         # A rerun would stop at the pushed branch, so say how to finish by hand.
         raise RuntimeError(
-            f"Pushed {branch}, but opening its pull request failed (HTTP {e.code}):\n{detail}\n"
+            f"Pushed {branch}, but opening its pull request failed ({reason}){detail}\n"
             f"Open it at https://github.com/{repo}/compare/{base}...{branch}"
         ) from None
     return str(created["html_url"])

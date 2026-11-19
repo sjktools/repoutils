@@ -129,6 +129,10 @@ def test_upstreams(cwd: Path) -> None:
             "cooldown-days must be a whole number",
         ),
         (
+            '[tool.repoutils.github-releases.x]\nrepo = "o/r"\nfile = "../f"\nassets = ["*"]\n',
+            "file must be inside the project, not ../f",
+        ),
+        (
             PYPROJECT + PYPROJECT.replace(".tool]", ".other]"),
             r"Two \[tool.repoutils.github-releases\] tables have the same file",
         ),
@@ -305,14 +309,16 @@ def test_bump_pr(project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.
     assert fake.created == [
         {
             "title": "Bump tool to 1.9",
-            "head": "tool-1.9",
+            "head": "github-releases/tool/1.9",
             "base": "main",
             "body": f"{source}\n\nPins 1 asset(s) in `pins/tool.toml`.\n\n"
             "Opened by `repoutils github-releases bump --pr`.",
         }
     ]
-    assert _git(project, "log", "-1", "--format=%B", "origin/tool-1.9") == f"Bump tool to 1.9\n\n{source}"
-    assert _git(project, "diff", "--name-only", "main", "origin/tool-1.9") == "pins/tool.toml"
+    assert (
+        _git(project, "log", "-1", "--format=%B", "origin/github-releases/tool/1.9") == f"Bump tool to 1.9\n\n{source}"
+    )
+    assert _git(project, "diff", "--name-only", "main", "origin/github-releases/tool/1.9") == "pins/tool.toml"
     # Back on main, unchanged, ready for the next project's bump.
     assert _git(project, "branch", "--show-current") == "main"
     assert not _git(project, "status", "--porcelain")
@@ -323,7 +329,7 @@ def test_bump_pr_adds_a_new_pins_file(project: Path, monkeypatch: pytest.MonkeyP
     _git(project, "rm", "--quiet", "-r", "pins")
     _git(project, "commit", "--quiet", "--message", "no pins")
     assert github_releases.main("bump", [], repo="o/r", pr=True, now=NOW) == 0
-    assert _git(project, "diff", "--name-status", "main", "origin/tool-1.9") == "A\tpins/tool.toml"
+    assert _git(project, "diff", "--name-status", "main", "origin/github-releases/tool/1.9") == "A\tpins/tool.toml"
 
 
 def test_bump_pr_already_open(
@@ -332,7 +338,7 @@ def test_bump_pr_already_open(
     fake = _install(monkeypatch, FakeGitHub(RELEASES_LIST, [{"html_url": "https://github.com/o/r/pull/4"}]))
     assert github_releases.main("bump", [], repo="o/r", pr=True, now=NOW) == 0
     assert capsys.readouterr().out == "tool: pull request https://github.com/o/r/pull/4 already bumps it to 1.9\n"
-    assert f"{PULLS}?state=open&head=o%3Atool-1.9" in fake.urls
+    assert f"{PULLS}?state=open&head=o%3Agithub-releases%2Ftool%2F1.9" in fake.urls
     assert not _git(project, "status", "--porcelain")
 
 
@@ -361,4 +367,49 @@ def test_bump_pr_git_failure(
     monkeypatch.setattr(github_releases, "datetime", _FixedNow)
     _git(project, "remote", "remove", "origin")
     assert github_releases.run(["bump", "--pr", "--repo", "o/r"]) == 1
-    assert capsys.readouterr().err.startswith("git ls-remote --heads origin refs/heads/tool-1.9 failed:\n")
+    assert capsys.readouterr().err.startswith(
+        "git ls-remote --heads origin refs/heads/github-releases/tool/1.9 failed:\n"
+    )
+
+
+def test_bump_pr_stages_a_file_name_literally(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (project / "pyproject.toml").write_text(PYPROJECT.replace("pins/tool.toml", "pins/[t]ool.toml"))
+    (project / "pins/[t]ool.toml").write_text((project / "pins/tool.toml").read_text())
+    _git(project, "add", "--all")
+    _git(project, "commit", "--quiet", "--message", "glob name")
+    _install(monkeypatch, FakeGitHub(RELEASES_LIST))
+    assert github_releases.main("bump", [], repo="o/r", pr=True, now=NOW) == 0
+    assert _git(project, "diff", "--name-only", "main", "origin/github-releases/tool/1.9") == "pins/[t]ool.toml"
+
+
+def test_bump_pr_push_failure_switches_back(
+    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _install(monkeypatch, FakeGitHub(RELEASES_LIST))
+    monkeypatch.setattr(github_releases, "datetime", _FixedNow)
+    # The branch check passes, but the push is refused.
+    (project.parent / f"{project.name}-origin.git" / "hooks" / "pre-receive").write_text("#!/bin/sh\nexit 1\n")
+    (project.parent / f"{project.name}-origin.git" / "hooks" / "pre-receive").chmod(0o755)
+    assert github_releases.run(["bump", "--pr", "--repo", "o/r"]) == 1
+    assert "git push --set-upstream origin github-releases/tool/1.9 failed" in capsys.readouterr().err
+    assert _git(project, "branch", "--show-current") == "main"
+
+
+def test_bump_pr_network_failure(
+    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = _install(monkeypatch, FakeGitHub(RELEASES_LIST))
+    request = fake.request
+
+    def unreachable(method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        if method == "POST":
+            raise urllib.error.URLError("no route to host")
+        return request(method, url, token)
+
+    monkeypatch.setattr(github, "request", unreachable)
+    monkeypatch.setattr(github_releases, "datetime", _FixedNow)
+    assert github_releases.run(["bump", "--pr", "--repo", "o/r"]) == 1
+    assert capsys.readouterr().err == (
+        "Pushed github-releases/tool/1.9, but opening its pull request failed (<urlopen error no route to host>)\n"
+        "Open it at https://github.com/o/r/compare/main...github-releases/tool/1.9\n"
+    )

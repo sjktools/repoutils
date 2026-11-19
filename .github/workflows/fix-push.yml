@@ -331,5 +331,5 @@ jobs:
           else
             echo "PR Fixes ran on $START_SHA, but [didn't push its fixes]($RUN_URL)." > "$body"
           fi
-          PYTHONPATH=src python3 -m repoutils post-comment "$number" "$body" \
+          PYTHONPATH=src python3 -m repoutils post-comment "$NUMBER" "$body" \
             --name autofix --author "github-actions[bot]" "${update_only[@]}"

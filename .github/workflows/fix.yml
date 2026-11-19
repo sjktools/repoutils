@@ -67,10 +67,11 @@ jobs:
           # from this repository count. Two open PRs from the branch (against
           # different bases) leave no way to tell which one to fix, as nothing
           # passes the PR through, so the branch must have exactly one.
-          prs=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$GITHUB_REF_NAME" --state open \
-            --json baseRefName,isCrossRepository \
-            --jq '[.[] | select(.isCrossRepository | not)] | "\(length) \(.[0].baseRefName // "")"')
-          read -r count base_branch <<< "$prs"
+          # Every page is read, so no PR past the first page goes uncounted.
+          base_branch=$(gh api --method GET --paginate "repos/$GITHUB_REPOSITORY/pulls" \
+            -f state=open -f head="$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" -F per_page=100 \
+            --jq '.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY) | .base.ref')
+          count=$(grep -c . <<< "$base_branch" || true)
           if [ "$count" = 0 ]; then
             echo "::error::Branch $GITHUB_REF_NAME has no open pull request in this repository."
             exit 1

@@ -413,3 +413,16 @@ def test_bump_pr_network_failure(
         "Pushed github-releases/tool/1.9, but opening its pull request failed (<urlopen error no route to host>)\n"
         "Open it at https://github.com/o/r/compare/main...github-releases/tool/1.9\n"
     )
+
+
+def test_bump_pr_refuses_an_invalid_branch(
+    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The name passes the config's check, but Git refuses ".." in a branch name.
+    (project / "pyproject.toml").write_text(PYPROJECT.replace(".tool]", '."a..b"]'))
+    _git(project, "commit", "--quiet", "--all", "--message", "rename")
+    _install(monkeypatch, FakeGitHub(RELEASES_LIST))
+    monkeypatch.setattr(github_releases, "datetime", _FixedNow)
+    assert github_releases.run(["bump", "--pr", "--repo", "o/r"]) == 1
+    assert capsys.readouterr().err == "github-releases/a..b/1.9 isn't a valid Git branch name\n"
+    assert release_pins.read(project / "pins/tool.toml", "up/stream").current == "1.8"

@@ -35,8 +35,11 @@ def open_pr(repo: str, branch: str, token: str) -> str | None:
 
 def prepare(root: Path, branch: str) -> str:
     """The branch the checkout is on, which the pull request from branch goes
-    into, raising RuntimeError if the working tree has changes, HEAD isn't on
-    a branch, or branch already exists here or on REMOTE."""
+    into, raising RuntimeError if branch isn't a valid branch name, the
+    working tree has changes, HEAD isn't on a branch, or branch already exists
+    here or on REMOTE."""
+    if subprocess.run(["git", "check-ref-format", "--branch", branch], cwd=root, capture_output=True).returncode:
+        raise RuntimeError(f"{branch} isn't a valid Git branch name")
     if git(root, "status", "--porcelain"):
         raise RuntimeError("The working tree has changes, so commit or stash them before --pr")
     base = git(root, "branch", "--show-current")

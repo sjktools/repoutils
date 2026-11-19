@@ -146,6 +146,8 @@ It dispatches `fix.yml` on the PR's branch, which runs `just fix` with no secret
 Then `fix-push.yml`, which always runs from `main`, checks that the bundle only adds commits to the branch, and pushes them.
 `autofix-comment.yml` waits for the fix run and dispatches `fix-push.yml` itself, as a run dispatched with a `GITHUB_TOKEN` starts no `workflow_run` workflow.
 A `workflow_run` trigger covers a fix run that a person starts by hand.
+`autofix-comment.yml` passes the PR's number to `fix.yml`, which puts it in the run's name, as GitHub's API gives a run's name but not its inputs, and `fix-push.yml` reads it from there.
+A fix run started by hand without a number needs the branch to have exactly one open PR in this repository.
 If either run fails, or either can't start, the PR gets one comment saying so, which later runs edit, so a success replaces an earlier failure.
 The fix runs on the branch rather than on `main` because code in a run can write to the Actions cache of the run's branch.
 On `main`, that would reach the jobs that publish, tag or bump a release, which use no cache either, as a second line of defence.

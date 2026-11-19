@@ -16,13 +16,12 @@ import re
 import subprocess
 import sys
 import urllib.error
-import urllib.parse
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from repoutils import github, uv_bump
+from repoutils import github, pull_request, uv_bump
 from repoutils.commands.check_pins import uv_minimum
 from repoutils.docstrings import summary
 
@@ -32,9 +31,8 @@ WORKFLOW_PATH = "dynamic/dependabot/dependabot-updates"
 RUN_PREFIX = "uv in "
 JOB_NAME = "Dependabot"
 PER_PAGE = 100
-# `bump --pr` pushes its commit to BRANCH_PREFIX + the new version, on REMOTE.
+# `bump --pr` pushes its commit to BRANCH_PREFIX + the new version.
 BRANCH_PREFIX = "uv-"
-REMOTE = "origin"
 # The updater logs `pyenv exec uv --version`, e.g.
 # "INFO <job_1710872725> Package manager uv, Info : uv 0.13.7 (x86_64-unknown-linux-gnu)".
 # The log format isn't documented, so a log without this line is an error, never a pass.
@@ -150,19 +148,6 @@ def check(repo: str, token: str, minimum: str, *, exit_zero: bool = False) -> in
     return 0 if exit_zero else 1
 
 
-def _git(root: Path, *args: str) -> str:
-    return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True).stdout.strip()
-
-
-def _open_pr(repo: str, branch: str, token: str) -> str | None:
-    """The URL of the open pull request from branch, if there is one."""
-    owner = repo.split("/", 1)[0]
-    head = urllib.parse.quote(f"{owner}:{branch}", safe="")
-    url = f"{github.API_URL}/repos/{repo}/pulls?state=open&head={head}"
-    pulls: list[dict[str, Any]] = github.request("GET", url, token)
-    return str(pulls[0]["html_url"]) if pulls else None
-
-
 def bump(
     root: Path,
     repo: str,
@@ -197,18 +182,10 @@ def bump(
         return 1
     branch, base = BRANCH_PREFIX + version, ""
     if pr:
-        if existing := _open_pr(repo, branch, token):
+        if existing := pull_request.open_pr(repo, branch, token):
             print(f"Pull request {existing} already bumps uv to {version}")
             return 0
-        if _git(root, "status", "--porcelain"):
-            raise RuntimeError("The working tree has changes, so commit or stash them before --pr")
-        base = _git(root, "branch", "--show-current")
-        if not base:
-            raise RuntimeError("HEAD isn't on a branch, so --pr has no base branch for the pull request")
-        if _git(root, "branch", "--list", branch) or _git(root, "ls-remote", "--heads", REMOTE, f"refs/heads/{branch}"):
-            raise RuntimeError(
-                f"Branch {branch} already exists, here or on {REMOTE}, so delete it, or open its pull request by hand"
-            )
+        base = pull_request.prepare(root, branch)
 
     changed, relocked = uv_bump.bump(root, minimum, version, lock_file)
     names = [path.relative_to(root).as_posix() for path in changed] + (["uv.lock"] if relocked else [])
@@ -217,31 +194,20 @@ def bump(
         return 0
 
     source = f", which Dependabot used in its newest uv run: {run_url}" if run_url else ""
-    title = f"Bump uv to {version}"
-    _git(root, "switch", "--create", branch)
-    _git(root, "commit", "--all", "--message", f"{title}\n\nBumps uv from {minimum} to {version}{source}")
-    _git(root, "push", "--set-upstream", REMOTE, branch)
-    body = (
-        f"Bumps uv from {minimum} to {version}{source}\n\n"
+    url = pull_request.submit(
+        root,
+        repo,
+        token,
+        branch=branch,
+        base=base,
+        paths=names,
+        title=f"Bump uv to {version}",
+        message=f"Bumps uv from {minimum} to {version}{source}",
+        body=f"Bumps uv from {minimum} to {version}{source}\n\n"
         f"Changes {', '.join(f'`{name}`' for name in names)}.\n\n"
-        "Opened by `repoutils dependabot-uv bump --pr`."
+        "Opened by `repoutils dependabot-uv bump --pr`.",
     )
-    try:
-        created = github.request(
-            "POST",
-            f"{github.API_URL}/repos/{repo}/pulls",
-            token,
-            json_body={"title": title, "head": branch, "base": base, "body": body},
-        )
-    except urllib.error.HTTPError as e:
-        with e:
-            detail = e.read().decode(errors="replace")
-        # A rerun would stop at the pushed branch, so say how to finish by hand.
-        raise RuntimeError(
-            f"Pushed {branch}, but opening its pull request failed (HTTP {e.code}):\n{detail}\n"
-            f"Open it at https://github.com/{repo}/compare/{base}...{branch}"
-        ) from None
-    print(f"Opened {created['html_url']}")
+    print(f"Opened {url}")
     return 0
 
 
@@ -288,7 +254,7 @@ def main(argv: list[str]) -> int:
     bump_parser.add_argument(
         "--pr",
         action="store_true",
-        help=f"commit the bump to a new branch, {BRANCH_PREFIX}<version>, push it to {REMOTE} and open a "
+        help=f"commit the bump to a new branch, {BRANCH_PREFIX}<version>, push it to {pull_request.REMOTE} and open a "
         "pull request into the current branch; if one from that branch is already open, change nothing",
     )
     for sub in (show_parser, check_parser, bump_parser):

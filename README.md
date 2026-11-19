@@ -44,6 +44,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
 | `check-lock-platforms` | Fails if `uv.lock` contains wheels for platforms that the project does not allow. |
 | `dependabot-uv` | `show` prints the `uv` version from the newest successful Dependabot `uv` update run, `check` fails unless the minimum in `[tool.uv] required-version` is that version, and `bump` changes the project to that `uv` version (with `--pr`, in a new pull request, unless one for that version is already open). |
+| `github-releases` | `check` fails if a project whose release assets this project pins has a newer release, and `bump` pins the assets of that release (with `--pr`, in a new pull request, unless one for that release is already open). |
 | `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment (posting nothing with `--update-only` when none exists) or hides it when you pass `--hide-previous`. |
 | `added-strings` | Lists the added lines in a pull request that match strings configured in `pyproject.toml` (such as `# noqa:`), or posts the list to the pull request. |
 | `post-patch-coverage` | Formats the Markdown patch coverage report from `diff-cover`, adds the project coverage and the change from the base commit, posts the report to a pull request, and warns when coverage drops or falls below a limit. |
@@ -66,14 +67,14 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 These commands require a GitHub token:
 
 - any command that posts to a pull request, and `post-coverage-status`
-- the `github-settings`, `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys`, `security-settings` and `dependabot-uv` commands
+- the `github-settings`, `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys`, `security-settings`, `dependabot-uv` and `github-releases` commands
 
 These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when `$GITHUB_TOKEN` is not set.
 `wait-for-base-coverage` sends `$GITHUB_TOKEN` when it is set, and does not run `gh auth token`.
 Of the `secrets` and `variables` subcommands, only `check`, `dump` and `secrets inspect-remote` use the token.
 `dependabot-uv bump --version <version>` uses the token only with `--pr`.
-With `--pr`, `dependabot-uv bump` also needs the token to have the Pull requests `write` permission.
-Its `git push` to `origin` uses Git's own credentials, which need the Contents `write` permission.
+With `--pr`, `dependabot-uv bump` and `github-releases bump` also need the token to have the Pull requests `write` permission.
+Their `git push` to `origin` uses Git's own credentials, which need the Contents `write` permission.
 A push that changes a workflow file also needs the Workflows `write` permission.
 
 `long-files` and `added-strings` read the Git checkout in the current directory by default.
@@ -120,6 +121,68 @@ Copy it to another project, and change its `setup-uv` version and the way that i
 
 Do not run `dependabot-uv check` in pull request CI.
 A new `uv` version for Dependabot would then make unrelated pull requests fail.
+
+### Bumping pinned GitHub releases
+
+`github-releases bump --pr` can run on a schedule, so that the project follows the releases of the projects whose release assets it pins.
+Dependabot does not track release assets.
+This workflow shows how:
+
+```yaml
+name: Bump GitHub releases
+
+on:
+  schedule:
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: bump-github-releases
+
+permissions: {}
+
+jobs:
+  bump:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    environment: github-releases-bump
+    # GITHUB_RELEASES_BUMP_TOKEN does the writing.
+    permissions:
+      contents: read
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          token: ${{ secrets.GITHUB_RELEASES_BUMP_TOKEN }}
+          persist-credentials: true
+
+      # Runs the repoutils wheel that uv.lock pins, checked against its
+      # SHA-256 hash, from the zip file itself, with the runner's python3.
+      - name: Open the pull requests
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_RELEASES_BUMP_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          read -r url hash < <(python3 -c '
+          import tomllib
+          [package] = [p for p in tomllib.load(open("uv.lock", "rb"))["package"] if p["name"] == "repoutils"]
+          [wheel] = package["wheels"]
+          print(wheel["url"], wheel["hash"].removeprefix("sha256:"))')
+          curl --fail --silent --show-error --location --output "$RUNNER_TEMP/repoutils.zip" "$url"
+          echo "$hash  $RUNNER_TEMP/repoutils.zip" | sha256sum --check --strict --quiet
+          PYTHONPATH="$RUNNER_TEMP/repoutils.zip" python3 -m repoutils github-releases bump --pr
+```
+
+- The workflow runs only on the default branch, and only the `repoutils` version in the `uv.lock` of the default branch.
+  It runs no other code from the project, and no code from the projects whose releases it pins.
+  One job is therefore enough, unlike the two jobs of `bump-uv.yml`.
+- `repoutils` uses only the standard library, so `python3` runs it from its wheel without installing anything.
+- Store the token in an environment that only the default branch can deploy to.
+  The token needs the Contents `write` and Pull requests `write` permissions.
+  If a pins file is in `.github/workflows`, the token also needs the Workflows `write` permission.
+- Do not use the `GITHUB_TOKEN` of the workflow to open the pull request, because GitHub starts no CI for a pull request that a `GITHUB_TOKEN` opens.
 
 ## Configuration
 
@@ -250,6 +313,12 @@ allowed-tags = ["v*"]
 [tool.repoutils.deploy-keys.release]
 write = true
 secret = { environment = "release", name = "RELEASE_DEPLOY_KEY" }
+
+# A project whose release assets `repoutils github-releases` pins; see below.
+[tool.repoutils.github-releases.sonarlint]
+repo = "SonarSource/sonarlint-vscode"
+file = "sonarlint-pins.toml"
+assets = ["sonarlint-vscode-*.vsix"]
 ```
 
 ### Prose
@@ -890,6 +959,62 @@ Paste the output into `pyproject.toml` and remove the settings that you do not w
 If you paste the output without changes, `repoutils security-settings check` passes.
 `dump` does not read or modify `pyproject.toml`.
 If GitHub refuses to return a setting, `dump` omits that setting and prints a warning to standard error.
+
+### GitHub releases
+
+Each `[tool.repoutils.github-releases.<name>]` table names a project on GitHub whose release assets this project pins by digest.
+`<name>` can contain only letters, digits, `_`, `.` and `-`, as it starts the name of the branch that `bump --pr` creates.
+
+| Setting | Value |
+|---|---|
+| `repo` | The repository of the project, as `owner/name`. Required. |
+| `file` | The path of the pins file, relative to `pyproject.toml`. Required. Each table needs its own pins file. |
+| `assets` | A list of glob patterns, such as `["*.vsix"]`, for the names of the assets to pin. Required. |
+| `cooldown-days` | The number of days after its publication that a release must wait before `check` and `bump` use it. The default is `7`, as in the cooldown of Dependabot. |
+
+`check` and `bump` use the newest release of `repo` that meets all these conditions:
+
+- It is not a draft.
+- It is not a prerelease.
+- It was published at least `cooldown-days` days ago.
+
+They use that release only if it was published after the release that the pins file has in use.
+They therefore never replace a newer release that you pinned by hand, such as a prerelease.
+
+`repoutils github-releases check` fails if a table has a newer release to use.
+With `--exit-zero`, it reports that release, but exits `0`.
+It still exits `1` if it cannot read the pins file or the releases.
+Do not run `check` in pull request CI, because a new release would then make unrelated pull requests fail.
+
+`repoutils github-releases bump` adds the newer release to the pins file and makes it the release in use.
+It takes the digest of each asset from the GitHub API, and never downloads an asset.
+It fails if a pattern in `assets` matches no asset of the release, or if GitHub gives no `sha256` digest for a matching asset.
+GitHub gives digests only for assets uploaded since June 2025.
+With `--pr`, `bump` commits each change to a new branch, `<name>-<tag>`, pushes the branch to `origin`, and opens a pull request into the current branch.
+It does nothing for a table if a pull request from that branch is already open.
+Both commands use every table, or only the tables whose names you give.
+
+`repoutils` writes the pins file, and the project reads it at runtime.
+The pins file is TOML:
+
+```toml
+# Generated by `repoutils github-releases bump`, which rewrites this whole file,
+# so a comment or change of layout here doesn't last.
+
+repo = "SonarSource/sonarlint-vscode"
+current = "4.20.0"
+
+[releases."4.20.0"]
+"sonarlint-vscode-4.20.0.vsix" = "sha256:<64 hexadecimal digits>"
+
+[releases."4.19.0"]
+"sonarlint-vscode-4.19.0.vsix" = "sha256:<64 hexadecimal digits>"
+```
+
+- `current` is the tag of the release in use.
+- Each `releases` table maps the name of each asset of a release to its SHA-256 digest, in the form that the GitHub API gives.
+- The file keeps the earlier releases, newest first, so that the project can go back to one.
+- An asset of a release downloads from `https://github.com/<repo>/releases/download/<tag>/<name>`.
 
 ## Development
 

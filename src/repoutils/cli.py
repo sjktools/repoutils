@@ -50,6 +50,9 @@ GROUPS: dict[str, list[Command]] = {
         Command("check-lock-platforms", "check_lock_platforms", "Check uv.lock only has wheels for allowed platforms"),
         Command("dependabot-uv", "dependabot_uv", "Print, check or bump to Dependabot's uv version"),
     ],
+    "Pinned GitHub releases": [
+        Command("github-releases", "github_releases", "Check for, or bump to, a newer release whose assets are pinned"),
+    ],
     "PR reporting": [
         Command("post-comment", "post_comment", "Post a Markdown file to a PR, editing or hiding the last one"),
         Command("added-strings", "added_strings", "List configured strings a PR adds, or post that to a PR"),

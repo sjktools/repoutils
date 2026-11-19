@@ -35,6 +35,8 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
   `src/repoutils/secret_export.py` is `secrets export`, which encrypts those secrets' values with age for a backup.
 - `src/repoutils/uv_bump.py` is `dependabot-uv bump`'s changes to the files that `check-pins` checks, and its re-lock of `uv.lock`, kept apart from the command for length.
   It changes them only if `check-pins` passes, before and after, and puts them back if re-locking fails.
+- `src/repoutils/pull_request.py` commits a change to a new branch, pushes it and opens a PR, for `bump --pr` in `dependabot-uv` and `github-releases`.
+- `src/repoutils/release_pins.py` is the format of the pins file that `github-releases bump` writes, kept apart from the command for length.
 - `src/repoutils/workflows.py` reads the workflows in `.github/workflows` for the secrets and variables they use and each job's environment, without a YAML parser.
   `secrets check-workflows` and `variables check-workflows` use it.
 - `src/repoutils/commands/variables.py` shares its table format, and most of its workings, with `secrets.py`.

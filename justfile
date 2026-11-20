@@ -115,7 +115,9 @@ check-release version index="https://pypi.org/simple/":
     set -euo pipefail
     for delay in 0 10 20 40 80 160; do
         sleep "$delay"
-        if actual="$(uvx --isolated --no-cache --default-index "$2" --from "repoutils==$1" repoutils --version)" && [[ "$actual" == "repoutils $1 ("*")" ]]; then
+        # The commit after the version, as `repoutils --version` prints it.
+        if actual="$(uvx --isolated --no-cache --default-index "$2" --from "repoutils==$1" repoutils --version)" &&
+            [[ "$actual" == "repoutils $1 ("* && "${actual#"repoutils $1 ("}" =~ ^[0-9a-f]{12}(\ with\ uncommitted\ changes)?\)$ ]]; then
             echo "repoutils $1 installs from $2 and runs"
             exit 0
         fi

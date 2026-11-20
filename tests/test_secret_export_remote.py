@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from repoutils import github, secret_export, secret_export_remote, secret_levels, workflow_summaries
+from repoutils import github, secret_export, secret_export_remote, workflow_summaries
 from repoutils.commands import secrets
 from tests.test_workflow_summaries import NAME_PAGES
 
@@ -170,18 +170,15 @@ def test_failed_decryption_prints_no_secrets_and_keeps_the_artifacts(
     assert all(method != "DELETE" for method, _ in fake.calls)
 
 
-def _names(**environments: list[str]) -> dict[str, str]:
-    return {"secret-names": secret_levels.names_json(["REPO_TOKEN"], environments)}
-
-
-def test_secret_deleted_during_the_run_fails(
+def test_secret_set_again_during_the_run_fails(
     fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # The run was told release has DEPLOY_KEY and OTHER, but DEPLOY_KEY was gone by the time it ended.
+    # release/A was deleted and set again, and release/B deleted, while the run went on.
     monkeypatch.setattr(subprocess, "run", _fake_age([]))
-    answers = iter([_names(release=["DEPLOY_KEY", "OTHER"]), _names(release=["OTHER", "NEW"])])
-    with pytest.raises(RuntimeError, match=r"deleted while the run was going.*: release/DEPLOY_KEY\. Run it again"):
-        _remote(inputs=lambda: next(answers))
+    before = {"release/A": "t1", "release/B": "t1", "uv/C": "t1"}
+    times = iter([before, {"release/A": "t2", "uv/C": "t1", "uv/NEW": "t2"}])
+    with pytest.raises(RuntimeError, match=r"set again, while the run.*: release/A, release/B\. Run it again"):
+        _remote(secret_times=lambda: next(times))
     assert capsys.readouterr().out == ""
     assert all(method != "DELETE" for method, _ in fake.calls)
 
@@ -189,17 +186,17 @@ def test_secret_deleted_during_the_run_fails(
 def test_secret_added_during_the_run_passes(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
     # An environment secret added meanwhile can't have been exported as an inherited one by mistake.
     monkeypatch.setattr(subprocess, "run", _fake_age([]))
-    answers = iter([_names(release=["DEPLOY_KEY"]), _names(release=["DEPLOY_KEY", "NEW"], uv=["X"])])
-    assert _remote(inputs=lambda: next(answers)) == 0
+    times = iter([{"release/A": "t1"}, {"release/A": "t1", "release/NEW": "t2"}])
+    assert _remote(secret_times=lambda: next(times)) == 0
 
 
-def test_names_are_not_listed_again_for_an_existing_run(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_secret_times_are_not_read_for_an_existing_run(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(subprocess, "run", _fake_age([]))
 
     def no_listing() -> dict[str, str]:
-        raise AssertionError("listed the names")
+        raise AssertionError("listed the secrets")
 
-    assert _remote(run_id=7, inputs=no_listing) == 0
+    assert _remote(run_id=7, inputs=no_listing, secret_times=no_listing) == 0
 
 
 def test_missing_age_starts_nothing(fake: FakeGitHub) -> None:

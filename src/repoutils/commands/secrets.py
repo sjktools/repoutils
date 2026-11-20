@@ -237,16 +237,21 @@ def check_workflows(root: Path = Path()) -> int:
     return 0
 
 
-def _secret_names(url: str, token: str) -> list[str]:
-    """The names of every secret the list at url gives."""
-    names: list[str] = []
+def _secrets(url: str, token: str) -> list[dict[str, Any]]:
+    """Every secret the list at url gives, as the API describes it (never its value)."""
+    secrets: list[dict[str, Any]] = []
     page = 1
     while True:
         batch = github.request("GET", f"{url}?per_page={PER_PAGE}&page={page}", token)["secrets"]
-        names += [secret["name"] for secret in batch]
+        secrets += batch
         if len(batch) < PER_PAGE:
-            return names
+            return secrets
         page += 1
+
+
+def _secret_names(url: str, token: str) -> list[str]:
+    """The names of every secret the list at url gives."""
+    return [secret["name"] for secret in _secrets(url, token)]
 
 
 def repo_secrets(repo: str, token: str, kind: Kind) -> list[str]:
@@ -254,10 +259,23 @@ def repo_secrets(repo: str, token: str, kind: Kind) -> list[str]:
     return _secret_names(f"{github.API_URL}/repos/{repo}/{kind.path}", token)
 
 
+def _environment_url(repo: str, environment: str) -> str:
+    return f"{github.API_URL}/repos/{repo}/environments/{urllib.parse.quote(environment, safe='')}/secrets"
+
+
 def environment_secrets(repo: str, token: str, environment: str) -> list[str]:
     """The names of every secret the repository's environment has."""
-    quoted = urllib.parse.quote(environment, safe="")
-    return _secret_names(f"{github.API_URL}/repos/{repo}/environments/{quoted}/secrets", token)
+    return _secret_names(_environment_url(repo, environment), token)
+
+
+def environment_secret_times(repo: str, token: str) -> dict[str, str]:
+    """When each environment secret was last set, by ``ENVIRONMENT/NAME``: a
+    secret deleted and set again, or updated, has a new time."""
+    return {
+        f"{environment}/{secret['name']}": str(secret["updated_at"])
+        for environment in repo_environments(repo, token)
+        for secret in _secrets(_environment_url(repo, environment), token)
+    }
 
 
 def repo_environments(repo: str, token: str) -> list[str]:
@@ -492,6 +510,7 @@ def main(argv: list[str]) -> int:
                 repo,
                 token,
                 inputs=dict if args.no_secret_names else lambda: secret_names_input(repo, token),
+                secret_times=None if args.no_secret_names else lambda: environment_secret_times(repo, token),
                 workflow=args.workflow,
                 ref=args.ref,
                 run_id=args.run_id,

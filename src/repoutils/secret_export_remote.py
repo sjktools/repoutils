@@ -21,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from repoutils import github, secret_levels, workflow_summaries
+from repoutils import github, workflow_summaries
 
 DEFAULT_WORKFLOW = "export-secrets.yml"
 # The prefix of the artifacts that hold export-secrets.yml's encrypted files.
@@ -53,20 +53,17 @@ def delete_artifact(repo: str, artifact: dict[str, Any], token: str) -> None:
     github.request("DELETE", f"{github.API_URL}/repos/{repo}/actions/artifacts/{artifact['id']}", token)
 
 
-def _check_names_unchanged(before: dict[str, str], after: dict[str, str]) -> None:
-    """Fail if an environment secret that the run was told of was deleted
-    before its job read the secrets, which would have exported the
-    repository's or organization's value of that name as the environment's.
-    The job can't tell, so the names are listed again once the run is done."""
-    old = secret_levels.read_levels(before.get(workflow_summaries.SECRET_NAMES_INPUT))
-    new = secret_levels.read_levels(after.get(workflow_summaries.SECRET_NAMES_INPUT))
-    if old is None or new is None:
-        return
-    gone = secret_levels.lost(old, new)
-    if gone:
+def _check_unchanged(before: dict[str, str], after: dict[str, str]) -> None:
+    """Fail if an environment secret in before (ENVIRONMENT/NAME to when it
+    was last set) is gone or was set again in after. While it was deleted, a
+    job of the run could have got the repository's or the organization's
+    value of that name, and exported it as the environment's, which the job
+    can't tell."""
+    changed = sorted(name for name, time in before.items() if after.get(name) != time)
+    if changed:
         raise RuntimeError(
-            f"these environment secrets were deleted while the run was going, so its export may hold "
-            f"inherited values in their place, and nothing was printed or deleted: {', '.join(gone)}. "
+            "these environment secrets were deleted, or set again, while the run was going, so its export "
+            f"may hold inherited values in their place, and nothing was printed or deleted: {', '.join(changed)}. "
             "Run it again."
         )
 
@@ -85,10 +82,13 @@ def export_remote(
     age: str = "age",
     keep_artifacts: bool = False,
     inputs: Callable[[], dict[str, str]] = dict,
+    secret_times: Callable[[], dict[str, str]] | None = None,
 ) -> int:
     """Run (or read) the workflow, and print the secrets its artifacts hold,
     decrypted with identities, saving the encrypted files in save if given.
-    Exits 0 only if the run succeeded and kept some."""
+    If it starts a run, with the inputs inputs() gives, and secret_times gives
+    when each environment secret was last set, it fails if one changed during
+    the run. Exits 0 only if the run succeeded and kept some."""
     if not identities and save is None:
         raise ValueError(
             "found no SSH private key to decrypt with (~/.ssh/id_ed25519 or ~/.ssh/id_rsa): "
@@ -102,11 +102,14 @@ def export_remote(
         # mkdir() doesn't check an existing directory can be written to, but this does.
         with tempfile.TemporaryFile(dir=save):
             pass
-    passed: list[dict[str, str]] = []
+    # When each environment secret was last set, as the run starts, if it starts one.
+    times_before: list[dict[str, str]] = []
 
     def remember() -> dict[str, str]:
-        passed.append(inputs())
-        return passed[-1]
+        # Before the names, so a change after the names are listed is caught too.
+        if secret_times is not None:
+            times_before.append(secret_times())
+        return inputs()
 
     run_id, run = workflow_summaries.start(
         repo, token, workflow=workflow, ref=ref, run_id=run_id, interval=interval, timeout=timeout, inputs=remember
@@ -127,8 +130,8 @@ def export_remote(
                 print(f"Saved {artifact['name']}/{path} to {target}", file=sys.stderr)
             if identities:
                 plaintexts.append(decrypt(age, identities, data))
-    if passed:
-        _check_names_unchanged(passed[0], inputs())
+    if secret_times is not None and times_before:
+        _check_unchanged(times_before[0], secret_times())
     # Print only once every file has decrypted, so a failure prints no secrets.
     sys.stdout.write("\n".join(text.decode() for text in plaintexts))
     sys.stdout.flush()

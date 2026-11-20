@@ -36,13 +36,6 @@ class Levels:
         return "the repository's" if name.upper() in self.repository else "the organization's"
 
 
-def lost(before: Levels, after: Levels) -> list[str]:
-    """Each environment secret that before lists and after doesn't, as ENVIRONMENT/NAME."""
-    return sorted(
-        f"{env}/{name}" for env, names in before.environments.items() for name in names - after.environment(env)
-    )
-
-
 def names_json(repository: Iterable[str], environments: dict[str, list[str]]) -> str:
     """The names set at each level, as JSON for $SECRET_NAMES: an object with
     the repository's under ``actions`` and each environment's under ``environments``."""

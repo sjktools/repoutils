@@ -18,7 +18,9 @@ PAGE = "https://github.com/o/r/actions/runs/7"
 NAME_PAGES = {
     f"{API}/repos/o/r/environments?per_page=100&page=1": {"environments": [{"name": "release"}]},
     f"{API}/repos/o/r/actions/secrets?per_page=100&page=1": {"secrets": [{"name": "REPO_TOKEN"}]},
-    f"{API}/repos/o/r/environments/release/secrets?per_page=100&page=1": {"secrets": [{"name": "DEPLOY_KEY"}]},
+    f"{API}/repos/o/r/environments/release/secrets?per_page=100&page=1": {
+        "secrets": [{"name": "DEPLOY_KEY", "updated_at": "2026-11-20T00:00:00Z"}]
+    },
 }
 
 

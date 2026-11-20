@@ -41,12 +41,3 @@ def test_read_levels_without_names(text: str | None) -> None:
 def test_read_levels_errors(text: str, error: str) -> None:
     with pytest.raises(ValueError, match=re.escape(error)):
         secret_levels.read_levels(text)
-
-
-def test_lost() -> None:
-    before = secret_levels.read_levels(secret_levels.names_json(["A"], {"Release": ["X", "Y"], "uv": ["Z"]}))
-    after = secret_levels.read_levels(secret_levels.names_json([], {"release": ["Y", "W"]}))
-    assert before is not None
-    assert after is not None
-    # A repository secret, or one added meanwhile, doesn't count: only one an environment lost.
-    assert secret_levels.lost(before, after) == ["release/X", "uv/Z"]

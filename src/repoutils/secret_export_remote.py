@@ -16,6 +16,7 @@ import argparse
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -78,6 +79,9 @@ def export_remote(
         raise ValueError(f"can't run {age}: install age, or give its path with --age")
     if save is not None:
         save.mkdir(parents=True, exist_ok=True)
+        # mkdir() doesn't check an existing directory can be written to, but this does.
+        with tempfile.TemporaryFile(dir=save):
+            pass
     run_id, run = workflow_summaries.start(
         repo, token, workflow=workflow, ref=ref, run_id=run_id, interval=interval, timeout=timeout
     )

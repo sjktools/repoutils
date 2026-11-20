@@ -845,6 +845,7 @@ It decrypts with `~/.ssh/id_ed25519` and `~/.ssh/id_rsa`, whichever of the two f
 It writes the plaintext only to standard output, as one TOML document with a table for the repository and for each environment.
 If any file fails to decrypt, it prints no secrets.
 Pass `--save DIR` to also write the encrypted files to `DIR`, which the command creates if it does not exist.
+Each file replaces any earlier file of the same name in `DIR`, so the latest backup replaces an earlier one.
 When it finds no private key and you pass `--save DIR`, it only saves the encrypted files.
 When it finds no private key and you do not pass `--save DIR`, it fails before it starts the workflow.
 After it decrypts or saves every file, it deletes the `secrets-*` artifacts from the run, unless you pass `--keep-artifacts`.

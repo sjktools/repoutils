@@ -150,7 +150,8 @@ def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]"
         "--save",
         type=Path,
         metavar="DIR",
-        help="also write the encrypted files to this directory (decrypting nothing if no key is found)",
+        help="also write the encrypted files to this directory, replacing earlier ones of the same names "
+        "(decrypting nothing if no key is found)",
     )
     parser.add_argument("--age", default="age", help="the age program to run (default: age)")
     parser.add_argument(

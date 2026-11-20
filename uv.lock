@@ -3,13 +3,13 @@ revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'darwin'",
-    "python_full_version >= '3.15' and ((platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux'))",
+    "(python_full_version >= '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux')",
     "python_full_version < '3.15' and sys_platform == 'darwin'",
-    "python_full_version < '3.15' and ((platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux'))",
+    "(python_full_version < '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux')",
 ]
 supported-markers = [
     "sys_platform == 'darwin'",
-    "(platform_machine == 'aarch64' or platform_machine == 'x86_64') and sys_platform == 'linux'",
+    "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')",
 ]
 
 [[package]]
@@ -449,7 +449,7 @@ wheels = [
 
 [[package]]
 name = "repoutils"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 
 [package.dev-dependencies]

@@ -217,6 +217,19 @@ def test_secret_set_again_names_the_artifacts_it_could_not_delete(
     assert "secrets-release (HTTP Error 500)" in str(raised.value)
 
 
+def test_failing_to_list_the_times_again_deletes_the_artifacts(fake: FakeGitHub) -> None:
+    calls = iter(range(2))
+
+    def times() -> dict[str, str]:
+        if next(calls):
+            raise OSError("HTTP Error 502")
+        return {"release/A": "t1"}
+
+    with pytest.raises(RuntimeError, match=r"couldn't list the environment secrets again.*HTTP Error 502.*deleted"):
+        _remote(secret_times=times)
+    assert [method for method, _ in fake.calls].count("DELETE") == 2
+
+
 def test_secret_added_during_the_run_passes(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
     # An environment secret added meanwhile can't have been exported as an inherited one by mistake.
     monkeypatch.setattr(subprocess, "run", _fake_age([]))

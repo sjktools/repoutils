@@ -122,12 +122,22 @@ def export_remote(
         repo, token, workflow=workflow, ref=ref, run_id=run_id, interval=interval, timeout=timeout, inputs=remember
     )
     found = workflow_summaries.artifacts(repo, run_id, token, ARTIFACT_PREFIX)
-    changed = changed_secrets(times_before[0], secret_times()) if secret_times is not None and times_before else []
-    # Such a secret could have been deleted during the run without changed_secrets() seeing it.
-    changed = sorted({*changed, *unrecorded})
-    if changed:
-        # Before anything is saved or decrypted. The export can't be trusted, so it's deleted
-        # too, even with --keep-artifacts, so a later --run-id read, which can't check, can't print it.
+    # Before anything is saved or decrypted. An export that fails the check can't be trusted, so
+    # it's deleted too, even with --keep-artifacts, so a later --run-id read, which can't check,
+    # can't print it.
+    problem = ""
+    if secret_times is not None and times_before:
+        try:
+            changed = sorted({*changed_secrets(times_before[0], secret_times()), *unrecorded})
+        except (OSError, RuntimeError) as e:
+            problem = f"couldn't list the environment secrets again to check none changed during the run ({e})"
+        else:
+            if changed:
+                problem = (
+                    "these environment secrets were deleted, or set again, while the run was going, so its "
+                    f"export may hold inherited values in their place: {', '.join(changed)}"
+                )
+    if problem:
         kept: list[str] = []
         for artifact in found:
             try:
@@ -140,11 +150,7 @@ def export_remote(
             else f"these of run {run_id}'s artifacts couldn't be deleted, so delete them, and don't read them "
             f"with --run-id, which doesn't check: {', '.join(kept)}"
         )
-        raise RuntimeError(
-            "these environment secrets were deleted, or set again, while the run was going, so its export "
-            f"may hold inherited values in their place: {', '.join(changed)}. Nothing was printed or saved, "
-            f"and {deleted}. Run it again."
-        )
+        raise RuntimeError(f"{problem}. Nothing was printed or saved, and {deleted}. Run it again.")
     plaintexts: list[bytes] = []
     saved: set[Path] = set()
     for artifact in found:

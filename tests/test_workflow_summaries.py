@@ -213,6 +213,19 @@ def test_gives_up_on_a_404_after_the_grace(monkeypatch: pytest.MonkeyPatch, no_s
     assert no_sleep == [workflow_summaries.NOT_FOUND_RETRY]
 
 
+def test_timeout_inside_the_grace_is_a_timeout(monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]) -> None:
+    clock = iter([0.0, 1.0, 2.0])
+    monkeypatch.setattr(workflow_summaries, "monotonic", lambda: next(clock))
+
+    def request(*args: object, **kwargs: object) -> Any:
+        raise _not_found()
+
+    monkeypatch.setattr(github, "request", request)
+    with pytest.raises(TimeoutError, match="GitHub didn't serve run 7 within 2 seconds"):
+        workflow_summaries.wait("o/r", 7, "tok", interval=5, timeout=2, just_started=True)
+    assert no_sleep == [workflow_summaries.NOT_FOUND_RETRY]
+
+
 def test_404_for_an_existing_run_fails_at_once(monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]) -> None:
     def request(*args: object, **kwargs: object) -> Any:
         raise _not_found()

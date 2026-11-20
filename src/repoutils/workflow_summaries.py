@@ -79,10 +79,13 @@ def wait(
         try:
             run: dict[str, Any] = github.request("GET", url, token)
         except urllib.error.HTTPError as e:
-            left = min(deadline, start + NOT_FOUND_GRACE) - monotonic()
-            if not just_started or e.code != 404 or left <= 0:
+            now = monotonic()
+            if not just_started or e.code != 404 or now - start >= NOT_FOUND_GRACE:
                 raise
             e.close()
+            left = deadline - now
+            if left <= 0:
+                raise TimeoutError(f"GitHub didn't serve run {run_id} within {timeout:g} seconds") from None
             sleep(min(NOT_FOUND_RETRY, left))
             continue
         held = _held(run)

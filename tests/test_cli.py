@@ -136,7 +136,7 @@ def test_check_screenshots_dir(monkeypatch: pytest.MonkeyPatch, capsys: pytest.C
         (["labels"], "{check,ensure,dump}"),
         (["github-settings"], "{check,ensure,dump}"),
         (["repo-settings"], "{check,ensure,dump}"),
-        (["secrets"], "{check,dump,check-workflows,inspect,inspect-remote,export}"),
+        (["secrets"], "{check,dump,check-workflows,inspect,inspect-remote,export,export-remote}"),
         (["variables"], "{check,dump,check-workflows}"),
         (["environments"], "{check,ensure,dump}"),
         (["deploy-keys"], "{check,ensure,dump}"),

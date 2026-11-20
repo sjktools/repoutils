@@ -217,15 +217,18 @@ def test_secret_set_again_names_the_artifacts_it_could_not_delete(
     assert "secrets-release (HTTP Error 500)" in str(raised.value)
 
 
-def test_failing_to_list_the_times_again_deletes_the_artifacts(fake: FakeGitHub) -> None:
+@pytest.mark.parametrize(
+    "error", [OSError("HTTP Error 502"), ValueError("Expecting value"), KeyError("updated_at")], ids=repr
+)
+def test_failing_to_list_the_times_again_deletes_the_artifacts(fake: FakeGitHub, error: Exception) -> None:
     calls = iter(range(2))
 
     def times() -> dict[str, str]:
         if next(calls):
-            raise OSError("HTTP Error 502")
+            raise error
         return {"release/A": "t1"}
 
-    with pytest.raises(RuntimeError, match=r"couldn't list the environment secrets again.*HTTP Error 502.*deleted"):
+    with pytest.raises(RuntimeError, match=r"couldn't list the environment secrets again.*deleted"):
         _remote(secret_times=times)
     assert [method for method, _ in fake.calls].count("DELETE") == 2
 

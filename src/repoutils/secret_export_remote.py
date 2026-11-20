@@ -129,8 +129,9 @@ def export_remote(
     if secret_times is not None and times_before:
         try:
             changed = sorted({*changed_secrets(times_before[0], secret_times()), *unrecorded})
-        # Any failure to list them (an HTTP error, a bad response) leaves the export unchecked.
-        except (OSError, RuntimeError, ValueError, KeyError) as e:
+        # Any failure to list them (an HTTP error, a response of the wrong shape) leaves the
+        # export unchecked, so whatever it raises, the export is rejected.
+        except Exception as e:
             problem = f"couldn't list the environment secrets again to check none changed during the run ({e})"
         else:
             if changed:

@@ -218,7 +218,14 @@ def test_secret_set_again_names_the_artifacts_it_could_not_delete(
 
 
 @pytest.mark.parametrize(
-    "error", [OSError("HTTP Error 502"), ValueError("Expecting value"), KeyError("updated_at")], ids=repr
+    "error",
+    [
+        OSError("HTTP Error 502"),
+        ValueError("Expecting value"),
+        KeyError("updated_at"),
+        TypeError("'NoneType' object is not iterable"),
+    ],
+    ids=repr,
 )
 def test_failing_to_list_the_times_again_deletes_the_artifacts(fake: FakeGitHub, error: Exception) -> None:
     calls = iter(range(2))
@@ -230,7 +237,8 @@ def test_failing_to_list_the_times_again_deletes_the_artifacts(fake: FakeGitHub,
 
     with pytest.raises(RuntimeError, match=r"couldn't list the environment secrets again.*deleted"):
         _remote(secret_times=times)
-    assert [method for method, _ in fake.calls].count("DELETE") == 2
+    deleted = [url for method, url in fake.calls if method == "DELETE"]
+    assert deleted == [f"{API}/repos/o/r/actions/artifacts/3", f"{API}/repos/o/r/actions/artifacts/2"]
 
 
 def test_secret_added_during_the_run_passes(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -250,7 +258,8 @@ def test_secret_set_after_the_times_were_read_fails(fake: FakeGitHub) -> None:
     times = iter([{"release/A": "t1"}, {"release/A": "t1"}])
     with pytest.raises(RuntimeError, match=r"set again, while the run.*: release/B\. Nothing was printed"):
         _remote(secret_times=lambda: next(times), inputs=lambda: _names({"Release": ["A", "b"]}))
-    assert [method for method, _ in fake.calls].count("DELETE") == 2
+    deleted = [url for method, url in fake.calls if method == "DELETE"]
+    assert deleted == [f"{API}/repos/o/r/actions/artifacts/3", f"{API}/repos/o/r/actions/artifacts/2"]
 
 
 def test_listed_secrets_with_unchanged_times_pass(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:

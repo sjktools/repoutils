@@ -128,12 +128,22 @@ def export_remote(
     if changed:
         # Before anything is saved or decrypted. The export can't be trusted, so it's deleted
         # too, even with --keep-artifacts, so a later --run-id read, which can't check, can't print it.
+        kept: list[str] = []
         for artifact in found:
-            delete_artifact(repo, artifact, token)
+            try:
+                delete_artifact(repo, artifact, token)
+            except (OSError, RuntimeError) as e:
+                kept.append(f"{artifact['name']} ({e})")
+        deleted = (
+            f"run {run_id}'s artifacts were deleted"
+            if not kept
+            else f"these of run {run_id}'s artifacts couldn't be deleted, so delete them, and don't read them "
+            f"with --run-id, which doesn't check: {', '.join(kept)}"
+        )
         raise RuntimeError(
             "these environment secrets were deleted, or set again, while the run was going, so its export "
             f"may hold inherited values in their place: {', '.join(changed)}. Nothing was printed or saved, "
-            f"and run {run_id}'s artifacts were deleted. Run it again."
+            f"and {deleted}. Run it again."
         )
     plaintexts: list[bytes] = []
     saved: set[Path] = set()

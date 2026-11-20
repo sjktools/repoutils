@@ -197,6 +197,26 @@ def test_secret_set_again_deletes_the_artifacts_even_if_asked_to_keep_them(fake:
     assert deleted == [f"{API}/repos/o/r/actions/artifacts/3", f"{API}/repos/o/r/actions/artifacts/2"]
 
 
+def test_secret_set_again_names_the_artifacts_it_could_not_delete(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request = fake.request
+
+    def failing_delete(method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        if method == "DELETE" and url.endswith("/3"):
+            raise OSError("HTTP Error 500")
+        return request(method, url, token, json_body=json_body)
+
+    monkeypatch.setattr(github, "request", failing_delete)
+    times = iter([{"release/A": "t1"}, {}])
+    with pytest.raises(RuntimeError) as raised:
+        _remote(secret_times=lambda: next(times))
+    # The reason it failed isn't lost, and the caller learns what to delete by hand.
+    assert "release/A" in str(raised.value)
+    assert "couldn't be deleted, so delete them, and don't read them with --run-id" in str(raised.value)
+    assert "secrets-release (HTTP Error 500)" in str(raised.value)
+
+
 def test_secret_added_during_the_run_passes(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
     # An environment secret added meanwhile can't have been exported as an inherited one by mistake.
     monkeypatch.setattr(subprocess, "run", _fake_age([]))

@@ -23,14 +23,25 @@ Repository = "https://github.com/sjktools/repoutils"
 [project.scripts]
 repoutils = "repoutils.cli:main"
 
+# The build hook that records a build's commit, for other projects' builds.
+[project.entry-points.hatch]
+repoutils-build-info = "repoutils.build_info_hook"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# Records the commit each build comes from, for `repoutils version`. It's run
+# by path, as building repoutils can't need repoutils.
+[tool.hatch.build.hooks.custom]
+path = "src/repoutils/build_info_hook.py"
+file = "src/repoutils/build_info.json"
 
 [dependency-groups]
 dev = [
     "coverage>=7.17.2",
     "diff-cover>=11.0.1",
+    "hatchling>=1.33.0",
     "jactionlint>=2.5.0",
     "mypy>=2.4.1",
     "pyright>=1.1.414",

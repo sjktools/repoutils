@@ -63,6 +63,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `deploy-keys` | Checks or creates the deploy keys declared in `pyproject.toml` and the secrets that store their private keys, or prints the deploy keys in the repository. |
 | `security-settings` | Checks or updates the security settings defined in `pyproject.toml` (such as secret protection), or prints the current security settings of the repository. |
 | `check-attestations` | Fails unless every distribution file in `dist/` has a PEP 740 publish attestation. |
+| `version` | Prints the version of repoutils, the Git commit it was built from, where it is installed, and the Python version. When repoutils runs from a source checkout, it reads the version from `pyproject.toml` and the commit from Git. |
 
 These commands require a GitHub token:
 
@@ -1018,6 +1019,35 @@ current = "4.20.0"
 - Each `releases` table maps the name of each asset of a release to its SHA-256 digest, in the form that the GitHub API gives.
 - The file keeps the earlier releases, newest first, so that the project can go back to one.
 - An asset of a release downloads from `https://github.com/<repo>/releases/download/<tag>/<name>`.
+
+## Recording the commit in a build
+
+`repoutils` includes a build hook for [hatchling](https://hatch.pypa.io/latest/plugins/build-hook/reference/) that writes the Git commit of a build to a JSON file in the sdist and the wheel.
+`repoutils version` reads this file in builds of `repoutils` itself.
+Another project that builds with hatchling can use the hook too:
+
+```toml
+[build-system]
+requires = ["hatchling", "repoutils==<version>"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.hooks.repoutils-build-info]
+file = "src/example/build_info.json"
+```
+
+`file` is the path of the JSON file in the project.
+The project reads the file at runtime itself, for example with `importlib.resources`, as the hook only writes it.
+The file has two keys:
+
+- `commit` is the full hash of the commit that Git has checked out.
+- `dirty` is `true` if a file in the project differs from that commit, and `false` if no file differs.
+  Untracked files count as differences, but files that `.gitignore` excludes do not.
+
+Both values are `null` when the project is not in a Git repository with a commit, or when Git is not installed.
+
+- A wheel that is built from an sdist gets the file from the sdist, and the hook does not run Git.
+- An editable install gets no file, because the commit would be out of date after the next commit.
+- The file contains no timestamp, so two builds of the same commit give the same file.
 
 ## Development
 

@@ -9,7 +9,6 @@ import importlib
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from importlib.metadata import PackageNotFoundError, version
 
 
 @dataclass(frozen=True)
@@ -78,17 +77,11 @@ GROUPS: dict[str, list[Command]] = {
     ],
     "Releases": [
         Command("check-attestations", "check_attestations", "Check every distribution has a PEP 740 attestation"),
+        Command("version", "version", "Print repoutils' version, the commit it was built from, and where it runs"),
     ],
 }
 
 COMMANDS = {command.name: command for commands in GROUPS.values() for command in commands}
-
-
-def _version() -> str:
-    try:
-        return version("repoutils")
-    except PackageNotFoundError:  # pragma: no cover - only when run from an uninstalled checkout
-        return "unknown"
 
 
 def usage() -> str:
@@ -113,8 +106,7 @@ def main(argv: list[str] | None = None) -> int:
         print(usage())
         return 0 if args else 2
     if args[0] == "--version":
-        print(f"repoutils {_version()}")
-        return 0
+        return load("version")(["--short"])
     if args[0] not in COMMANDS:
         print(f"repoutils: unknown command {args[0]!r}\n\n{usage()}", file=sys.stderr)
         return 2

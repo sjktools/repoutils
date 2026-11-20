@@ -79,16 +79,26 @@ build:
 check-attestations dist="dist":
     {{ repoutils }} check-attestations "$1"
 
-# Install the wheel `just build` built into a fresh environment and check that it runs
+# Install the wheel `just build` built into a fresh environment and check that it runs and records this checkout's commit
 smoke:
     #!/usr/bin/env bash
     set -euo pipefail
     version="$(uv version --short)"
     wheel="dist/repoutils-${version}-py3-none-any.whl"
     run() { uvx --isolated --no-cache --from "$wheel" repoutils "$@"; }
+    # The wheel records the commit it was built from (see build_info_hook.py).
+    commit="$(git rev-parse HEAD)"
+    expected="repoutils ${version} (${commit:0:12})"
+    if [ -n "$(git status --porcelain -- .)" ]; then
+        expected="repoutils ${version} (${commit:0:12} with uncommitted changes)"
+    fi
     actual="$(run --version)"
-    if [ "$actual" != "repoutils ${version}" ]; then
-        echo "expected 'repoutils ${version}' from ${wheel} --version, got '${actual}'" >&2
+    if [ "$actual" != "$expected" ]; then
+        echo "expected '${expected}' from ${wheel} --version, got '${actual}'" >&2
+        exit 1
+    fi
+    if ! run version | grep -qxF "Commit: ${commit}"; then
+        echo "expected ${wheel}'s version command to give the commit ${commit}" >&2
         exit 1
     fi
     run --help >/dev/null

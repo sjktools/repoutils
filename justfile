@@ -89,7 +89,7 @@ smoke:
     # The wheel records the commit it was built from (see build_info_hook.py).
     commit="$(git rev-parse HEAD)"
     expected="repoutils ${version} (${commit:0:12})"
-    if [ -n "$(git status --porcelain -- .)" ]; then
+    if [ -n "$(git status --porcelain --untracked-files=normal -- .)" ]; then
         expected="repoutils ${version} (${commit:0:12} with uncommitted changes)"
     fi
     actual="$(run --version)"

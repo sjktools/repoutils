@@ -35,7 +35,9 @@ its SHA-256 hash, or an SSH key's fingerprint, never the value. It also reports
 every other secret the job gets, with a warning that it's unexpected (see
 repoutils.secret_inspect).
 ``inspect-remote`` runs the workflow that runs ``inspect`` and prints its step
-summaries (see repoutils.workflow_summaries).
+summaries (see repoutils.workflow_summaries). It passes the workflow the
+secret names the repository and each environment have, so that an
+environment's job can tell its own secrets from those it inherits.
 ``export`` writes the same secrets' values as TOML encrypted with age, for a
 workflow to upload as a backup (see repoutils.secret_export).
 ``export-remote`` runs the workflow that runs ``export``, and decrypts and
@@ -88,7 +90,8 @@ class Kind:
     title: str
 
 
-KINDS = (Kind("actions", "actions/secrets", "Actions"), Kind("dependabot", "dependabot/secrets", "Dependabot"))
+ACTIONS = Kind("actions", "actions/secrets", "Actions")
+KINDS = (ACTIONS, Kind("dependabot", "dependabot/secrets", "Dependabot"))
 
 
 @dataclass(frozen=True)
@@ -387,8 +390,23 @@ def inspect(listed: Listed, environment: str | None, *, within: int, exit_zero: 
     # An environment's job also gets the repository's and organization's secrets.
     expected = [name for key in ("actions", OTHER) for name in listed.lists.get(key, [])]
     return secret_inspect.inspect(
-        title, wanted, expected, secrets_json, within=within, exit_zero=exit_zero, summary=summary
+        title,
+        wanted,
+        expected,
+        secrets_json,
+        within=within,
+        exit_zero=exit_zero,
+        summary=summary,
+        levels=secret_inspect.read_levels(os.environ.get(secret_inspect.NAMES_ENV_VAR)),
+        environment=environment,
     )
+
+
+def secret_names_input(repo: str, token: str) -> dict[str, str]:
+    """The workflow inputs that tell its jobs the secret names set at each level."""
+    environments = {name: environment_secrets(repo, token, name) for name in repo_environments(repo, token)}
+    names = secret_inspect.names_json(repo_secrets(repo, token, ACTIONS), environments)
+    return {workflow_summaries.SECRET_NAMES_INPUT: names}
 
 
 def main(argv: list[str]) -> int:
@@ -459,6 +477,7 @@ def main(argv: list[str]) -> int:
             return workflow_summaries.inspect_remote(
                 repo,
                 token,
+                inputs=dict if args.no_secret_names else lambda: secret_names_input(repo, token),
                 workflow=args.workflow,
                 ref=args.ref,
                 run_id=args.run_id,
@@ -471,6 +490,7 @@ def main(argv: list[str]) -> int:
             return secret_export_remote.export_remote(
                 repo,
                 token,
+                inputs=dict if args.no_secret_names else lambda: secret_names_input(repo, token),
                 workflow=args.workflow,
                 ref=args.ref,
                 run_id=args.run_id,
@@ -493,6 +513,7 @@ def main(argv: list[str]) -> int:
                 age=args.age,
                 armor=args.armor,
                 summary=args.summary,
+                levels=secret_inspect.read_levels(os.environ.get(secret_inspect.NAMES_ENV_VAR)),
             )
         # dump doesn't read pyproject.toml, so it works before there are any secrets there.
         listed = Listed({}, None) if args.mode == "dump" else _load(Path())

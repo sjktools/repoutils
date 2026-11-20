@@ -2,6 +2,7 @@ import base64
 import hashlib
 import io
 import json
+import re
 import struct
 import subprocess
 import urllib.error
@@ -408,6 +409,7 @@ def test_inspect_environment_expects_repository_secrets(
     values = {"CLASSIC": CLASSIC, "ORG_TOKEN": "o", "DEPLOY_KEY": "k", "APP": "a"}
     assert _inspect(tmp_path, monkeypatch, values, ["--environment", "release"], FakeAPI({})) == 0
     assert capsys.readouterr().out == (
+        secret_inspect.unknown_levels("secrets inspect-remote") + "\n"
         "DEPLOY_KEY: not a GitHub token or SSH key\n"
         "APP: not a GitHub token or SSH key\n"
         "Inspected 2 secret(s), with no problems.\n"
@@ -423,13 +425,120 @@ def test_inspect_environment(
     values = {"CLASSIC": CLASSIC, "DEPLOY_KEY": key, "APP": APP}
     assert _inspect(tmp_path, monkeypatch, values, ["--environment", "RELEASE"], api) == 1
     out = capsys.readouterr().out
-    assert out.startswith("DEPLOY_KEY: OpenSSH private key (ssh-ed25519), SHA256:")
+    assert "\nDEPLOY_KEY: OpenSSH private key (ssh-ed25519), SHA256:" in out
     assert "APP: GitHub rejects it (HTTP 401)" in out
     assert "1 problem(s) with the 2 secret(s) pyproject.toml lists for this job.\n" in out
     summary = (tmp_path / "summary.md").read_text()
-    assert summary.startswith("## Environment RELEASE's secrets\n")
+    assert summary.startswith("## Environment RELEASE's secrets\n\n> [!NOTE]\n> Started without $SECRET_NAMES")
     assert "### Problems\n\n- `APP`: GitHub rejects it" in summary
     assert api.calls == [(path, APP)]
+
+
+# The names set at each level, as `secrets inspect-remote` passes them: the
+# repository sets CLASSIC, FINE and STRAY, and the release environment sets
+# DEPLOY_KEY, FINE (overriding the repository's) and its own EXTRA, but not APP.
+LEVELS = secret_inspect.names_json(["CLASSIC", "FINE", "STRAY"], {"Release": ["DEPLOY_KEY", "FINE", "EXTRA"]})
+
+
+def test_inspect_environment_tells_inherited_secrets_apart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("SECRET_NAMES", LEVELS)
+    api = FakeAPI({("/user", FINE): _user("alice")})
+    # The job gets every level's secrets, with the environment's FINE in place of the repository's.
+    values = {"CLASSIC": CLASSIC, "STRAY": "s", "ORG_TOKEN": "o", "DEPLOY_KEY": "k", "APP": APP, "FINE": FINE}
+    values |= {"EXTRA": "e"}
+    assert _inspect(tmp_path, monkeypatch, values, ["--environment", "release"], api) == 0
+    out = capsys.readouterr().out
+    fine = secret_inspect.token_hash(FINE)
+    # An inherited secret the environment lists is missing from it, and isn't inspected as its own.
+    # Of the secrets it doesn't list, only those the environment sets are reported: the
+    # repository's job reports the rest. FINE is unexpected here, though the repository lists it.
+    assert out == (
+        "DEPLOY_KEY: not a GitHub token or SSH key\n"
+        "APP: missing: the job gets the organization's secret of this name\n"
+        "EXTRA: not a GitHub token or SSH key\n"
+        f"FINE: fine-grained personal access token, owner alice, expires never, SHA-256 starts {fine}\n"
+        f"EXTRA: {secret_inspect.UNEXPECTED}\n"
+        f"FINE: {secret_inspect.UNEXPECTED}\n"
+        "Inspected 4 secret(s), with no problems in the 2 pyproject.toml lists for this job.\n"
+    )
+    assert api.calls == [("/user", FINE)]
+    summary = (tmp_path / "summary.md").read_text()
+    assert "[!NOTE]" not in summary
+    assert "| `APP` | missing: the job gets the organization's secret of this name |" in summary
+
+
+def test_inspect_environment_names_the_repository_as_the_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    levels = secret_inspect.names_json(["APP"], {"release": ["DEPLOY_KEY"]})
+    monkeypatch.setenv("SECRET_NAMES", levels)
+    values = {"DEPLOY_KEY": "k", "APP": APP}
+    assert _inspect(tmp_path, monkeypatch, values, ["--environment", "release"], FakeAPI({})) == 0
+    assert "APP: missing: the job gets the repository's secret of this name\n" in capsys.readouterr().out
+
+
+def test_inspect_repository_ignores_levels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The repository's job reports every secret it gets, as before, and needs no note.
+    monkeypatch.setenv("SECRET_NAMES", LEVELS)
+    values = {"CLASSIC": "c", "FINE": "f", "ORG_TOKEN": "o", "ORG_STRAY": "s"}
+    assert _inspect(tmp_path, monkeypatch, values, [], FakeAPI({})) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("CLASSIC: not a GitHub token or SSH key\n")
+    assert f"ORG_STRAY: {secret_inspect.UNEXPECTED}\n" in out
+
+
+def test_inspect_missing_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("SECRET_NAMES", LEVELS)
+    assert _inspect(tmp_path, monkeypatch, {"DEPLOY_KEY": "k"}, ["--environment", "release"], FakeAPI({})) == 0
+    assert "APP: missing\n" in capsys.readouterr().out
+
+
+def test_names_json_round_trips() -> None:
+    levels = secret_inspect.read_levels(LEVELS)
+    assert levels == secret_inspect.Levels(
+        frozenset({"CLASSIC", "FINE", "STRAY"}), {"release": frozenset({"DEPLOY_KEY", "FINE", "EXTRA"})}
+    )
+    assert levels is not None
+    assert levels.environment("RELEASE") == frozenset({"DEPLOY_KEY", "FINE", "EXTRA"})
+    # An environment the caller didn't list sets nothing.
+    assert levels.environment("pypi") == frozenset()
+    assert levels.source("fine") == "the repository's"
+    assert levels.source("ORG_TOKEN") == "the organization's"
+
+
+@pytest.mark.parametrize("text", [None, ""])
+def test_read_levels_without_names(text: str | None) -> None:
+    assert secret_inspect.read_levels(text) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "error"),
+    [
+        ("nope", "isn't JSON"),
+        ("[]", "must be a JSON object with actions and environments"),
+        ('{"actions": []}', "must be a JSON object with actions and environments"),
+        ('{"environments": {}}', "$SECRET_NAMES's actions must be a list of names"),
+        ('{"actions": [], "environments": {"release": "A"}}', "environment release must be a list of names"),
+        ('{"actions": [1], "environments": {}}', "actions must be a list of names"),
+    ],
+)
+def test_read_levels_errors(text: str, error: str) -> None:
+    with pytest.raises(ValueError, match=re.escape(error)):
+        secret_inspect.read_levels(text)
+
+
+def test_inspect_bad_levels_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("SECRET_NAMES", "nope")
+    assert _inspect(tmp_path, monkeypatch, {}, ["--environment", "release", "--exit-zero"], FakeAPI({})) == 1
+    assert "$SECRET_NAMES isn't JSON" in capsys.readouterr().err
 
 
 def test_inspect_exit_zero_forgives_problems(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

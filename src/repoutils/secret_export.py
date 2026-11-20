@@ -7,6 +7,10 @@ as for ``secrets inspect``. The TOML goes to age on its standard input, so the
 plaintext is never written to disk; only the encrypted file is. Each recipient
 is an age recipient or SSH public key given as it is, or a key of a GitHub
 user's that a pinned fingerprint picks from ``https://github.com/<user>.keys``.
+Given the names set at each level in $SECRET_NAMES, as for ``secrets inspect``,
+an environment's job fails if the environment doesn't set a secret it lists,
+rather than export the repository's or the organization's value as the
+environment's.
 Stdlib-only, like every repoutils module: age is run as a program."""
 
 import argparse
@@ -108,8 +112,13 @@ def _run_url() -> str | None:
     return f"{server}/{repo}/actions/runs/{run_id}"
 
 
-def summary_markdown(title: str, names: list[str], recipients: list[str], unlisted: list[str], output: Path) -> str:
-    lines = [f"## {title}", "", f"Exported {len(names)} secret(s), encrypted with age to:", ""]
+def summary_markdown(
+    title: str, names: list[str], recipients: list[str], unlisted: list[str], output: Path, note: str = ""
+) -> str:
+    lines = [f"## {title}", ""]
+    if note:
+        lines += [f"> [!NOTE]\n> {note}", ""]
+    lines += [f"Exported {len(names)} secret(s), encrypted with age to:", ""]
     lines += [f"- {recipient}" for recipient in recipients]
     lines += ["", "Secrets: " + ", ".join(f"`{name}`" for name in names) + "."]
     if unlisted:
@@ -139,10 +148,12 @@ def export(
     summary: Path | None = None,
     secrets_json: str | None = None,
     now: datetime | None = None,
+    levels: secret_inspect.Levels | None = None,
 ) -> int:
     """Encrypt the secrets in wanted, which the job has in secrets_json (default
     $SECRETS_JSON), into output. listed is every name pyproject.toml lists,
-    so that the rest can be named."""
+    so that the rest can be named. With levels, an environment's job only
+    exports secrets the environment itself sets."""
     if not recipients and not github_keys:
         raise ValueError("give at least one --recipient or --github-key to encrypt to")
     if secrets_json is None:
@@ -153,6 +164,14 @@ def export(
     missing = [name for name in wanted if name.upper() not in values]
     if missing:
         raise ValueError(f"the job doesn't have these secrets, so nothing was exported: {', '.join(missing)}")
+    here = levels.environment(environment) if levels is not None and environment is not None else None
+    if levels is not None and here is not None:
+        inherited = [f"{name} ({levels.source(name)})" for name in wanted if name.upper() not in here]
+        if inherited:
+            raise ValueError(
+                f"environment {environment} doesn't set these secrets, and the job only inherits them, "
+                f"so nothing was exported: {', '.join(inherited)}"
+            )
     shown = list(recipients)
     recipients = list(recipients)
     for user, fingerprint in github_keys:
@@ -170,13 +189,17 @@ def export(
     plaintext = export_toml(table, {name: values[name.upper()] for name in wanted}, header)
     encrypt(age, recipients, plaintext.encode(), output, armor=armor)
     known = {name.upper() for name in listed} | {"GITHUB_TOKEN"}
-    unlisted = sorted(name for name in values if name not in known)
+    # An inherited secret is the repository's job's to name.
+    unlisted = sorted(name for name in values if name not in known and (here is None or name in here))
     print(f"Exported {len(wanted)} secret(s) to {output}, encrypted to {', '.join(shown)}: {', '.join(wanted)}")
     if unlisted:
         print(f"Not listed in pyproject.toml, so not exported: {', '.join(unlisted)}", file=sys.stderr)
+    note = secret_inspect.unknown_levels("secrets export-remote") if environment is not None and levels is None else ""
+    if note:
+        print(note, file=sys.stderr)
     if summary is not None:
         with summary.open("a") as file:
-            file.write(summary_markdown(title, wanted, shown, unlisted, output))
+            file.write(summary_markdown(title, wanted, shown, unlisted, output, note))
     return 0
 
 

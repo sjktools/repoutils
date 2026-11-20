@@ -9,6 +9,7 @@ import pytest
 
 from repoutils import github, secret_export, secret_export_remote, workflow_summaries
 from repoutils.commands import secrets
+from tests.test_workflow_summaries import NAME_PAGES
 
 API = github.API_URL
 RUN = f"{API}/repos/o/r/actions/runs/7"
@@ -39,6 +40,8 @@ class FakeGitHub:
             return None
         if url == f"{API}/repos/o/r":
             return {"default_branch": "main"}
+        if url in NAME_PAGES:
+            return NAME_PAGES[url]
         if url == RUN:
             return self.run
         if url.startswith(f"{RUN}/artifacts?"):
@@ -233,6 +236,8 @@ def test_command_line_finds_keys_in_home(
     argv = ["export-remote", "--repo", "o/r", "--ref", "dev", "--timeout", "1", "--age", "/bin/age"]
     assert secrets.main(argv) == 0
     assert commands[0] == ["/bin/age", "--decrypt", "--identity", str(tmp_path / ".ssh" / "id_ed25519")]
+    # It lists the secret names set at each level only after checking it can decrypt.
+    assert {url for _, url in fake.calls if url in NAME_PAGES} == set(NAME_PAGES)
     assert "[ACTIONS]" in capsys.readouterr().out
 
 
@@ -256,6 +261,7 @@ def test_command_line_reports_errors(
     monkeypatch.setenv("GITHUB_TOKEN", "tok")
     assert secrets.main(["export-remote", "--repo", "o/r"]) == 1
     assert "found no SSH private key" in capsys.readouterr().err
+    assert fake.calls == []
 
 
 @pytest.mark.skipif(

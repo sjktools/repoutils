@@ -70,7 +70,7 @@ def _project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, values: dict[str, 
         monkeypatch.delenv("SECRETS_JSON", raising=False)
     else:
         monkeypatch.setenv("SECRETS_JSON", json.dumps(values))
-    for name in ("GITHUB_SERVER_URL", "GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_STEP_SUMMARY"):
+    for name in ("GITHUB_SERVER_URL", "GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_STEP_SUMMARY", "SECRET_NAMES"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -203,6 +203,68 @@ def test_export_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, age
     assert secrets.main(["export", "--environment", "Release", "--recipient", "age1abc", "--output", "r.age"]) == 0
     assert age.plaintext() == {"environments": {"Release": {"RELEASE_TOKEN": VALUES["RELEASE_TOKEN"]}}}
     assert "Environment Release's secrets, exported by `repoutils secrets export`" in age.input.decode()
+
+
+def test_export_environment_with_levels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], age: FakeAge
+) -> None:
+    _project(tmp_path, monkeypatch, {**VALUES, "EXTRA": "e"})
+    levels = secret_inspect.names_json(["TOKEN", "STRAY"], {"release": ["RELEASE_TOKEN", "EXTRA"]})
+    monkeypatch.setenv("SECRET_NAMES", levels)
+    summary = tmp_path / "summary.md"
+    argv = ["export", "--environment", "release", "--recipient", "age1abc", "--output", "r.age"]
+    assert secrets.main([*argv, "--summary", str(summary)]) == 0
+    assert age.plaintext() == {"environments": {"release": {"RELEASE_TOKEN": VALUES["RELEASE_TOKEN"]}}}
+    # Of the unlisted secrets, only the environment's own is named: the repository's job names the rest.
+    err = capsys.readouterr().err
+    assert err == "Not listed in pyproject.toml, so not exported: EXTRA\n"
+    assert "[!NOTE]" not in summary.read_text()
+
+
+@pytest.mark.parametrize(
+    ("repository", "source"), [(["RELEASE_TOKEN"], "the repository's"), ([], "the organization's")]
+)
+def test_export_environment_fails_on_an_inherited_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    age: FakeAge,
+    repository: list[str],
+    source: str,
+) -> None:
+    _project(tmp_path, monkeypatch)
+    monkeypatch.setenv("SECRET_NAMES", secret_inspect.names_json(repository, {"release": []}))
+    argv = ["export", "--environment", "release", "--recipient", "age1abc", "--output", "r.age"]
+    assert secrets.main(argv) == 1
+    assert capsys.readouterr().err == (
+        "environment release doesn't set these secrets, and the job only inherits them, "
+        f"so nothing was exported: RELEASE_TOKEN ({source})\n"
+    )
+    assert not age.args
+    assert not (tmp_path / "r.age").exists()
+
+
+def test_export_environment_without_levels_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], age: FakeAge
+) -> None:
+    _project(tmp_path, monkeypatch)
+    summary = tmp_path / "summary.md"
+    argv = ["export", "--environment", "release", "--recipient", "age1abc", "--output", "r.age"]
+    assert secrets.main([*argv, "--summary", str(summary)]) == 0
+    note = secret_inspect.unknown_levels("secrets export-remote")
+    assert f"{note}\n" in capsys.readouterr().err
+    assert summary.read_text().startswith(f"## Environment release's secrets\n\n> [!NOTE]\n> {note}\n\nExported")
+
+
+def test_export_repository_ignores_levels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], age: FakeAge
+) -> None:
+    # The repository's job exports what it has, as before, as it can't tell the organization's secrets apart.
+    _project(tmp_path, monkeypatch)
+    monkeypatch.setenv("SECRET_NAMES", secret_inspect.names_json([], {}))
+    assert secrets.main(["export", "--recipient", "age1abc", "--output", "out.age"]) == 0
+    assert age.plaintext() == {"actions": {"TOKEN": VALUES["TOKEN"], "DEPLOY_KEY": PEM}}
+    assert "[!NOTE]" not in capsys.readouterr().err
 
 
 def test_export_header(age: FakeAge, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -781,6 +781,18 @@ By default, `inspect` reports on the secrets in `actions` and `other`, or on the
 An unexpected secret does not make `inspect` fail, even when GitHub rejects it or `inspect` cannot inspect it.
 A job that deploys to an environment also receives the repository and organization secrets, so `inspect --environment NAME` expects the secrets in `actions` and `other` as well, but does not report on them.
 A workflow job receives the secrets of an environment only when the job deploys to that environment, so inspect each environment in a separate job.
+Nothing in a run tells which level each secret comes from, and the `GITHUB_TOKEN` of a run cannot list secret names.
+So `inspect-remote` lists the secret names that the repository and each environment have, and passes them to the workflow as JSON in its `secret-names` input.
+The workflow gives that input to `inspect` in the environment variable `SECRET_NAMES: ${{ inputs.secret-names }}`.
+When `SECRET_NAMES` is set, `inspect --environment NAME` does these things:
+
+- It reports a listed secret that the environment does not have as missing, and names the repository or the organization as the source of the secret that the job gets instead.
+- It does not report a secret that the environment does not list and does not have, because the repository job reports that secret.
+- It warns that a secret which the environment has but does not list is unexpected, even when `actions` or `other` lists it.
+
+An environment secret replaces a repository secret of the same name in the job, so `inspect` reports a secret that both levels have as the secret of the environment.
+When `SECRET_NAMES` is empty or not set, as in a run that you start from the Actions page, `inspect --environment NAME` works as described above, and its report says that it cannot tell inherited secrets apart.
+`inspect` without `--environment` ignores `SECRET_NAMES`.
 Workflows not triggered by Dependabot cannot read Dependabot secrets, so `inspect` skips `dependabot`.
 
 When a secret value has the format of a GitHub token, `inspect` sends a read-only API request with that token.
@@ -817,10 +829,15 @@ Pass `--run-id ID` to print the summaries of an existing run instead of starting
 - The run does not finish within 30 minutes (`--timeout MINUTES`).
 
 It uses `$GITHUB_TOKEN`, or `gh auth token` when that variable is not set, and the token needs the Actions write permission to start the workflow, or only the Actions read permission with `--run-id`.
+To list the secret names for the `secret-names` input, the token also needs the Secrets `read`, Actions `read` and Environments `read` permissions.
+Pass `--no-secret-names` to start the workflow without that input, for example when the workflow does not declare it, as GitHub rejects an input that a workflow does not declare.
 
 `repoutils secrets export` also runs inside a GitHub Actions workflow and writes an encrypted backup of the secret values using [age](https://age-encryption.org).
 Pass the job secrets in `SECRETS_JSON` in the same way as for `inspect`.
 The command exports the `actions` list, or exports `environments.NAME` when you pass `--environment NAME`, and fails if `SECRETS_JSON` lacks any listed secret.
+`export-remote` passes the secret names to the workflow in the same way as `inspect-remote`, and the workflow gives them to `export` in `SECRET_NAMES`.
+When `SECRET_NAMES` is set, `export --environment NAME` fails if the environment does not have a listed secret, rather than export the repository or organization secret that the job gets instead.
+When `SECRET_NAMES` is empty or not set, its summary says that it cannot tell inherited secrets apart.
 It does not export `other` because those secrets belong to the organization rather than the repository.
 It formats the secrets as a TOML table (`[actions]` or `[environments.NAME]`) and pipes the TOML text to the standard input of `age`.
 The command never writes plaintext secrets to disk, and writes only the encrypted output file (`--output FILE`).
@@ -858,6 +875,7 @@ After it decrypts or saves every file, it deletes the `secrets-*` artifacts from
 - `age` fails to decrypt a file.
 
 It uses `$GITHUB_TOKEN`, or `gh auth token` when that variable is not set, and the token needs the Actions write permission to start the workflow and to delete the artifacts.
+It needs the same permissions as `inspect-remote` to list the secret names, and also takes `--no-secret-names`.
 With `--run-id` and `--keep-artifacts`, the token needs only the Actions read permission.
 
 ### Variables

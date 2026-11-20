@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -65,6 +66,7 @@ def export_remote(
     save: Path | None = None,
     age: str = "age",
     keep_artifacts: bool = False,
+    inputs: Callable[[], dict[str, str]] = dict,
 ) -> int:
     """Run (or read) the workflow, and print the secrets its artifacts hold,
     decrypted with identities, saving the encrypted files in save if given.
@@ -83,7 +85,7 @@ def export_remote(
         with tempfile.TemporaryFile(dir=save):
             pass
     run_id, run = workflow_summaries.start(
-        repo, token, workflow=workflow, ref=ref, run_id=run_id, interval=interval, timeout=timeout
+        repo, token, workflow=workflow, ref=ref, run_id=run_id, interval=interval, timeout=timeout, inputs=inputs
     )
     found = workflow_summaries.artifacts(repo, run_id, token, ARTIFACT_PREFIX)
     plaintexts: list[bytes] = []
@@ -138,7 +140,9 @@ def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]"
         "Fails unless the run succeeds and keeps some encrypted files. "
         "Uses $GITHUB_TOKEN, defaulting to `gh auth token`, "
         "which needs the Actions write permission to dispatch and to delete the artifacts, "
-        "or only Actions read with --run-id and --keep-artifacts.",
+        "or only Actions read with --run-id and --keep-artifacts. "
+        "To pass the workflow the secret names set at each level, it also needs the Secrets, Actions and "
+        "Environments read permissions, unless given --no-secret-names.",
     )
     workflow_summaries.add_run_options(parser, DEFAULT_WORKFLOW)
     parser.add_argument(

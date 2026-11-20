@@ -188,11 +188,13 @@ def test_secret_set_again_during_the_run_fails(
     assert deleted == [f"{API}/repos/o/r/actions/artifacts/3", f"{API}/repos/o/r/actions/artifacts/2"]
 
 
-def test_secret_set_again_keeps_the_artifacts_if_asked(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_secret_set_again_deletes_the_artifacts_even_if_asked_to_keep_them(fake: FakeGitHub) -> None:
+    # Kept, a later --run-id read, which can't check, could print the untrustworthy export.
     times = iter([{"release/A": "t1"}, {}])
-    with pytest.raises(RuntimeError, match=r"Nothing was printed or saved\. Run it again"):
+    with pytest.raises(RuntimeError, match=r"run 7's artifacts were deleted\. Run it again"):
         _remote(secret_times=lambda: next(times), keep_artifacts=True)
-    assert all(method != "DELETE" for method, _ in fake.calls)
+    deleted = [url for method, url in fake.calls if method == "DELETE"]
+    assert deleted == [f"{API}/repos/o/r/actions/artifacts/3", f"{API}/repos/o/r/actions/artifacts/2"]
 
 
 def test_secret_added_during_the_run_passes(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:

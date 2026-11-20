@@ -41,3 +41,9 @@ def test_read_levels_without_names(text: str | None) -> None:
 def test_read_levels_errors(text: str, error: str) -> None:
     with pytest.raises(ValueError, match=re.escape(error)):
         secret_levels.read_levels(text)
+
+
+def test_names_json_too_long_for_an_input() -> None:
+    names = [f"SECRET_{n:05}" for n in range(5000)]
+    with pytest.raises(ValueError, match=r"over the 65535 .*pass --no-secret-names"):
+        secret_levels.names_json(names, {})

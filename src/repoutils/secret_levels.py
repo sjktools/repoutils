@@ -36,11 +36,23 @@ class Levels:
         return "the repository's" if name.upper() in self.repository else "the organization's"
 
 
+# The most characters GitHub takes in a workflow_dispatch's inputs.
+MAX_INPUT_LENGTH = 65535
+
+
 def names_json(repository: Iterable[str], environments: dict[str, list[str]]) -> str:
     """The names set at each level, as JSON for $SECRET_NAMES: an object with
-    the repository's under ``actions`` and each environment's under ``environments``."""
+    the repository's under ``actions`` and each environment's under ``environments``.
+    Raises ValueError if that's too long for a workflow input, rather than let
+    GitHub refuse to start the run."""
     body = {"actions": sorted(repository), "environments": {env: sorted(names) for env, names in environments.items()}}
-    return json.dumps(body, separators=(",", ":"))
+    text = json.dumps(body, separators=(",", ":"))
+    if len(text) > MAX_INPUT_LENGTH:
+        raise ValueError(
+            f"the secret names set at each level take {len(text)} characters, over the {MAX_INPUT_LENGTH} "
+            "GitHub takes in a workflow's inputs: pass --no-secret-names to start the run without them"
+        )
+    return text
 
 
 def _name_list(value: object, where: str) -> frozenset[str]:

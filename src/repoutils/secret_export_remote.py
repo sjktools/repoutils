@@ -21,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from repoutils import github, workflow_summaries
+from repoutils import github, secret_levels, workflow_summaries
 
 DEFAULT_WORKFLOW = "export-secrets.yml"
 # The prefix of the artifacts that hold export-secrets.yml's encrypted files.
@@ -51,6 +51,24 @@ def decrypt(age: str, identities: list[Path], ciphertext: bytes) -> bytes:
 
 def delete_artifact(repo: str, artifact: dict[str, Any], token: str) -> None:
     github.request("DELETE", f"{github.API_URL}/repos/{repo}/actions/artifacts/{artifact['id']}", token)
+
+
+def _check_names_unchanged(before: dict[str, str], after: dict[str, str]) -> None:
+    """Fail if an environment secret that the run was told of was deleted
+    before its job read the secrets, which would have exported the
+    repository's or organization's value of that name as the environment's.
+    The job can't tell, so the names are listed again once the run is done."""
+    old = secret_levels.read_levels(before.get(workflow_summaries.SECRET_NAMES_INPUT))
+    new = secret_levels.read_levels(after.get(workflow_summaries.SECRET_NAMES_INPUT))
+    if old is None or new is None:
+        return
+    gone = secret_levels.lost(old, new)
+    if gone:
+        raise RuntimeError(
+            f"these environment secrets were deleted while the run was going, so its export may hold "
+            f"inherited values in their place, and nothing was printed or deleted: {', '.join(gone)}. "
+            "Run it again."
+        )
 
 
 def export_remote(
@@ -84,8 +102,14 @@ def export_remote(
         # mkdir() doesn't check an existing directory can be written to, but this does.
         with tempfile.TemporaryFile(dir=save):
             pass
+    passed: list[dict[str, str]] = []
+
+    def remember() -> dict[str, str]:
+        passed.append(inputs())
+        return passed[-1]
+
     run_id, run = workflow_summaries.start(
-        repo, token, workflow=workflow, ref=ref, run_id=run_id, interval=interval, timeout=timeout, inputs=inputs
+        repo, token, workflow=workflow, ref=ref, run_id=run_id, interval=interval, timeout=timeout, inputs=remember
     )
     found = workflow_summaries.artifacts(repo, run_id, token, ARTIFACT_PREFIX)
     plaintexts: list[bytes] = []
@@ -103,6 +127,8 @@ def export_remote(
                 print(f"Saved {artifact['name']}/{path} to {target}", file=sys.stderr)
             if identities:
                 plaintexts.append(decrypt(age, identities, data))
+    if passed:
+        _check_names_unchanged(passed[0], inputs())
     # Print only once every file has decrypted, so a failure prints no secrets.
     sys.stdout.write("\n".join(text.decode() for text in plaintexts))
     sys.stdout.flush()

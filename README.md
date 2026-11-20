@@ -876,6 +876,7 @@ After it decrypts or saves every file, it deletes the `secrets-*` artifacts from
 
 It uses `$GITHUB_TOKEN`, or `gh auth token` when that variable is not set, and the token needs the Actions write permission to start the workflow and to delete the artifacts.
 It needs the same permissions as `inspect-remote` to list the secret names, and also takes `--no-secret-names`.
+When the run ends, it lists the secret names again, and fails without printing any secrets or deleting the artifacts if an environment no longer has a secret that it had when the run started, as the job could then have exported the inherited secret of that name.
 With `--run-id` and `--keep-artifacts`, the token needs only the Actions read permission.
 
 ### Variables

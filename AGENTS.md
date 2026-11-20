@@ -42,8 +42,12 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
 - `src/repoutils/commands/variables.py` shares its table format, and most of its workings, with `secrets.py`.
 - `src/repoutils/markdown.py` holds the Markdown reading that `check-sentence-per-line` and `check-prose` share.
   It skips code fences and splits a document's prose into sentences.
-- `src/repoutils/checkout.py` gives the environment for the Git commands that `long-files` and `added-strings` run.
+- `src/repoutils/checkout.py` gives the environment for the Git commands that `long-files` and `added-strings` run, and `head_commit`, which reads the commit a checkout has.
   It leaves out the Git variables (such as a hook's `GIT_DIR`) that would point them at another repository than the checkout they read.
+- `src/repoutils/build_info_hook.py` is a hatchling build hook that writes the commit a build comes from to `build_info.json`, which `repoutils version` reads with `src/repoutils/build_info.py`.
+  Only hatchling and the hook's tests import it, so the runtime stays standard library only.
+  repoutils' own build runs the file by path, and other projects use it through the `repoutils-build-info` entry point.
+  As hatchling runs it by path, it loads `checkout.py` from beside itself rather than importing `repoutils`.
 - `src/repoutils/docstrings.py` gives the summary a command's `--help` shows, the first paragraph of its module docstring.
   It returns None under `python -OO`, which strips docstrings.
 - `tests/test_<module>.py` tests each module, and `tests/test_cli.py` runs every command through `cli.main()`.

@@ -50,6 +50,8 @@ def test_unknown_command(capsys: pytest.CaptureFixture[str]) -> None:
 def test_version(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["--version"]) == 0
     assert capsys.readouterr().out.startswith("repoutils ")
+    assert cli.main(["version"]) == 0
+    assert capsys.readouterr().out.startswith("Version: ")
 
 
 def test_every_command_module_has_run() -> None:

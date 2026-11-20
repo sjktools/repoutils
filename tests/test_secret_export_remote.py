@@ -171,15 +171,27 @@ def test_failed_decryption_prints_no_secrets_and_keeps_the_artifacts(
 
 
 def test_secret_set_again_during_the_run_fails(
-    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     # release/A was deleted and set again, and release/B deleted, while the run went on.
-    monkeypatch.setattr(subprocess, "run", _fake_age([]))
     before = {"release/A": "t1", "release/B": "t1", "uv/C": "t1"}
     times = iter([before, {"release/A": "t2", "uv/C": "t1", "uv/NEW": "t2"}])
-    with pytest.raises(RuntimeError, match=r"set again, while the run.*: release/A, release/B\. Run it again"):
-        _remote(secret_times=lambda: next(times))
+    commands: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run", _fake_age(commands))
+    with pytest.raises(RuntimeError, match=r"set again, while the run.*: release/A, release/B\. Nothing was printed"):
+        _remote(secret_times=lambda: next(times), save=tmp_path)
     assert capsys.readouterr().out == ""
+    # Nothing was decrypted or saved, and the untrustworthy export is deleted, so --run-id can't print it later.
+    assert commands == []
+    assert list(tmp_path.iterdir()) == []
+    deleted = [url for method, url in fake.calls if method == "DELETE"]
+    assert deleted == [f"{API}/repos/o/r/actions/artifacts/3", f"{API}/repos/o/r/actions/artifacts/2"]
+
+
+def test_secret_set_again_keeps_the_artifacts_if_asked(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
+    times = iter([{"release/A": "t1"}, {}])
+    with pytest.raises(RuntimeError, match=r"Nothing was printed or saved\. Run it again"):
+        _remote(secret_times=lambda: next(times), keep_artifacts=True)
     assert all(method != "DELETE" for method, _ in fake.calls)
 
 

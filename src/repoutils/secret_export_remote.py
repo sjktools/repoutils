@@ -53,19 +53,12 @@ def delete_artifact(repo: str, artifact: dict[str, Any], token: str) -> None:
     github.request("DELETE", f"{github.API_URL}/repos/{repo}/actions/artifacts/{artifact['id']}", token)
 
 
-def _check_unchanged(before: dict[str, str], after: dict[str, str]) -> None:
-    """Fail if an environment secret in before (ENVIRONMENT/NAME to when it
-    was last set) is gone or was set again in after. While it was deleted, a
-    job of the run could have got the repository's or the organization's
-    value of that name, and exported it as the environment's, which the job
-    can't tell."""
-    changed = sorted(name for name, time in before.items() if after.get(name) != time)
-    if changed:
-        raise RuntimeError(
-            "these environment secrets were deleted, or set again, while the run was going, so its export "
-            f"may hold inherited values in their place, and nothing was printed or deleted: {', '.join(changed)}. "
-            "Run it again."
-        )
+def changed_secrets(before: dict[str, str], after: dict[str, str]) -> list[str]:
+    """Each environment secret in before (ENVIRONMENT/NAME to when it was last
+    set) that is gone, or was set again, in after. While it was deleted, a job
+    could have got the repository's or the organization's value of that name,
+    and exported it as the environment's, which the job can't tell."""
+    return sorted(name for name, time in before.items() if after.get(name) != time)
 
 
 def export_remote(
@@ -115,6 +108,19 @@ def export_remote(
         repo, token, workflow=workflow, ref=ref, run_id=run_id, interval=interval, timeout=timeout, inputs=remember
     )
     found = workflow_summaries.artifacts(repo, run_id, token, ARTIFACT_PREFIX)
+    changed = changed_secrets(times_before[0], secret_times()) if secret_times is not None and times_before else []
+    if changed:
+        # Before anything is saved or decrypted. The export can't be trusted, so it's deleted
+        # too, so a later --run-id read, which can't check, can't print it.
+        if not keep_artifacts:
+            for artifact in found:
+                delete_artifact(repo, artifact, token)
+        raise RuntimeError(
+            "these environment secrets were deleted, or set again, while the run was going, so its export "
+            f"may hold inherited values in their place: {', '.join(changed)}. Nothing was printed or saved"
+            + ("" if keep_artifacts else f", and run {run_id}'s artifacts were deleted")
+            + ". Run it again."
+        )
     plaintexts: list[bytes] = []
     saved: set[Path] = set()
     for artifact in found:
@@ -130,8 +136,6 @@ def export_remote(
                 print(f"Saved {artifact['name']}/{path} to {target}", file=sys.stderr)
             if identities:
                 plaintexts.append(decrypt(age, identities, data))
-    if secret_times is not None and times_before:
-        _check_unchanged(times_before[0], secret_times())
     # Print only once every file has decrypted, so a failure prints no secrets.
     sys.stdout.write("\n".join(text.decode() for text in plaintexts))
     sys.stdout.flush()

@@ -105,7 +105,9 @@ smoke:
     run check-whitespace >/dev/null
     echo "${wheel} installs and runs"
 
-# Retries while the index catches up with a new upload.
+# Retries while the index catches up with a new upload. --version must also
+# give the commit the release was built from (and a dev build's bumped version
+# counts as an uncommitted change).
 # Check that a released version installs from PyPI (or the index given) and runs
 [positional-arguments]
 check-release version index="https://pypi.org/simple/":
@@ -113,7 +115,7 @@ check-release version index="https://pypi.org/simple/":
     set -euo pipefail
     for delay in 0 10 20 40 80 160; do
         sleep "$delay"
-        if actual="$(uvx --isolated --no-cache --default-index "$2" --from "repoutils==$1" repoutils --version)" && [ "$actual" = "repoutils $1" ]; then
+        if actual="$(uvx --isolated --no-cache --default-index "$2" --from "repoutils==$1" repoutils --version)" && [[ "$actual" == "repoutils $1 ("*")" ]]; then
             echo "repoutils $1 installs from $2 and runs"
             exit 0
         fi

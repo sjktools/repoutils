@@ -4,7 +4,8 @@ A build has the commit in ``build_info.json``, which ``build_info_hook`` writes,
 and the version in its package metadata. Without the file, repoutils is
 running from a source checkout, such as the justfile's ``python -m repoutils``
 from ``src/`` or an editable install. The version then comes from the
-checkout's ``pyproject.toml``, and the commit from Git.
+checkout's ``pyproject.toml``, and the commit from Git. If there is no
+checkout either, it's a build that didn't run the hook, with only a version.
 """
 
 import json

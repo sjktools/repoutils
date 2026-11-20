@@ -24,9 +24,10 @@ def describe(info: build_info.BuildInfo) -> list[str]:
         f"Python: {platform.python_version()} ({sys.executable})",
     ]
     if info.checkout is not None:
+        source = "Git" if info.commit is not None else "Git, which gave none"
         lines.append(
             f"Running from the source checkout in {info.checkout}, so the version is from its pyproject.toml"
-            " and the commit from Git."
+            f" and the commit from {source}."
         )
     return lines
 

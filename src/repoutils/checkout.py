@@ -37,11 +37,12 @@ def git_env() -> dict[str, str]:
 
 def head_commit(directory: Path) -> tuple[str, bool] | None:
     """The commit checked out in the Git repository that holds `directory`, and
-    whether anything under `directory` differs from it, untracked files included.
-    None if Git isn't installed, or `directory` isn't in a repository with a commit."""
+        whether anything under `directory` differs from it, untracked files included
+    (whatever the status.showUntrackedFiles setting).
+        None if Git isn't installed, or `directory` isn't in a repository with a commit."""
     try:
         commit = _git(directory, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
-        status = _git(directory, "status", "--porcelain", "--", ".")
+        status = _git(directory, "status", "--porcelain", "--untracked-files=normal", "--", ".")
     except (FileNotFoundError, subprocess.CalledProcessError):
         return None
     return commit.strip(), bool(status.strip())

@@ -29,16 +29,23 @@ class HeadCommitTests(TestCase):
         (repo / "file.txt").write_text(name)
         for args in (["init", "-q"], ["add", "-A"], ["commit", "-qm", name]):
             git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid"]
-            subprocess.run([*git, *args], cwd=repo, check=True, capture_output=True)
+            subprocess.run([*git, *args], cwd=repo, check=True, capture_output=True, env=git_env())
         return repo
 
     def head(self, repo: Path) -> str:
-        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True).stdout
+        git = ["git", "rev-parse", "HEAD"]
+        return subprocess.run(git, cwd=repo, check=True, capture_output=True, text=True, env=git_env()).stdout
 
     def test_the_commit_and_whether_it_has_changes(self) -> None:
         repo = self.repo("a")
         self.assertEqual(head_commit(repo), (self.head(repo).strip(), False))
         (repo / "file.txt").write_text("changed")
+        self.assertEqual(head_commit(repo), (self.head(repo).strip(), True))
+
+    def test_untracked_files_count_whatever_the_config(self) -> None:
+        repo = self.repo("a")
+        subprocess.run(["git", "config", "status.showUntrackedFiles", "no"], cwd=repo, check=True, env=git_env())
+        (repo / "new.txt").write_text("")
         self.assertEqual(head_commit(repo), (self.head(repo).strip(), True))
 
     def test_reads_the_directory_rather_than_git_dir(self) -> None:

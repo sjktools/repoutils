@@ -85,12 +85,13 @@ def test_describe_a_build(dirty: bool | None, changes: str) -> None:
     assert len(lines) == 5
 
 
-def test_describe_a_checkout() -> None:
-    lines = version.describe(BuildInfo(None, None, None, ROOT))
+@pytest.mark.parametrize(("commit", "source"), [(COMMIT, "Git"), (None, "Git, which gave none")])
+def test_describe_a_checkout(commit: str | None, source: str) -> None:
+    lines = version.describe(BuildInfo(None, commit, None, ROOT))
     assert lines[0] == "Version: unknown"
     assert lines[-1] == (
         f"Running from the source checkout in {ROOT},"
-        " so the version is from its pyproject.toml and the commit from Git."
+        f" so the version is from its pyproject.toml and the commit from {source}."
     )
 
 
@@ -103,9 +104,7 @@ def test_version_command_from_this_checkout(capsys: pytest.CaptureFixture[str]) 
 
 def test_version_from_an_installed_build(tmp_path: Path) -> None:
     # Runs the wheel of a real build, so the hook and the reader agree on the file.
-    subprocess.run(
-        ["uv", "build", "--wheel", "--quiet", "--out-dir", str(tmp_path), str(ROOT)], check=True, capture_output=True
-    )
+    subprocess.run(["uv", "build", "--wheel", "--quiet", "--out-dir", str(tmp_path), str(ROOT)], check=True)
     (wheel,) = tmp_path.glob("repoutils-*.whl")
     # -I and -S keep out this checkout and the editable install, so only the wheel has repoutils.
     code = (

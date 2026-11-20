@@ -4,6 +4,7 @@ ways a build can meet Git."""
 import json
 import subprocess
 import tarfile
+import tempfile
 import tomllib
 import zipfile
 from pathlib import Path
@@ -127,7 +128,8 @@ def test_without_git_the_commit_is_unknown(tmp_path: Path) -> None:
 
 
 def test_the_hook_cleans_up_its_temporary_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("TMPDIR", str(tmp_path / "tmp"))
+    # tempfile caches its directory, so TMPDIR may be too late.
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "tmp"))
     (tmp_path / "tmp").mkdir()
     project = _repo(_project(tmp_path / "project"))
     _wheel(project, tmp_path / "dist")

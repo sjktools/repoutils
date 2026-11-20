@@ -162,6 +162,7 @@ On `main`, that would reach the jobs that publish, tag or bump a release, which 
 `repoutils autofix <PR>` starts a fix run as the comment does, for a client that can't post the comment, such as Claude Code on the web, whose comments get a footer.
 It finds the push run that GitHub starts by `fix-push.yml`'s run name, which names the fix run, so keep the command and the workflow in step.
 If the fix run was started by `github-actions[bot]`, or no push run appears within two minutes, the command starts `fix-push.yml` on `main` itself.
+`fix-push.yml` runs one at a time for each fix run, so if GitHub's own push run also turns up late, the second run finds the fixes pushed and stops without a comment.
 
 `bump-uv.yml` runs weekly, after Dependabot's uv run, and opens a PR that bumps uv to Dependabot's version with `repoutils dependabot-uv bump --pr`.
 Its `bump` job re-locks with the new uv and no token that can write, and hands `uv.lock` to its `push` job as an artifact.

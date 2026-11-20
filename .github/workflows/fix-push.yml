@@ -35,8 +35,15 @@ on:
     workflows: [PR Fixes]
     types: [completed]
 
+# `repoutils autofix` finds the run for the fix run it started by this name, so
+# keep the two in step.
+run-name: "PR Fixes Push for run ${{ github.event.workflow_run.id || inputs.run-id }}"
+
+# By fix run, so that two push runs for one fix run (a late workflow_run and
+# `repoutils autofix` starting one itself) go one after the other, and the
+# second finds the first already pushed (see check-pr).
 concurrency:
-  group: fix-push-${{ github.event.workflow_run.head_branch || inputs.run-id }}
+  group: fix-push-${{ github.event.workflow_run.id || inputs.run-id }}
 
 permissions: {}
 
@@ -64,6 +71,7 @@ jobs:
       url: ${{ steps.read-run.outputs.url }}
       number: ${{ steps.find-pr.outputs.number }}
       fixes: ${{ steps.check-pr.outputs.fixes }}
+      already_pushed: ${{ steps.check-pr.outputs.already_pushed }}
 
     steps:
       # Everything about the run comes from the API, which GitHub sets, rather
@@ -192,6 +200,24 @@ jobs:
           HEAD_SHA: ${{ steps.find-pr.outputs.head_sha }}
         run: |
           if [ "$HEAD_SHA" != "$START_SHA" ]; then
+            # Another push run for this fix run may have pushed its fixes
+            # already. That's not a failure, and the other run reports it.
+            # The run name names the fix run (see run-name). No status filter,
+            # as GitHub caps a filtered listing at 1,000 runs; the jobs show
+            # whether a run pushed.
+            others=$(TITLE="PR Fixes Push for run $RUN_ID" gh api --method GET --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/fix-push.yml/runs" -F per_page=100 \
+              --jq ".workflow_runs[] | select(.display_title == env.TITLE and .id != $GITHUB_RUN_ID) | .id")
+            for other in $others; do
+              pushed=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$other/jobs" \
+                --jq '[.jobs[] | select(.name == "push" and .conclusion == "success")] | length')
+              if [ "$pushed" != 0 ]; then
+                echo "Run $other already pushed PR Fixes run $RUN_ID's fixes to $BRANCH."
+                echo "fixes=false" >> "$GITHUB_OUTPUT"
+                echo "already_pushed=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            done
             echo "::error::Branch $BRANCH is at $HEAD_SHA, not $START_SHA, where PR Fixes started; it has moved on, so run PR Fixes again."
             exit 1
           fi
@@ -279,6 +305,7 @@ jobs:
     if: >-
       always() &&
       needs.resolve.outputs.branch != '' &&
+      needs.resolve.outputs.already_pushed != 'true' &&
       contains(fromJSON('["success", "failure", "timed_out"]'), needs.resolve.outputs.conclusion)
     runs-on: ubuntu-latest
     permissions:

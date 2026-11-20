@@ -83,11 +83,16 @@ def export_remote(
     )
     found = workflow_summaries.artifacts(repo, run_id, token, ARTIFACT_PREFIX)
     plaintexts: list[bytes] = []
+    saved: set[Path] = set()
     for artifact in found:
         for path, data in workflow_summaries.files(artifact, token):
             if save is not None:
                 # Only the file's name, so a path in the zip can't point outside save.
                 target = save / PurePosixPath(path).name
+                if target in saved:
+                    # Rather than overwrite one backup with another, and then delete both artifacts.
+                    raise ValueError(f"two files in run {run_id}'s artifacts would both be saved as {target}")
+                saved.add(target)
                 target.write_bytes(data)
                 print(f"Saved {artifact['name']}/{path} to {target}", file=sys.stderr)
             if identities:

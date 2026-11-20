@@ -175,6 +175,14 @@ def test_missing_age_starts_nothing(fake: FakeGitHub) -> None:
         secret_export_remote.decrypt("/no/age", [Path("/k/id_ed25519")], b"")
 
 
+def test_save_rejects_two_files_with_one_name(fake: FakeGitHub, tmp_path: Path) -> None:
+    fake.zips[f"{API}/zip/secrets-repository"] = _zip({"other/secrets-release.toml.age": b"y"})
+    with pytest.raises(ValueError, match="would both be saved as .*secrets-release.toml.age"):
+        _remote(identities=[], save=tmp_path)
+    assert (tmp_path / "secrets-release.toml.age").read_bytes() == b"[environments.release]\n"
+    assert all(method != "DELETE" for method, _ in fake.calls)
+
+
 def test_save_creates_the_directory(fake: FakeGitHub, tmp_path: Path) -> None:
     assert _remote(identities=[], save=tmp_path / "new" / "dir") == 0
     assert (tmp_path / "new" / "dir" / "secrets-release.toml.age").exists()

@@ -58,7 +58,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `rulesets` | Checks, creates or updates the branch and tag rulesets defined in `pyproject.toml`, or prints the current rulesets of the repository. |
 | `environments` | Checks, creates or updates the deployment environments defined in `pyproject.toml`, or prints the current environments of the repository. |
 | `actions-settings` | Checks or updates the GitHub Actions settings defined in `pyproject.toml`, or prints the current settings of the repository. |
-| `secrets` | Checks that the repository has the Actions, Dependabot and environment secrets listed in `pyproject.toml`, or prints the secret names in the repository. Also checks that workflows use only those secrets, inspects token secrets in a workflow (or starts that workflow and prints its report), or exports secret values encrypted with `age`. |
+| `secrets` | Checks that the repository has the Actions, Dependabot and environment secrets listed in `pyproject.toml`, or prints the secret names in the repository. Also checks that workflows use only those secrets, inspects token secrets in a workflow (or starts that workflow and prints its report), or exports secret values encrypted with `age` (or starts that workflow and decrypts its backup). |
 | `variables` | Checks that the repository has the Actions and environment variables listed in `pyproject.toml` with non-empty values, or prints the variable names in the repository. Also checks that workflows use only those variables. |
 | `deploy-keys` | Checks or creates the deploy keys declared in `pyproject.toml` and the secrets that store their private keys, or prints the deploy keys in the repository. |
 | `security-settings` | Checks or updates the security settings defined in `pyproject.toml` (such as secret protection), or prints the current security settings of the repository. |
@@ -72,7 +72,7 @@ These commands require a GitHub token:
 
 These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when `$GITHUB_TOKEN` is not set.
 `wait-for-base-coverage` sends `$GITHUB_TOKEN` when it is set, and does not run `gh auth token`.
-Of the `secrets` and `variables` subcommands, only `check`, `dump` and `secrets inspect-remote` use the token.
+Of the `secrets` and `variables` subcommands, only `check`, `dump`, `secrets inspect-remote` and `secrets export-remote` use the token.
 `dependabot-uv bump --version <version>` uses the token only with `--pr`.
 With `--pr`, `dependabot-uv bump` and `github-releases bump` also need the token to have the Pull requests `write` permission.
 Their `git push` to `origin` uses Git's own credentials, which need the Contents `write` permission.
@@ -808,6 +808,7 @@ It starts the workflow that runs `inspect` (`--workflow FILE`, default `inspect-
 Then it prints the step summaries that the jobs of the run upload as `step-summaries-*` artifacts.
 GitHub can hold a run for approval, and a job can wait for approval to deploy to an environment.
 In both cases, `inspect-remote` prints the address of the run, where you can approve it, and continues to wait.
+GitHub can answer that a run it has just started does not exist, so for 30 seconds after it starts the workflow, `inspect-remote` treats that answer as a delay and asks again.
 Pass `--run-id ID` to print the summaries of an existing run instead of starting one.
 `inspect-remote` fails in these cases:
 
@@ -837,6 +838,27 @@ The command writes the exported secret names and the decryption command to `$GIT
 The command writes the encrypted file only to the runner, so add a workflow step after `export` to upload that file as a workflow artifact.
 Any signed-in GitHub user can download artifacts from a public repository, so set a short `retention-days` and delete the artifact after download.
 Deleting old artifacts prevents a future compromise of the private key from decrypting earlier backups left on GitHub.
+
+`repoutils secrets export-remote` runs `export` from your own machine, and prints the decrypted secrets.
+It starts the workflow that runs `export` (`--workflow FILE`, default `export-secrets.yml`) and waits for the run, in the same way as `inspect-remote`, with the same `--ref`, `--run-id`, `--timeout` and `--interval` options.
+Then it downloads the encrypted files that the jobs of the run upload as `secrets-*` artifacts, and decrypts each file with `age`.
+It decrypts with `~/.ssh/id_ed25519` and `~/.ssh/id_rsa`, whichever of the two files exist, or with each `--identity FILE` instead.
+It writes the plaintext only to standard output, as one TOML document with a table for the repository and for each environment.
+If any file fails to decrypt, it prints no secrets.
+Pass `--save DIR` to also write the encrypted files to `DIR`, which the command creates if it does not exist.
+Each file replaces any earlier file of the same name in `DIR`, so the latest backup replaces an earlier one.
+When it finds no private key and you pass `--save DIR`, it only saves the encrypted files.
+When it finds no private key and you do not pass `--save DIR`, it fails before it starts the workflow.
+After it decrypts or saves every file, it deletes the `secrets-*` artifacts from the run, unless you pass `--keep-artifacts`.
+`export-remote` fails in these cases:
+
+- The run does not succeed.
+- The run keeps no `secrets-*` artifacts, for example because it ran on a branch other than `main`, where the jobs of `export-secrets.yml` do not run.
+- The run does not finish within 30 minutes (`--timeout MINUTES`).
+- `age` fails to decrypt a file.
+
+It uses `$GITHUB_TOKEN`, or `gh auth token` when that variable is not set, and the token needs the Actions write permission to start the workflow and to delete the artifacts.
+With `--run-id` and `--keep-artifacts`, the token needs only the Actions read permission.
 
 ### Variables
 

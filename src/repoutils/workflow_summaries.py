@@ -15,6 +15,7 @@ import io
 import math
 import os
 import sys
+import urllib.error
 import zipfile
 from dataclasses import dataclass
 from time import monotonic, sleep
@@ -26,6 +27,10 @@ DEFAULT_WORKFLOW = "inspect-secrets.yml"
 # The prefix of the artifacts that hold a run's step summaries (see AGENTS.md).
 ARTIFACT_PREFIX = "step-summaries-"
 PER_PAGE = 100
+# How long a run just dispatched can answer 404 before GitHub serves it, and
+# how often to ask again meanwhile.
+NOT_FOUND_GRACE = 30.0
+NOT_FOUND_RETRY = 1.0
 
 
 @dataclass(frozen=True)
@@ -59,14 +64,34 @@ def _held(run: dict[str, Any]) -> str | None:
     return None
 
 
-def wait(repo: str, run_id: int, token: str, *, interval: float, timeout: float) -> dict[str, Any]:
+def wait(
+    repo: str, run_id: int, token: str, *, interval: float, timeout: float, just_started: bool = False
+) -> dict[str, Any]:
     """Poll the run until it completes, and return it. Raises TimeoutError
-    after timeout seconds."""
+    after timeout seconds. If just_started, a 404 for the first
+    NOT_FOUND_GRACE seconds means GitHub doesn't serve the new run yet, so it
+    asks again."""
     url = f"{github.API_URL}/repos/{repo}/actions/runs/{run_id}"
-    deadline = monotonic() + timeout
+    start = monotonic()
+    deadline = start + timeout
     told = None
     while True:
-        run: dict[str, Any] = github.request("GET", url, token)
+        try:
+            run: dict[str, Any] = github.request("GET", url, token)
+        except urllib.error.HTTPError as e:
+            if not just_started or e.code != 404:
+                raise
+            now = monotonic()
+            # The timeout comes first, so a run's whole wait always ends in TimeoutError.
+            left = deadline - now
+            if left <= 0:
+                e.close()
+                raise TimeoutError(f"GitHub didn't serve run {run_id} within {timeout:g} seconds") from None
+            if now - start >= NOT_FOUND_GRACE:
+                raise
+            e.close()
+            sleep(min(NOT_FOUND_RETRY, left))
+            continue
         held = _held(run)
         if held is not None and held != told:
             print(f"Waiting: {held}. Approve it at {run.get('html_url')}", file=sys.stderr)
@@ -79,38 +104,67 @@ def wait(repo: str, run_id: int, token: str, *, interval: float, timeout: float)
         sleep(min(interval, left))
 
 
-def summaries(repo: str, run_id: int, token: str) -> list[Summary]:
-    """The step summaries in the run's step-summaries-* artifacts, by artifact
-    name and then path."""
+def artifacts(repo: str, run_id: int, token: str, prefix: str) -> list[dict[str, Any]]:
+    """The run's artifacts whose names start with prefix, by name. Raises
+    RuntimeError if one has expired."""
     url = f"{github.API_URL}/repos/{repo}/actions/runs/{run_id}/artifacts?per_page={PER_PAGE}"
-    artifacts: list[dict[str, Any]] = []
+    found: list[dict[str, Any]] = []
     page = 1
     while True:
         batch = github.request("GET", f"{url}&page={page}", token)["artifacts"]
-        artifacts += batch
+        found += batch
         if len(batch) < PER_PAGE:
             break
         page += 1
-    found: list[Summary] = []
-    for artifact in sorted(artifacts, key=lambda a: str(a["name"])):
-        name = str(artifact["name"])
-        if not name.startswith(ARTIFACT_PREFIX):
-            continue
+    wanted = sorted((a for a in found if str(a["name"]).startswith(prefix)), key=lambda a: str(a["name"]))
+    for artifact in wanted:
         if artifact.get("expired"):
-            raise RuntimeError(f"Artifact {name} of run {run_id} has expired")
-        # The API redirects to blob storage, which request_bytes() sends no token to.
-        data = github.request_bytes("GET", str(artifact["archive_download_url"]), token)
-        with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            for info in sorted(archive.infolist(), key=lambda i: i.filename):
-                if not info.is_dir():
-                    text = archive.read(info).decode(errors="replace")
-                    found.append(Summary(name, info.filename, text))
+            raise RuntimeError(f"Artifact {artifact['name']} of run {run_id} has expired")
+    return wanted
+
+
+def files(artifact: dict[str, Any], token: str) -> list[tuple[str, bytes]]:
+    """The files in the artifact's zip, as (path, contents), by path."""
+    # The API redirects to blob storage, which request_bytes() sends no token to.
+    data = github.request_bytes("GET", str(artifact["archive_download_url"]), token)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        infos = sorted(archive.infolist(), key=lambda i: i.filename)
+        return [(info.filename, archive.read(info)) for info in infos if not info.is_dir()]
+
+
+def summaries(repo: str, run_id: int, token: str) -> list[Summary]:
+    """The step summaries in the run's step-summaries-* artifacts, by artifact
+    name and then path."""
+    found: list[Summary] = []
+    for artifact in artifacts(repo, run_id, token, ARTIFACT_PREFIX):
+        for path, data in files(artifact, token):
+            found.append(Summary(str(artifact["name"]), path, data.decode(errors="replace")))
     return found
 
 
 def default_branch(repo: str, token: str) -> str:
     branch: str = github.request("GET", f"{github.API_URL}/repos/{repo}", token)["default_branch"]
     return branch
+
+
+def start(
+    repo: str,
+    token: str,
+    *,
+    workflow: str,
+    ref: str | None,
+    run_id: int | None,
+    interval: float,
+    timeout: float,
+) -> tuple[int, dict[str, Any]]:
+    """Dispatch workflow on ref (default: the default branch), or take the
+    existing run run_id, and wait for it to complete. Returns its ID and the run."""
+    just_started = run_id is None
+    if run_id is None:
+        ref = ref or default_branch(repo, token)
+        run_id = dispatch(repo, workflow, ref, token)
+        print(f"Started {workflow} on {ref}: https://github.com/{repo}/actions/runs/{run_id}", file=sys.stderr)
+    return run_id, wait(repo, run_id, token, interval=interval, timeout=timeout, just_started=just_started)
 
 
 def inspect_remote(
@@ -125,11 +179,7 @@ def inspect_remote(
 ) -> int:
     """Run (or read) the workflow and print its step summaries; exit 0 only
     if the run succeeded and kept some."""
-    if run_id is None:
-        ref = ref or default_branch(repo, token)
-        run_id = dispatch(repo, workflow, ref, token)
-        print(f"Started {workflow} on {ref}: https://github.com/{repo}/actions/runs/{run_id}", file=sys.stderr)
-    run = wait(repo, run_id, token, interval=interval, timeout=timeout)
+    run_id, run = start(repo, token, workflow=workflow, ref=ref, run_id=run_id, interval=interval, timeout=timeout)
     found = summaries(repo, run_id, token)
     for summary in found:
         print(f"<!-- {summary.artifact}/{summary.path} -->")
@@ -158,25 +208,14 @@ def _positive(text: str) -> float:
     return value
 
 
-# argparse has no public name for the type add_subparsers() returns.
-def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:  # pyright: ignore[reportPrivateUsage]
-    """Add the inspect-remote subcommand and its options."""
-    parser = subparsers.add_parser(
-        "inspect-remote",
-        help="run the workflow that inspects the secrets, and print its step summaries",
-        description=f"Dispatch the workflow that runs `secrets inspect` (default {DEFAULT_WORKFLOW}), "
-        f"wait for it, and print the step summaries its jobs keep as {ARTIFACT_PREFIX}* artifacts. "
-        "While GitHub holds the run for approval, print where to approve it and keep waiting. "
-        "Fails unless the run succeeds and keeps some step summaries. "
-        "Uses $GITHUB_TOKEN, defaulting to `gh auth token`, "
-        "which needs the Actions write permission to dispatch, and Actions read for --run-id.",
-    )
+def add_run_options(parser: argparse.ArgumentParser, workflow: str) -> None:
+    """Add the options that pick the repository, workflow and run, and how long to wait for it."""
     parser.add_argument(
         "--repo",
         default=os.environ.get("GITHUB_REPOSITORY"),
         help="owner/name (default: $GITHUB_REPOSITORY, else gh's current repo)",
     )
-    parser.add_argument("--workflow", default=DEFAULT_WORKFLOW, help=f"file name (default: {DEFAULT_WORKFLOW})")
+    parser.add_argument("--workflow", default=workflow, help=f"file name (default: {workflow})")
     parser.add_argument("--ref", help="branch to run it on (default: the repository's default branch)")
     parser.add_argument("--run-id", type=int, help="read this run instead of starting one")
     parser.add_argument(
@@ -193,3 +232,19 @@ def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]"
         metavar="SECONDS",
         help="how often to check on the run (default: 10)",
     )
+
+
+# argparse has no public name for the type add_subparsers() returns.
+def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:  # pyright: ignore[reportPrivateUsage]
+    """Add the inspect-remote subcommand and its options."""
+    parser = subparsers.add_parser(
+        "inspect-remote",
+        help="run the workflow that inspects the secrets, and print its step summaries",
+        description=f"Dispatch the workflow that runs `secrets inspect` (default {DEFAULT_WORKFLOW}), "
+        f"wait for it, and print the step summaries its jobs keep as {ARTIFACT_PREFIX}* artifacts. "
+        "While GitHub holds the run for approval, print where to approve it and keep waiting. "
+        "Fails unless the run succeeds and keeps some step summaries. "
+        "Uses $GITHUB_TOKEN, defaulting to `gh auth token`, "
+        "which needs the Actions write permission to dispatch, and Actions read for --run-id.",
+    )
+    add_run_options(parser, DEFAULT_WORKFLOW)

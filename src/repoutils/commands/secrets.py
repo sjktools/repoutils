@@ -38,6 +38,8 @@ repoutils.secret_inspect).
 summaries (see repoutils.workflow_summaries).
 ``export`` writes the same secrets' values as TOML encrypted with age, for a
 workflow to upload as a backup (see repoutils.secret_export).
+``export-remote`` runs the workflow that runs ``export``, and decrypts and
+prints what it exported (see repoutils.secret_export_remote).
 Stdlib-only, like every repoutils command."""
 
 import argparse
@@ -52,7 +54,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from repoutils import config, github, secret_export, secret_inspect, workflow_summaries, workflows
+from repoutils import (
+    config,
+    github,
+    secret_export,
+    secret_export_remote,
+    secret_inspect,
+    workflow_summaries,
+    workflows,
+)
 from repoutils.commands import environments as environments_command
 from repoutils.docstrings import summary
 
@@ -391,7 +401,7 @@ def main(argv: list[str]) -> int:
         "Organization secrets don't count.",
     )
     subparsers = parser.add_subparsers(
-        dest="mode", required=True, metavar="{check,dump,check-workflows,inspect,inspect-remote,export}"
+        dest="mode", required=True, metavar="{check,dump,check-workflows,inspect,inspect-remote,export,export-remote}"
     )
     check_parser = subparsers.add_parser(
         "check",
@@ -413,6 +423,7 @@ def main(argv: list[str]) -> int:
     secret_inspect.add_parser(subparsers)
     workflow_summaries.add_parser(subparsers)
     secret_export.add_parser(subparsers)
+    secret_export_remote.add_parser(subparsers)
     for sub in (check_parser, dump_parser):
         sub.add_argument(
             "--repo",
@@ -453,6 +464,22 @@ def main(argv: list[str]) -> int:
                 run_id=args.run_id,
                 interval=args.interval,
                 timeout=args.timeout * 60,
+            )
+        if args.mode == "export-remote":
+            token = os.environ.get("GITHUB_TOKEN") or github.gh_output("auth", "token")
+            repo = args.repo or github.gh_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+            return secret_export_remote.export_remote(
+                repo,
+                token,
+                workflow=args.workflow,
+                ref=args.ref,
+                run_id=args.run_id,
+                interval=args.interval,
+                timeout=args.timeout * 60,
+                identities=args.identity or secret_export_remote.default_identities(Path.home()),
+                save=args.save,
+                age=args.age,
+                keep_artifacts=args.keep_artifacts,
             )
         if args.mode == "export":
             listed = _load(Path())

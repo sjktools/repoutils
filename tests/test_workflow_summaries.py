@@ -1,6 +1,8 @@
 import io
 import json
+import urllib.error
 import zipfile
+from email.message import Message
 from typing import Any, override
 
 import pytest
@@ -173,6 +175,78 @@ def test_times_out(monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]) -> No
     with pytest.raises(TimeoutError, match=f"Run 7 hadn't finished after 10 seconds: {PAGE}"):
         _remote(run_id=7, timeout=10)
     assert no_sleep == [5]
+
+
+def _not_found() -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(RUN, 404, "Not Found", Message(), io.BytesIO(b"{}"))
+
+
+def test_retries_a_new_run_that_github_doesnt_serve_yet(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], no_sleep: list[float]
+) -> None:
+    zips = {f"{API}/zip/step-summaries-x": _zip({"s.md": "S"})}
+    fake = FakeGitHub([_done()], [_artifact("step-summaries-x")], zips)
+    _install(monkeypatch, fake)
+    misses = [_not_found(), _not_found()]
+
+    def request(method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        if url == RUN and misses:
+            raise misses.pop()
+        return fake.request(method, url, token, json_body=json_body)
+
+    monkeypatch.setattr(github, "request", request)
+    assert _remote() == 0
+    assert no_sleep == [workflow_summaries.NOT_FOUND_RETRY] * 2
+
+
+def test_gives_up_on_a_404_after_the_grace(monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]) -> None:
+    clock = iter([0.0, 1.0, workflow_summaries.NOT_FOUND_GRACE])
+    monkeypatch.setattr(workflow_summaries, "monotonic", lambda: next(clock))
+
+    def request(*args: object, **kwargs: object) -> Any:
+        raise _not_found()
+
+    monkeypatch.setattr(github, "request", request)
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        workflow_summaries.wait("o/r", 7, "tok", interval=5, timeout=600, just_started=True)
+    raised.value.close()
+    assert no_sleep == [workflow_summaries.NOT_FOUND_RETRY]
+
+
+def test_timeout_inside_the_grace_is_a_timeout(monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]) -> None:
+    clock = iter([0.0, 1.0, 2.0])
+    monkeypatch.setattr(workflow_summaries, "monotonic", lambda: next(clock))
+
+    def request(*args: object, **kwargs: object) -> Any:
+        raise _not_found()
+
+    monkeypatch.setattr(github, "request", request)
+    with pytest.raises(TimeoutError, match="GitHub didn't serve run 7 within 2 seconds"):
+        workflow_summaries.wait("o/r", 7, "tok", interval=5, timeout=2, just_started=True)
+    assert no_sleep == [workflow_summaries.NOT_FOUND_RETRY]
+
+
+def test_timeout_past_the_grace_is_still_a_timeout(monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]) -> None:
+    clock = iter([0.0, 1.0, workflow_summaries.NOT_FOUND_GRACE + 1])
+    monkeypatch.setattr(workflow_summaries, "monotonic", lambda: next(clock))
+
+    def request(*args: object, **kwargs: object) -> Any:
+        raise _not_found()
+
+    monkeypatch.setattr(github, "request", request)
+    with pytest.raises(TimeoutError, match="within 2 seconds"):
+        workflow_summaries.wait("o/r", 7, "tok", interval=5, timeout=2, just_started=True)
+
+
+def test_404_for_an_existing_run_fails_at_once(monkeypatch: pytest.MonkeyPatch, no_sleep: list[float]) -> None:
+    def request(*args: object, **kwargs: object) -> Any:
+        raise _not_found()
+
+    monkeypatch.setattr(github, "request", request)
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        _remote(run_id=7)
+    raised.value.close()
+    assert no_sleep == []
 
 
 @pytest.mark.parametrize("response", [None, {}, {"workflow_run_id": "7"}])

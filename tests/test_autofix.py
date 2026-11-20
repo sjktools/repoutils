@@ -13,7 +13,7 @@ API = github.API_URL
 REPO = f"{API}/repos/o/r"
 FIX_RUN = f"{REPO}/actions/runs/7"
 PUSH_RUN = f"{REPO}/actions/runs/8"
-PUSH_RUNS = f"{REPO}/actions/workflows/fix-push.yml/runs?per_page=100"
+PUSH_RUNS = f"{REPO}/actions/workflows/fix-push.yml/runs?per_page=100&page=1"
 FIX_PAGE = "https://github.com/o/r/actions/runs/7"
 PUSH_PAGE = "https://github.com/o/r/actions/runs/8"
 
@@ -191,6 +191,30 @@ def test_failed_push_run(
     assert capsys.readouterr().err.endswith(
         f"fix-push.yml run 8 finished with conclusion failure, so the fixes may not have been pushed: {PUSH_PAGE}\n"
     )
+
+
+def test_find_push_run_reads_every_page_since_the_fix_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    since = f"{REPO}/actions/workflows/fix-push.yml/runs?per_page=100&created=%3E%3D2026-11-20T22%3A00%3A00Z"
+    pages = {
+        f"{since}&page=1": [{"id": n, "display_title": "other"} for n in range(autofix.PER_PAGE)],
+        f"{since}&page=2": [_push_run()],
+    }
+
+    def request(method: str, url: str, token: str) -> Any:
+        return {"workflow_runs": pages[url]}
+
+    monkeypatch.setattr(github, "request", request)
+    assert autofix.find_push_run("o/r", "fix-push.yml", 7, "tok", "2026-11-20T22:00:00Z") == _push_run()
+    pages[f"{since}&page=2"] = []
+    assert autofix.find_push_run("o/r", "fix-push.yml", 7, "tok", "2026-11-20T22:00:00Z") is None
+
+
+def test_starts_no_push_run_after_the_timeout(monkeypatch: pytest.MonkeyPatch, slept: list[float]) -> None:
+    fake = FakeGitHub(prs=[_pr()], fix_runs=[_done(7)], push_lists=[[]], push_runs=[])
+    _install(monkeypatch, fake)
+    with pytest.raises(TimeoutError, match="Gave up before starting fix-push.yml for run 7"):
+        autofix.autofix("o/r", 5, "tok", interval=10, timeout=60)
+    assert len(fake.posts()) == 1
 
 
 def test_times_out(monkeypatch: pytest.MonkeyPatch, slept: list[float]) -> None:

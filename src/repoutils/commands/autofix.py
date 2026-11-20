@@ -20,6 +20,7 @@ import os
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 from time import monotonic, sleep
 from typing import Any
 
@@ -30,6 +31,7 @@ FIX_WORKFLOW = "fix.yml"
 PUSH_WORKFLOW = "fix-push.yml"
 # How long to wait for GitHub to start the push run before starting it here.
 PUSH_GRACE = 120.0
+PER_PAGE = 100
 # GitHub starts no workflow_run workflow for a run this account started.
 GITHUB_ACTIONS_BOT = "github-actions[bot]"
 
@@ -54,15 +56,26 @@ def check_pr(repo: str, pr: int, token: str) -> tuple[str, str]:
     return branch, str(head["sha"])
 
 
-def find_push_run(repo: str, push_workflow: str, fix_run_id: int, token: str) -> dict[str, Any] | None:
-    """The newest run of push_workflow for fix run fix_run_id, if there is one yet."""
-    url = f"{github.API_URL}/repos/{repo}/actions/workflows/{push_workflow}/runs?per_page=100"
+def find_push_run(
+    repo: str, push_workflow: str, fix_run_id: int, token: str, created: str | None = None
+) -> dict[str, Any] | None:
+    """The newest run of push_workflow for fix run fix_run_id, if there is one
+    yet, looking only at runs created at or after created (a timestamp) if given."""
+    url = f"{github.API_URL}/repos/{repo}/actions/workflows/{push_workflow}/runs?per_page={PER_PAGE}"
+    if created:
+        # A push run starts after its fix run, so older runs needn't be read.
+        url += f"&created=%3E%3D{urllib.parse.quote(created)}"
     name = push_run_name(fix_run_id)
-    for run in github.request("GET", url, token)["workflow_runs"]:
-        if run.get("display_title") == name:
-            found: dict[str, Any] = run
-            return found
-    return None
+    page = 1
+    while True:
+        batch = github.request("GET", f"{url}&page={page}", token)["workflow_runs"]
+        for run in batch:
+            if run.get("display_title") == name:
+                found: dict[str, Any] = run
+                return found
+        if len(batch) < PER_PAGE:
+            return None
+        page += 1
 
 
 def start_push(
@@ -79,7 +92,7 @@ def start_push(
     if (fix_run.get("triggering_actor") or {}).get("login") != GITHUB_ACTIONS_BOT:
         give_up = min(monotonic() + PUSH_GRACE, deadline)
         while True:
-            run = find_push_run(repo, push_workflow, fix_run_id, token)
+            run = find_push_run(repo, push_workflow, fix_run_id, token, fix_run.get("created_at"))
             if run is not None:
                 return int(run["id"])
             left = give_up - monotonic()
@@ -87,6 +100,9 @@ def start_push(
                 break
             sleep(min(interval, left))
         print(f"GitHub didn't start {push_workflow} for run {fix_run_id}, so starting it here", file=sys.stderr)
+    # Rather than start a push nobody waits for, which could push after the command gave up.
+    if monotonic() >= deadline:
+        raise TimeoutError(f"Gave up before starting {push_workflow} for run {fix_run_id}")
     default_branch = workflow_summaries.default_branch(repo, token)
     return workflow_summaries.dispatch(repo, push_workflow, default_branch, token, {"run-id": str(fix_run_id)})
 

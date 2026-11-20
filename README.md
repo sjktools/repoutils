@@ -190,7 +190,7 @@ jobs:
 
 ### Running PR Fixes with a command
 
-In this repository, a `/autofix` comment on a pull request starts the PR Fixes workflow (`fix.yml`) on the branch of the pull request.
+In this repository, a `/autofix` comment on a pull request, from a commenter whose author association is `OWNER` or `MEMBER`, starts the PR Fixes workflow (`fix.yml`) on the branch of the pull request.
 That workflow runs `just fix` with no secrets, and uploads its commits as an artifact.
 The PR Fixes Push workflow (`fix-push.yml`) on the default branch then checks those commits and pushes them to the branch.
 

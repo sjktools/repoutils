@@ -202,9 +202,11 @@ jobs:
           if [ "$HEAD_SHA" != "$START_SHA" ]; then
             # Another push run for this fix run may have pushed its fixes
             # already. That's not a failure, and the other run reports it.
-            # The run name names the fix run (see run-name).
+            # The run name names the fix run (see run-name). No status filter,
+            # as GitHub caps a filtered listing at 1,000 runs; the jobs show
+            # whether a run pushed.
             others=$(TITLE="PR Fixes Push for run $RUN_ID" gh api --method GET --paginate \
-              "repos/$GITHUB_REPOSITORY/actions/workflows/fix-push.yml/runs" -f status=completed -F per_page=100 \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/fix-push.yml/runs" -F per_page=100 \
               --jq ".workflow_runs[] | select(.display_title == env.TITLE and .id != $GITHUB_RUN_ID) | .id")
             for other in $others; do
               pushed=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$other/jobs" \

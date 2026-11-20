@@ -49,7 +49,8 @@ def check_pr(repo: str, pr: int, token: str) -> tuple[str, str]:
     branch = str(head["ref"])
     if data["state"] != "open":
         raise ValueError(f"pull request #{pr} is not open")
-    if (head.get("repo") or {}).get("full_name") != repo:
+    # By ID, as --repo may differ from GitHub's name in case.
+    if (head.get("repo") or {}).get("id") != data["base"]["repo"]["id"]:
         raise ValueError(f"pull request #{pr} is from a fork, which PR Fixes can't push to")
     if branch == data["base"]["repo"]["default_branch"]:
         raise ValueError(f"pull request #{pr}'s branch is {branch}, which PR Fixes doesn't push to")

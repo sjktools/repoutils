@@ -21,8 +21,8 @@ PUSH_PAGE = "https://github.com/o/r/actions/runs/8"
 def _pr(**overrides: Any) -> dict[str, Any]:
     pr: dict[str, Any] = {
         "state": "open",
-        "head": {"ref": "feature", "sha": "aaa", "repo": {"full_name": "o/r"}},
-        "base": {"repo": {"default_branch": "main"}},
+        "head": {"ref": "feature", "sha": "aaa", "repo": {"id": 1}},
+        "base": {"repo": {"id": 1, "default_branch": "main"}},
     }
     pr.update(overrides)
     return pr
@@ -103,7 +103,7 @@ def test_waits_for_the_push_run_github_starts(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], slept: list[float]
 ) -> None:
     fake = FakeGitHub(
-        prs=[_pr(), _pr(head={"ref": "feature", "sha": "bbb", "repo": {"full_name": "o/r"}})],
+        prs=[_pr(), _pr(head={"ref": "feature", "sha": "bbb", "repo": {"id": 1}})],
         fix_runs=[{"status": "in_progress"}, _done(7)],
         # The push run for another fix run doesn't count.
         push_lists=[[], [_push_run(6)], [_push_run(6), _push_run()]],
@@ -230,9 +230,9 @@ def test_times_out(monkeypatch: pytest.MonkeyPatch, slept: list[float]) -> None:
     ("pr", "message"),
     [
         (_pr(state="closed"), "pull request #5 is not open"),
-        (_pr(head={"ref": "feature", "sha": "aaa", "repo": {"full_name": "fork/r"}}), "is from a fork"),
+        (_pr(head={"ref": "feature", "sha": "aaa", "repo": {"id": 2}}), "is from a fork"),
         (_pr(head={"ref": "feature", "sha": "aaa", "repo": None}), "is from a fork"),
-        (_pr(head={"ref": "main", "sha": "aaa", "repo": {"full_name": "o/r"}}), "branch is main"),
+        (_pr(head={"ref": "main", "sha": "aaa", "repo": {"id": 1}}), "branch is main"),
     ],
 )
 def test_refuses_a_pr_it_cannot_push_to(monkeypatch: pytest.MonkeyPatch, pr: dict[str, object], message: str) -> None:

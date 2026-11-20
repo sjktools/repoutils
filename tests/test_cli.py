@@ -128,6 +128,7 @@ def test_check_screenshots_dir(monkeypatch: pytest.MonkeyPatch, capsys: pytest.C
         (["check-blame-ignore-revs", "a", "b"], "[target]"),
         (["dependabot-relock"], "base-ref"),
         (["dependabot-uv"], "{show,check,bump}"),
+        (["github-releases"], "{check,bump}"),
         (["requirements-min-versions", "neither"], "{check,fix}"),
         (["check-attestations", "a", "b"], "[dist]"),
         (["labels"], "{check,ensure,dump}"),
@@ -199,6 +200,12 @@ def test_comment_posters(
             "[tool.repoutils.lock-platforms]\nsupported = 3\n",
             "[tool.repoutils.lock-platforms] supported must be a list of strings",
             True,
+        ),
+        (
+            ["github-releases", "check"],
+            '[tool.repoutils.github-releases.x]\nrepo = "o/r"\nfile = "pins.toml"\nassets = []\n',
+            "[tool.repoutils.github-releases.x] assets must list at least one glob pattern",
+            False,
         ),
         (
             ["post-comment", "1", "report.md", "--name", "x"],

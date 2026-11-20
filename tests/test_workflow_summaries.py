@@ -207,8 +207,9 @@ def test_gives_up_on_a_404_after_the_grace(monkeypatch: pytest.MonkeyPatch, no_s
         raise _not_found()
 
     monkeypatch.setattr(github, "request", request)
-    with pytest.raises(urllib.error.HTTPError):
+    with pytest.raises(urllib.error.HTTPError) as raised:
         workflow_summaries.wait("o/r", 7, "tok", interval=5, timeout=600, just_started=True)
+    raised.value.close()
     assert no_sleep == [workflow_summaries.NOT_FOUND_RETRY]
 
 
@@ -217,8 +218,9 @@ def test_404_for_an_existing_run_fails_at_once(monkeypatch: pytest.MonkeyPatch, 
         raise _not_found()
 
     monkeypatch.setattr(github, "request", request)
-    with pytest.raises(urllib.error.HTTPError):
+    with pytest.raises(urllib.error.HTTPError) as raised:
         _remote(run_id=7)
+    raised.value.close()
     assert no_sleep == []
 
 

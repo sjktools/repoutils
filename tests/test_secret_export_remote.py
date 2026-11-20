@@ -236,7 +236,8 @@ def test_command_line_finds_keys_in_home(
     argv = ["export-remote", "--repo", "o/r", "--ref", "dev", "--timeout", "1", "--age", "/bin/age"]
     assert secrets.main(argv) == 0
     assert commands[0] == ["/bin/age", "--decrypt", "--identity", str(tmp_path / ".ssh" / "id_ed25519")]
-    # It lists the secret names set at each level only after checking it can decrypt.
+    # Starting a run lists the secret names set at each level (test_command_line_reports_errors
+    # shows it lists none when it can't decrypt).
     assert {url for _, url in fake.calls if url in NAME_PAGES} == set(NAME_PAGES)
     assert "[ACTIONS]" in capsys.readouterr().out
 

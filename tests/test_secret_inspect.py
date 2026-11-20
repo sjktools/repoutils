@@ -2,7 +2,6 @@ import base64
 import hashlib
 import io
 import json
-import re
 import struct
 import subprocess
 import urllib.error
@@ -13,7 +12,7 @@ from typing import Any, override
 
 import pytest
 
-from repoutils import github, secret_inspect
+from repoutils import github, secret_inspect, secret_levels
 from repoutils.commands import secrets
 from repoutils.secret_inspect import Finding, Response
 
@@ -315,6 +314,12 @@ def test_read_secrets_errors(text: str) -> None:
         secret_inspect.read_secrets(text)
 
 
+@pytest.fixture(autouse=True)
+def _no_secret_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start each test without the $SECRET_NAMES a workflow running the tests could set."""
+    monkeypatch.delenv("SECRET_NAMES", raising=False)
+
+
 def _inspect(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, values: dict[str, str], argv: list[str], api: FakeAPI
 ) -> int:
@@ -409,7 +414,7 @@ def test_inspect_environment_expects_repository_secrets(
     values = {"CLASSIC": CLASSIC, "ORG_TOKEN": "o", "DEPLOY_KEY": "k", "APP": "a"}
     assert _inspect(tmp_path, monkeypatch, values, ["--environment", "release"], FakeAPI({})) == 0
     assert capsys.readouterr().out == (
-        secret_inspect.unknown_levels("secrets inspect-remote") + "\n"
+        secret_levels.unknown_levels("secrets inspect-remote") + "\n"
         "DEPLOY_KEY: not a GitHub token or SSH key\n"
         "APP: not a GitHub token or SSH key\n"
         "Inspected 2 secret(s), with no problems.\n"
@@ -437,7 +442,7 @@ def test_inspect_environment(
 # The names set at each level, as `secrets inspect-remote` passes them: the
 # repository sets CLASSIC, FINE and STRAY, and the release environment sets
 # DEPLOY_KEY, FINE (overriding the repository's) and its own EXTRA, but not APP.
-LEVELS = secret_inspect.names_json(["CLASSIC", "FINE", "STRAY"], {"Release": ["DEPLOY_KEY", "FINE", "EXTRA"]})
+LEVELS = secret_levels.names_json(["CLASSIC", "FINE", "STRAY"], {"Release": ["DEPLOY_KEY", "FINE", "EXTRA"]})
 
 
 def test_inspect_environment_tells_inherited_secrets_apart(
@@ -472,7 +477,7 @@ def test_inspect_environment_tells_inherited_secrets_apart(
 def test_inspect_environment_names_the_repository_as_the_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    levels = secret_inspect.names_json(["APP"], {"release": ["DEPLOY_KEY"]})
+    levels = secret_levels.names_json(["APP"], {"release": ["DEPLOY_KEY"]})
     monkeypatch.setenv("SECRET_NAMES", levels)
     values = {"DEPLOY_KEY": "k", "APP": APP}
     assert _inspect(tmp_path, monkeypatch, values, ["--environment", "release"], FakeAPI({})) == 0
@@ -497,40 +502,6 @@ def test_inspect_missing_secret(
     monkeypatch.setenv("SECRET_NAMES", LEVELS)
     assert _inspect(tmp_path, monkeypatch, {"DEPLOY_KEY": "k"}, ["--environment", "release"], FakeAPI({})) == 0
     assert "APP: missing\n" in capsys.readouterr().out
-
-
-def test_names_json_round_trips() -> None:
-    levels = secret_inspect.read_levels(LEVELS)
-    assert levels == secret_inspect.Levels(
-        frozenset({"CLASSIC", "FINE", "STRAY"}), {"release": frozenset({"DEPLOY_KEY", "FINE", "EXTRA"})}
-    )
-    assert levels is not None
-    assert levels.environment("RELEASE") == frozenset({"DEPLOY_KEY", "FINE", "EXTRA"})
-    # An environment the caller didn't list sets nothing.
-    assert levels.environment("pypi") == frozenset()
-    assert levels.source("fine") == "the repository's"
-    assert levels.source("ORG_TOKEN") == "the organization's"
-
-
-@pytest.mark.parametrize("text", [None, ""])
-def test_read_levels_without_names(text: str | None) -> None:
-    assert secret_inspect.read_levels(text) is None
-
-
-@pytest.mark.parametrize(
-    ("text", "error"),
-    [
-        ("nope", "isn't JSON"),
-        ("[]", "must be a JSON object with actions and environments"),
-        ('{"actions": []}', "must be a JSON object with actions and environments"),
-        ('{"environments": {}}', "$SECRET_NAMES's actions must be a list of names"),
-        ('{"actions": [], "environments": {"release": "A"}}', "environment release must be a list of names"),
-        ('{"actions": [1], "environments": {}}', "actions must be a list of names"),
-    ],
-)
-def test_read_levels_errors(text: str, error: str) -> None:
-    with pytest.raises(ValueError, match=re.escape(error)):
-        secret_inspect.read_levels(text)
 
 
 def test_inspect_bad_levels_fails(

@@ -791,7 +791,7 @@ When `SECRET_NAMES` is set, `inspect --environment NAME` does these things:
 - It warns that a secret which the environment has but does not list is unexpected, even when `actions` or `other` lists it.
 
 An environment secret replaces a repository secret of the same name in the job, so `inspect` reports a secret that both levels have as the secret of the environment.
-When `SECRET_NAMES` is empty or not set, as in a run that you start from the Actions page, `inspect --environment NAME` works as described above, and its report says that it cannot tell inherited secrets apart.
+When `SECRET_NAMES` is empty or not set, as in a run that you start from the Actions page, `inspect --environment NAME` reports each listed secret that the job has as a secret of the environment, and its report says that it cannot tell inherited secrets apart.
 `inspect` without `--environment` ignores `SECRET_NAMES`.
 Workflows not triggered by Dependabot cannot read Dependabot secrets, so `inspect` skips `dependabot`.
 
@@ -829,7 +829,7 @@ Pass `--run-id ID` to print the summaries of an existing run instead of starting
 - The run does not finish within 30 minutes (`--timeout MINUTES`).
 
 It uses `$GITHUB_TOKEN`, or `gh auth token` when that variable is not set, and the token needs the Actions write permission to start the workflow, or only the Actions read permission with `--run-id`.
-To list the secret names for the `secret-names` input, the token also needs the Secrets `read`, Actions `read` and Environments `read` permissions.
+When it starts the workflow, it lists the secret names for the `secret-names` input, so the token also needs the Secrets `read`, Actions `read` and Environments `read` permissions, which `--run-id` does not need.
 Pass `--no-secret-names` to start the workflow without that input, for example when the workflow does not declare it, as GitHub rejects an input that a workflow does not declare.
 
 `repoutils secrets export` also runs inside a GitHub Actions workflow and writes an encrypted backup of the secret values using [age](https://age-encryption.org).

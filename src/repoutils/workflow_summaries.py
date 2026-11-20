@@ -265,7 +265,7 @@ def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]"
         "Fails unless the run succeeds and keeps some step summaries. "
         "Uses $GITHUB_TOKEN, defaulting to `gh auth token`, "
         "which needs the Actions write permission to dispatch, and Actions read for --run-id. "
-        "To pass the workflow the secret names set at each level, it also needs the Secrets, Actions and "
-        "Environments read permissions, unless given --no-secret-names.",
+        "To start a run, it also needs the Secrets, Actions and Environments read permissions, "
+        "to list the secret names set at each level that it passes the workflow, unless given --no-secret-names.",
     )
     add_run_options(parser, DEFAULT_WORKFLOW)

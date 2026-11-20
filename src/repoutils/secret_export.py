@@ -27,7 +27,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from repoutils import config, github, secret_inspect
+from repoutils import config, github, secret_inspect, secret_levels
 
 # The SSH key types age can encrypt to.
 AGE_SSH_TYPES = ("ssh-ed25519", "ssh-rsa")
@@ -148,7 +148,7 @@ def export(
     summary: Path | None = None,
     secrets_json: str | None = None,
     now: datetime | None = None,
-    levels: secret_inspect.Levels | None = None,
+    levels: secret_levels.Levels | None = None,
 ) -> int:
     """Encrypt the secrets in wanted, which the job has in secrets_json (default
     $SECRETS_JSON), into output. listed is every name pyproject.toml lists,
@@ -194,7 +194,7 @@ def export(
     print(f"Exported {len(wanted)} secret(s) to {output}, encrypted to {', '.join(shown)}: {', '.join(wanted)}")
     if unlisted:
         print(f"Not listed in pyproject.toml, so not exported: {', '.join(unlisted)}", file=sys.stderr)
-    note = secret_inspect.unknown_levels("secrets export-remote") if environment is not None and levels is None else ""
+    note = secret_levels.unknown_levels("secrets export-remote") if environment is not None and levels is None else ""
     if note:
         print(note, file=sys.stderr)
     if summary is not None:

@@ -62,6 +62,7 @@ from repoutils import (
     secret_export,
     secret_export_remote,
     secret_inspect,
+    secret_levels,
     workflow_summaries,
     workflows,
 )
@@ -397,7 +398,7 @@ def inspect(listed: Listed, environment: str | None, *, within: int, exit_zero: 
         within=within,
         exit_zero=exit_zero,
         summary=summary,
-        levels=secret_inspect.read_levels(os.environ.get(secret_inspect.NAMES_ENV_VAR)),
+        levels=secret_levels.read_levels(os.environ.get(secret_levels.NAMES_ENV_VAR)),
         environment=environment,
     )
 
@@ -405,7 +406,7 @@ def inspect(listed: Listed, environment: str | None, *, within: int, exit_zero: 
 def secret_names_input(repo: str, token: str) -> dict[str, str]:
     """The workflow inputs that tell its jobs the secret names set at each level."""
     environments = {name: environment_secrets(repo, token, name) for name in repo_environments(repo, token)}
-    names = secret_inspect.names_json(repo_secrets(repo, token, ACTIONS), environments)
+    names = secret_levels.names_json(repo_secrets(repo, token, ACTIONS), environments)
     return {workflow_summaries.SECRET_NAMES_INPUT: names}
 
 
@@ -513,7 +514,7 @@ def main(argv: list[str]) -> int:
                 age=args.age,
                 armor=args.armor,
                 summary=args.summary,
-                levels=secret_inspect.read_levels(os.environ.get(secret_inspect.NAMES_ENV_VAR)),
+                levels=secret_levels.read_levels(os.environ.get(secret_levels.NAMES_ENV_VAR)),
             )
         # dump doesn't read pyproject.toml, so it works before there are any secrets there.
         listed = Listed({}, None) if args.mode == "dump" else _load(Path())

@@ -141,8 +141,8 @@ def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]"
         "Uses $GITHUB_TOKEN, defaulting to `gh auth token`, "
         "which needs the Actions write permission to dispatch and to delete the artifacts, "
         "or only Actions read with --run-id and --keep-artifacts. "
-        "To pass the workflow the secret names set at each level, it also needs the Secrets, Actions and "
-        "Environments read permissions, unless given --no-secret-names.",
+        "To start a run, it also needs the Secrets, Actions and Environments read permissions, "
+        "to list the secret names set at each level that it passes the workflow, unless given --no-secret-names.",
     )
     workflow_summaries.add_run_options(parser, DEFAULT_WORKFLOW)
     parser.add_argument(

@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from repoutils import github, secret_export, secret_inspect
+from repoutils import github, secret_export, secret_inspect, secret_levels
 from repoutils.commands import secrets
 
 NOW = datetime(2026, 11, 15, 2, 30, tzinfo=UTC)
@@ -209,7 +209,7 @@ def test_export_environment_with_levels(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], age: FakeAge
 ) -> None:
     _project(tmp_path, monkeypatch, {**VALUES, "EXTRA": "e"})
-    levels = secret_inspect.names_json(["TOKEN", "STRAY"], {"release": ["RELEASE_TOKEN", "EXTRA"]})
+    levels = secret_levels.names_json(["TOKEN", "STRAY"], {"release": ["RELEASE_TOKEN", "EXTRA"]})
     monkeypatch.setenv("SECRET_NAMES", levels)
     summary = tmp_path / "summary.md"
     argv = ["export", "--environment", "release", "--recipient", "age1abc", "--output", "r.age"]
@@ -233,7 +233,7 @@ def test_export_environment_fails_on_an_inherited_secret(
     source: str,
 ) -> None:
     _project(tmp_path, monkeypatch)
-    monkeypatch.setenv("SECRET_NAMES", secret_inspect.names_json(repository, {"release": []}))
+    monkeypatch.setenv("SECRET_NAMES", secret_levels.names_json(repository, {"release": []}))
     argv = ["export", "--environment", "release", "--recipient", "age1abc", "--output", "r.age"]
     assert secrets.main(argv) == 1
     assert capsys.readouterr().err == (
@@ -251,7 +251,7 @@ def test_export_environment_without_levels_says_so(
     summary = tmp_path / "summary.md"
     argv = ["export", "--environment", "release", "--recipient", "age1abc", "--output", "r.age"]
     assert secrets.main([*argv, "--summary", str(summary)]) == 0
-    note = secret_inspect.unknown_levels("secrets export-remote")
+    note = secret_levels.unknown_levels("secrets export-remote")
     assert f"{note}\n" in capsys.readouterr().err
     assert summary.read_text().startswith(f"## Environment release's secrets\n\n> [!NOTE]\n> {note}\n\nExported")
 
@@ -261,7 +261,7 @@ def test_export_repository_ignores_levels(
 ) -> None:
     # The repository's job exports what it has, as before, as it can't tell the organization's secrets apart.
     _project(tmp_path, monkeypatch)
-    monkeypatch.setenv("SECRET_NAMES", secret_inspect.names_json([], {}))
+    monkeypatch.setenv("SECRET_NAMES", secret_levels.names_json([], {}))
     assert secrets.main(["export", "--recipient", "age1abc", "--output", "out.age"]) == 0
     assert age.plaintext() == {"actions": {"TOKEN": VALUES["TOKEN"], "DEPLOY_KEY": PEM}}
     assert "[!NOTE]" not in capsys.readouterr().err

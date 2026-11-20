@@ -39,6 +39,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `long-files` | Lists the files over a line limit as Markdown (with changed files first), or posts that list to a pull request. |
 | `check-pins` | Fails unless every `setup-uv` and `setup-just` workflow step pins the versions required by `pyproject.toml` and the justfile. |
 | `check-checkout-credentials` | Fails on any `actions/checkout` step that does not set `persist-credentials`. |
+| `autofix` | Starts the PR Fixes workflow on a pull request, waits for the workflow that pushes its fixes, and prints the new head commit of the branch. |
 | `claude-route` | Reads a comment from standard input and prints `review`, `other` or `none` to route between the Claude workflows. |
 | `requirements-min-versions` | Checks or updates the `>=` minimum versions in `pyproject.toml` to match the versions in `uv.lock`. |
 | `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
@@ -68,7 +69,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 These commands require a GitHub token:
 
 - any command that posts to a pull request, and `post-coverage-status`
-- the `github-settings`, `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys`, `security-settings`, `dependabot-uv` and `github-releases` commands
+- the `github-settings`, `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys`, `security-settings`, `dependabot-uv`, `github-releases` and `autofix` commands
 
 These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when `$GITHUB_TOKEN` is not set.
 `wait-for-base-coverage` sends `$GITHUB_TOKEN` when it is set, and does not run `gh auth token`.
@@ -186,6 +187,29 @@ jobs:
   The token needs the Contents `write` and Pull requests `write` permissions.
   If a pins file is in `.github/workflows`, the token also needs the Workflows `write` permission.
 - Do not use the `GITHUB_TOKEN` of the workflow to open the pull request, because GitHub starts no CI for a pull request that a `GITHUB_TOKEN` opens.
+
+### Running PR Fixes with a command
+
+In this repository, a `/autofix` comment on a pull request starts the PR Fixes workflow (`fix.yml`) on the branch of the pull request.
+That workflow runs `just fix` with no secrets, and uploads its commits as an artifact.
+The PR Fixes Push workflow (`fix-push.yml`) on the default branch then checks those commits and pushes them to the branch.
+
+`repoutils autofix <pull request>` does the same as the comment, for a client that can start a workflow but cannot post the exact comment.
+For example, Claude Code on the web adds a footer to each comment that it posts.
+
+- The command starts `fix.yml` on the branch of the pull request, with the head commit and the number of the pull request as inputs.
+  It refuses a pull request that is closed, comes from a fork, or comes from the default branch.
+- When that run succeeds, the command finds the `fix-push.yml` run for it by the run name `PR Fixes Push for run <run ID>`.
+  GitHub starts that run itself, because `fix-push.yml` has a `workflow_run` trigger.
+- GitHub starts no `workflow_run` workflow for a run that a `GITHUB_TOKEN` starts.
+  For such a run, or when no `fix-push.yml` run appears within two minutes, the command starts `fix-push.yml` on the default branch with the run ID as input.
+- The command waits for the `fix-push.yml` run, and then reads the head commit of the pull request.
+  If the head commit changed, the command prints the new head commit on standard output.
+  Run `git pull` to get the fixes.
+
+The command does not push, so its token needs only the Actions `write` and Pull requests `read` permissions.
+`--workflow` and `--push-workflow` name other workflow files, which must work as these two do.
+The command fails if either run fails, or if the fixes are not pushed within `--timeout` minutes (default `45`).
 
 ## Configuration
 

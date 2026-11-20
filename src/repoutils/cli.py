@@ -39,6 +39,7 @@ GROUPS: dict[str, list[Command]] = {
     "GitHub Actions workflows": [
         Command("check-pins", "check_pins", "Check workflows pin the project's uv and just versions"),
         Command("check-checkout-credentials", "check_checkout_credentials", "Check checkouts set persist-credentials"),
+        Command("autofix", "autofix", "Run the PR Fixes workflow on a PR, and wait for its fixes to be pushed"),
         Command("claude-route", "claude_route", "Decide which Claude workflow a comment (on stdin) is for"),
     ],
     "uv and Dependabot": [

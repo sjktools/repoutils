@@ -35,6 +35,10 @@ on:
     workflows: [PR Fixes]
     types: [completed]
 
+# `repoutils autofix` finds the run for the fix run it started by this name, so
+# keep the two in step.
+run-name: "PR Fixes Push for run ${{ github.event.workflow_run.id || inputs.run-id }}"
+
 concurrency:
   group: fix-push-${{ github.event.workflow_run.head_branch || inputs.run-id }}
 

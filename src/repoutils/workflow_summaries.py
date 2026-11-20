@@ -42,11 +42,14 @@ class Summary:
     text: str
 
 
-def dispatch(repo: str, workflow: str, ref: str, token: str) -> int:
-    """Start workflow on ref, and return the new run's ID."""
+def dispatch(repo: str, workflow: str, ref: str, token: str, inputs: dict[str, str] | None = None) -> int:
+    """Start workflow on ref, with inputs if given, and return the new run's ID."""
     url = f"{github.API_URL}/repos/{repo}/actions/workflows/{workflow}/dispatches"
     # return_run_details makes GitHub answer with the new run's ID rather than an empty 204.
-    response = github.request("POST", url, token, json_body={"ref": ref, "return_run_details": True})
+    body: dict[str, object] = {"ref": ref, "return_run_details": True}
+    if inputs:
+        body["inputs"] = inputs
+    response = github.request("POST", url, token, json_body=body)
     run_id = response.get("workflow_run_id") if isinstance(response, dict) else None
     if not isinstance(run_id, int):
         raise RuntimeError(f"Started {workflow} on {ref}, but GitHub didn't give its run ID")
@@ -201,7 +204,8 @@ def inspect_remote(
     return 0
 
 
-def _positive(text: str) -> float:
+def positive(text: str) -> float:
+    """An argparse type: a finite number more than 0."""
     value = float(text)
     if not math.isfinite(value) or value <= 0:
         raise argparse.ArgumentTypeError("must be a number more than 0")
@@ -220,14 +224,14 @@ def add_run_options(parser: argparse.ArgumentParser, workflow: str) -> None:
     parser.add_argument("--run-id", type=int, help="read this run instead of starting one")
     parser.add_argument(
         "--timeout",
-        type=_positive,
+        type=positive,
         default=30,
         metavar="MINUTES",
         help="give up if the run hasn't finished after this long (default: 30)",
     )
     parser.add_argument(
         "--interval",
-        type=_positive,
+        type=positive,
         default=10,
         metavar="SECONDS",
         help="how often to check on the run (default: 10)",

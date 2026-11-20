@@ -808,6 +808,7 @@ It starts the workflow that runs `inspect` (`--workflow FILE`, default `inspect-
 Then it prints the step summaries that the jobs of the run upload as `step-summaries-*` artifacts.
 GitHub can hold a run for approval, and a job can wait for approval to deploy to an environment.
 In both cases, `inspect-remote` prints the address of the run, where you can approve it, and continues to wait.
+GitHub can answer that a run it has just started does not exist, so for 30 seconds after it starts the workflow, `inspect-remote` treats that answer as a delay and asks again.
 Pass `--run-id ID` to print the summaries of an existing run instead of starting one.
 `inspect-remote` fails in these cases:
 

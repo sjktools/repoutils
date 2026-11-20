@@ -15,6 +15,7 @@ import io
 import math
 import os
 import sys
+import urllib.error
 import zipfile
 from dataclasses import dataclass
 from time import monotonic, sleep
@@ -26,6 +27,10 @@ DEFAULT_WORKFLOW = "inspect-secrets.yml"
 # The prefix of the artifacts that hold a run's step summaries (see AGENTS.md).
 ARTIFACT_PREFIX = "step-summaries-"
 PER_PAGE = 100
+# How long a run just dispatched can answer 404 before GitHub serves it, and
+# how often to ask again meanwhile.
+NOT_FOUND_GRACE = 30.0
+NOT_FOUND_RETRY = 1.0
 
 
 @dataclass(frozen=True)
@@ -59,14 +64,27 @@ def _held(run: dict[str, Any]) -> str | None:
     return None
 
 
-def wait(repo: str, run_id: int, token: str, *, interval: float, timeout: float) -> dict[str, Any]:
+def wait(
+    repo: str, run_id: int, token: str, *, interval: float, timeout: float, just_started: bool = False
+) -> dict[str, Any]:
     """Poll the run until it completes, and return it. Raises TimeoutError
-    after timeout seconds."""
+    after timeout seconds. If just_started, a 404 for the first
+    NOT_FOUND_GRACE seconds means GitHub doesn't serve the new run yet, so it
+    asks again."""
     url = f"{github.API_URL}/repos/{repo}/actions/runs/{run_id}"
-    deadline = monotonic() + timeout
+    start = monotonic()
+    deadline = start + timeout
     told = None
     while True:
-        run: dict[str, Any] = github.request("GET", url, token)
+        try:
+            run: dict[str, Any] = github.request("GET", url, token)
+        except urllib.error.HTTPError as e:
+            left = min(deadline, start + NOT_FOUND_GRACE) - monotonic()
+            if not just_started or e.code != 404 or left <= 0:
+                raise
+            e.close()
+            sleep(min(NOT_FOUND_RETRY, left))
+            continue
         held = _held(run)
         if held is not None and held != told:
             print(f"Waiting: {held}. Approve it at {run.get('html_url')}", file=sys.stderr)
@@ -134,11 +152,12 @@ def start(
 ) -> tuple[int, dict[str, Any]]:
     """Dispatch workflow on ref (default: the default branch), or take the
     existing run run_id, and wait for it to complete. Returns its ID and the run."""
+    just_started = run_id is None
     if run_id is None:
         ref = ref or default_branch(repo, token)
         run_id = dispatch(repo, workflow, ref, token)
         print(f"Started {workflow} on {ref}: https://github.com/{repo}/actions/runs/{run_id}", file=sys.stderr)
-    return run_id, wait(repo, run_id, token, interval=interval, timeout=timeout)
+    return run_id, wait(repo, run_id, token, interval=interval, timeout=timeout, just_started=just_started)
 
 
 def inspect_remote(

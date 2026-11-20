@@ -85,6 +85,8 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeGitHub:
     monkeypatch.setattr(github, "request", github_fake.request)
     monkeypatch.setattr(github, "request_bytes", github_fake.request_bytes)
     monkeypatch.setattr(workflow_summaries, "sleep", lambda _: None)
+    # The fake age stands in for any age but a missing one, so the tests needn't have age installed.
+    monkeypatch.setattr(shutil, "which", lambda name: None if name.startswith("/no/") else name)  # pyright: ignore[reportUnknownLambdaType]
     return github_fake
 
 
@@ -127,6 +129,7 @@ def test_keep_artifacts_and_save(
     assert all(method == "GET" for method, _ in fake.calls)
     # Only the file's name, so the zip can't write outside the directory.
     assert (tmp_path / "secrets-release.toml.age").read_bytes() == b"x"
+    assert not (tmp_path.parent / "dir").exists()
     assert (tmp_path / "secrets-repository.toml.age").read_bytes() == b"[actions]\n"
     assert f"Saved secrets-repository/secrets-repository.toml.age to {tmp_path / 'secrets-repository.toml.age'}" in (
         capsys.readouterr().err
@@ -164,9 +167,17 @@ def test_failed_decryption_prints_no_secrets_and_keeps_the_artifacts(
     assert all(method != "DELETE" for method, _ in fake.calls)
 
 
-def test_missing_age(fake: FakeGitHub) -> None:
+def test_missing_age_starts_nothing(fake: FakeGitHub) -> None:
     with pytest.raises(ValueError, match="can't run /no/age: install age, or give its path with --age"):
         _remote(age="/no/age")
+    assert fake.calls == []
+    with pytest.raises(ValueError, match="can't run /no/age"):
+        secret_export_remote.decrypt("/no/age", [Path("/k/id_ed25519")], b"")
+
+
+def test_save_creates_the_directory(fake: FakeGitHub, tmp_path: Path) -> None:
+    assert _remote(identities=[], save=tmp_path / "new" / "dir") == 0
+    assert (tmp_path / "new" / "dir" / "secrets-release.toml.age").exists()
 
 
 def test_failed_run_still_prints_what_it_kept(

@@ -844,7 +844,7 @@ Then it downloads the encrypted files that the jobs of the run upload as `secret
 It decrypts with `~/.ssh/id_ed25519` and `~/.ssh/id_rsa`, whichever of the two files exist, or with each `--identity FILE` instead.
 It writes the plaintext only to standard output, as one TOML document with a table for the repository and for each environment.
 If any file fails to decrypt, it prints no secrets.
-Pass `--save DIR` to also write the encrypted files to `DIR`.
+Pass `--save DIR` to also write the encrypted files to `DIR`, which the command creates if it does not exist.
 When it finds no private key and you pass `--save DIR`, it only saves the encrypted files.
 When it finds no private key and you do not pass `--save DIR`, it fails before it starts the workflow.
 After it decrypts or saves every file, it deletes the `secrets-*` artifacts from the run, unless you pass `--keep-artifacts`.
@@ -856,6 +856,7 @@ After it decrypts or saves every file, it deletes the `secrets-*` artifacts from
 - `age` fails to decrypt a file.
 
 It uses `$GITHUB_TOKEN`, or `gh auth token` when that variable is not set, and the token needs the Actions write permission to start the workflow and to delete the artifacts.
+With `--run-id` and `--keep-artifacts`, the token needs only the Actions read permission.
 
 ### Variables
 

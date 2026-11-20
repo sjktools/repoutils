@@ -13,6 +13,7 @@ saved, it deletes the artifacts from the run, as the workflow's summary asks.
 Stdlib-only, like every repoutils module."""
 
 import argparse
+import shutil
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
@@ -72,6 +73,11 @@ def export_remote(
             "found no SSH private key to decrypt with (~/.ssh/id_ed25519 or ~/.ssh/id_rsa): "
             "give one with --identity, or keep the encrypted files with --save DIR"
         )
+    # Check what decrypting and saving need before starting a run they'd fail on.
+    if identities and shutil.which(age) is None:
+        raise ValueError(f"can't run {age}: install age, or give its path with --age")
+    if save is not None:
+        save.mkdir(parents=True, exist_ok=True)
     run_id, run = workflow_summaries.start(
         repo, token, workflow=workflow, ref=ref, run_id=run_id, interval=interval, timeout=timeout
     )
@@ -122,7 +128,8 @@ def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]"
         "While GitHub holds the run for approval, print where to approve it and keep waiting. "
         "Fails unless the run succeeds and keeps some encrypted files. "
         "Uses $GITHUB_TOKEN, defaulting to `gh auth token`, "
-        "which needs the Actions write permission to dispatch and to delete the artifacts.",
+        "which needs the Actions write permission to dispatch and to delete the artifacts, "
+        "or only Actions read with --run-id and --keep-artifacts.",
     )
     workflow_summaries.add_run_options(parser, DEFAULT_WORKFLOW)
     parser.add_argument(

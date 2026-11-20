@@ -21,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from repoutils import github, workflow_summaries
+from repoutils import github, secret_levels, workflow_summaries
 
 DEFAULT_WORKFLOW = "export-secrets.yml"
 # The prefix of the artifacts that hold export-secrets.yml's encrypted files.
@@ -81,7 +81,7 @@ def export_remote(
     decrypted with identities, saving the encrypted files in save if given.
     If it starts a run, with the inputs inputs() gives, and secret_times gives
     when each environment secret was last set, it fails if one changed during
-    the run. Exits 0 only if the run succeeded and kept some."""
+    the run, or if the names list one it had no time for. Exits 0 only if the run succeeded and kept some."""
     if not identities and save is None:
         raise ValueError(
             "found no SSH private key to decrypt with (~/.ssh/id_ed25519 or ~/.ssh/id_rsa): "
@@ -97,18 +97,34 @@ def export_remote(
             pass
     # When each environment secret was last set, as the run starts, if it starts one.
     times_before: list[dict[str, str]] = []
+    # The environment secrets the names list but times_before lacks, as they were set after it.
+    unrecorded: list[str] = []
 
     def remember() -> dict[str, str]:
+        if secret_times is None:
+            return inputs()
         # Before the names, so a change after the names are listed is caught too.
-        if secret_times is not None:
-            times_before.append(secret_times())
-        return inputs()
+        times = secret_times()
+        times_before.append(times)
+        given = inputs()
+        levels = secret_levels.read_levels(given.get(workflow_summaries.SECRET_NAMES_INPUT))
+        if levels is not None:
+            recorded = {(env.lower(), name.upper()) for env, _, name in (key.rpartition("/") for key in times)}
+            unrecorded.extend(
+                f"{env}/{name}"
+                for env, names in levels.environments.items()
+                for name in sorted(names)
+                if (env, name) not in recorded
+            )
+        return given
 
     run_id, run = workflow_summaries.start(
         repo, token, workflow=workflow, ref=ref, run_id=run_id, interval=interval, timeout=timeout, inputs=remember
     )
     found = workflow_summaries.artifacts(repo, run_id, token, ARTIFACT_PREFIX)
     changed = changed_secrets(times_before[0], secret_times()) if secret_times is not None and times_before else []
+    # Such a secret could have been deleted during the run without changed_secrets() seeing it.
+    changed = sorted({*changed, *unrecorded})
     if changed:
         # Before anything is saved or decrypted. The export can't be trusted, so it's deleted
         # too, even with --keep-artifacts, so a later --run-id read, which can't check, can't print it.

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from repoutils import github, secret_export, secret_export_remote, workflow_summaries
+from repoutils import github, secret_export, secret_export_remote, secret_levels, workflow_summaries
 from repoutils.commands import secrets
 from tests.test_workflow_summaries import NAME_PAGES
 
@@ -202,6 +202,25 @@ def test_secret_added_during_the_run_passes(fake: FakeGitHub, monkeypatch: pytes
     monkeypatch.setattr(subprocess, "run", _fake_age([]))
     times = iter([{"release/A": "t1"}, {"release/A": "t1", "release/NEW": "t2"}])
     assert _remote(secret_times=lambda: next(times)) == 0
+
+
+def _names(environments: dict[str, list[str]]) -> dict[str, str]:
+    return {workflow_summaries.SECRET_NAMES_INPUT: secret_levels.names_json([], environments)}
+
+
+def test_secret_set_after_the_times_were_read_fails(fake: FakeGitHub) -> None:
+    # release/B was set between reading the times and listing the names, so it has no time to
+    # compare with, and could then have been deleted during the run unseen.
+    times = iter([{"release/A": "t1"}, {"release/A": "t1"}])
+    with pytest.raises(RuntimeError, match=r"set again, while the run.*: release/B\. Nothing was printed"):
+        _remote(secret_times=lambda: next(times), inputs=lambda: _names({"Release": ["A", "b"]}))
+    assert [method for method, _ in fake.calls].count("DELETE") == 2
+
+
+def test_listed_secrets_with_unchanged_times_pass(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(subprocess, "run", _fake_age([]))
+    times = iter([{"Release/A": "t1", "uv/C": "t1"}, {"Release/A": "t1", "uv/C": "t1"}])
+    assert _remote(secret_times=lambda: next(times), inputs=lambda: _names({"release": ["a"], "uv": ["C"]})) == 0
 
 
 def test_secret_times_are_not_read_for_an_existing_run(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:

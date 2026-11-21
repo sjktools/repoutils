@@ -668,6 +668,7 @@ def test_bump_pr_reports_a_failed_request_on_an_earlier_pr(
             "HTTP 403:\nno",
         ),
         (json.JSONDecodeError("Expecting value", "<", 0), "Expecting value: line 1 column 1 (char 0)"),
+        (RuntimeError("too many redirects"), "too many redirects"),
     ],
 )
 def test_bump_pr_rerun_still_handles_earlier_prs_if_linking_fails(

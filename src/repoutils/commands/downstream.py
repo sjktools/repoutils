@@ -199,7 +199,7 @@ def _link_kept(
             file=sys.stderr,
         )
         return 1
-    except (OSError, ValueError) as e:
+    except (OSError, RuntimeError, ValueError) as e:
         print(f"Linking the pull requests it leaves open from {current.url} failed: {e}", file=sys.stderr)
         return 1
     return 0

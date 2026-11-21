@@ -37,7 +37,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `check-screenshots-dir` | Fails unless `.gitignore` is the only tracked file in the screenshots directory and ignores all other files in that directory. |
 | `git-config-setup` | Sets the local `blame.ignoreRevsFile` Git setting (idempotent, so a justfile can run it before every recipe). |
 | `long-files` | Lists the files over a line limit as Markdown (with changed files first), or posts that list to a pull request. |
-| `check-pins` | Fails unless every `setup-uv` and `setup-just` workflow step pins the versions required by `pyproject.toml` and the justfile. |
+| `check-pins` | Fails unless every `setup-uv` and `setup-just` workflow step pins the versions required by `pyproject.toml` and the justfile, and the actions that the project uses from the repository of a locked package that is installed come from the commit of that package, or only from the tag of its version if the package does not record its commit (see [Checking actions against a locked package](#checking-actions-against-a-locked-package)). |
 | `check-checkout-credentials` | Fails on any `actions/checkout` step that does not set `persist-credentials`. |
 | `autofix` | Starts the PR Fixes workflow on a pull request, waits for the workflow that pushes its fixes, and prints the new head commit of the branch. |
 | `claude-route` | Reads a comment from standard input and prints `review`, `other` or `none` to route between the Claude workflows. |
@@ -1169,6 +1169,26 @@ Both values are `null` when the project is not in a Git repository with a commit
 - A wheel that is built from an sdist gets the file from the sdist, and the hook does not run Git.
 - An editable install gets no file, because the commit would be out of date after the next commit.
 - The file contains no timestamp, so two builds of the same commit give the same file.
+
+### Checking actions against a locked package
+
+A project can use a package from `uv.lock` and also the GitHub Actions from the repository of that package.
+`check-pins` then checks that the project runs both from the same commit.
+It reads only local files:
+
+1. For each package in `uv.lock` that is installed in the environment that runs `check-pins`, it takes the GitHub repository from the `Repository` project URL of the package.
+2. It finds each action from that repository that a workflow uses directly in `.github/workflows/actions.lock`, the lock file that [`gh actions-lock`](https://github.com/github/gh-actions-lock) writes.
+3. It finds the `build_info.json` file of the package through the `RECORD` file of the installed wheel, so the hook can write the file anywhere in the package.
+4. It fails if the commit of an action differs from the commit in `build_info.json`, or if `dirty` is `true`.
+
+If the package has no `build_info.json`, or its `commit` is `null`, `check-pins` checks only that the ref of each action is `v<version>`, and prints a warning.
+The check fails on any of these errors:
+
+- The installed version of a package whose repository has an action in `actions.lock` is not a version in `uv.lock`.
+- `actions.lock` or `uv.lock` cannot be read.
+- The package has more than one `build_info.json`, or a `build_info.json` that cannot be read.
+
+A project without `actions.lock` or `uv.lock` has nothing to check.
 
 ## Development
 

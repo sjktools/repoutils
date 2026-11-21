@@ -39,6 +39,7 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
   `src/repoutils/secret_levels.py` is the format they pass those names in, which `secrets inspect` and `secrets export` read.
 - `src/repoutils/uv_bump.py` is `dependabot-uv bump`'s changes to the files that `check-pins` checks, and its re-lock of `uv.lock`, kept apart from the command for length.
   It changes them only if `check-pins` passes, before and after, and puts them back if re-locking fails.
+- `src/repoutils/locked_actions.py` is `check-pins`' check that the actions in `actions.lock` from a locked package's repository are at the commit in that package's `build_info.json`, kept apart from the command for length.
 - `src/repoutils/pull_request.py` commits a change to a new branch, pushes it and opens a PR, for `bump --pr` in `dependabot-uv`, `downstream` and `github-releases`.
 - `src/repoutils/downstream_pins.py` holds `downstream bump`'s changes to a downstream's pins and its re-lock, kept apart from the command for length.
   `src/repoutils/pypi_provenance.py` checks that PyPI's provenance for a release names the upstream's repository as its trusted publisher.

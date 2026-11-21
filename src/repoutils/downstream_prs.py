@@ -4,7 +4,9 @@ or to warn on, kept apart from the command for length.
 
 An earlier bump's pull request has a hidden marker at the start of its body,
 and comes from a branch of the downstream's own repository named for the
-release it bumps to. It's untouched when every commit on it is one that
+release it bumps to. A test bump, to a dev version, has a marker and a branch
+prefix of its own, so a release's bump and a test bump never see each other's
+pull requests. It's untouched when every commit on it is one that
 `downstream bump` made, marked with TRAILER, apart from merges of the base
 branch that GitHub's Update branch button made. Stdlib-only, like every
 repoutils module."""
@@ -39,14 +41,27 @@ class Bump:
     body: str
 
 
+def kind(version: str) -> str:
+    """What starts the branch and the marker name of a bump to version:
+    `downstream-test` for a dev version, a test bump, else `downstream`."""
+    return "downstream-test" if downstream_pins.is_dev(version) else "downstream"
+
+
 def branch_name(package: str, version: str) -> str:
-    return f"downstream/{package}-{version}"
+    return f"{kind(version)}/{package}-{version}"
 
 
-def open_bumps(repo: str, token: str, package: str, marker: str) -> list[Bump]:
+def marker_name(package: str, version: str) -> str:
+    """The name of the marker that starts the body of a bump to version's pull request."""
+    return f"{kind(version)}-{package}"
+
+
+def open_bumps(repo: str, token: str, package: str, version: str, marker: str) -> list[Bump]:
     """The open pull requests in repo whose body starts with marker, from a
-    branch of repo itself (not a fork) named for a release of package."""
-    prefix = branch_name(package, "")
+    branch of repo itself (not a fork) named for a version of package of the
+    same kind as version: a dev version for a test bump, else a release."""
+    prefix = branch_name(package, version).removesuffix(version)
+    test = downstream_pins.is_dev(version)
     found = []
     page = 1
     while True:
@@ -60,11 +75,13 @@ def open_bumps(repo: str, token: str, package: str, marker: str) -> list[Bump]:
             body: str = pull.get("body") or ""
             if source.lower() != repo.lower() or not body.startswith(marker):
                 continue
-            version = ref.removeprefix(prefix)
-            if ref == version:
+            bumped = ref.removeprefix(prefix)
+            if ref == bumped:
                 continue
             try:
-                downstream_pins.release_key(version)
+                # Such as a dev version's, from before test bumps had a branch prefix of their own.
+                if downstream_pins.is_dev(bumped) != test:
+                    continue
             except ValueError:
                 continue
             found.append(
@@ -74,7 +91,7 @@ def open_bumps(repo: str, token: str, package: str, marker: str) -> list[Bump]:
                     branch=ref,
                     base=pull["base"]["ref"],
                     head=head["sha"],
-                    version=version,
+                    version=bumped,
                     body=body,
                 )
             )

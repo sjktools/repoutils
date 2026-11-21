@@ -341,6 +341,15 @@ def test_add_source_keeps_line_endings(tmp_path: Path) -> None:
     assert path.read_bytes() == expected.replace("\n", "\r\n").encode()
 
 
+@pytest.mark.parametrize("comment", ["", "  # ours"])
+def test_add_source_under_a_header_with_crlf(tmp_path: Path, comment: str) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_bytes(f'{INDEX}\n[tool.uv.sources]{comment}\nother = {{ path = "x" }}\n'.replace("\n", "\r\n").encode())
+    downstream_pins.add_source(tmp_path, "rep-utils")
+    expected = f'{INDEX}\n[tool.uv.sources]{comment}\nrep-utils = {{ index = "testpypi" }}\nother = {{ path = "x" }}\n'
+    assert path.read_bytes() == expected.replace("\n", "\r\n").encode()
+
+
 @pytest.mark.parametrize(
     ("text", "error"),
     [

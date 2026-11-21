@@ -337,7 +337,7 @@ def test_source(root: Path, package: str) -> bool:
 
 
 _SOURCES_HEADER_RE = re.compile(
-    r"^[ \t]*\[[ \t]*tool[ \t]*\.[ \t]*uv[ \t]*\.[ \t]*sources[ \t]*\][ \t]*(?:#.*)?$", re.M
+    r"^[ \t]*\[[ \t]*tool[ \t]*\.[ \t]*uv[ \t]*\.[ \t]*sources[ \t]*\][ \t]*(?:#[^\r\n]*)?(?=\r?$)", re.M
 )
 
 

@@ -899,3 +899,49 @@ def test_bump_refuses_an_action_at_a_branch(
     assert downstream.run(["bump", "--version", "0.4.0", "--directory", "down"]) == 1
     assert "ci.yml:7 uses u/up/.github/actions/b@main, which bump can't move" in capsys.readouterr().err
     assert fakes.checked == []
+
+
+def test_bump_refuses_an_actions_lock_file_that_moves_another_action(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    down = with_actions(upstream / "down")
+    (down / ACTIONS_LOCK).write_text("dependencies:\n    'v/w@main':\n        commit: 'sha1-new'\n")
+    git(down, "commit", "--quiet", "--all", "--message", "lock")
+    fakes = Fakes(monkeypatch)
+    (upstream / "actions.lock").write_text("dependencies:\n    'v/w@main':\n        commit: 'sha1-old'\n")
+    args = ["bump", "--version", "0.4.0", "--directory", "down", "--actions-lock-file", "actions.lock"]
+    assert downstream.run(args) == 1
+    assert "actions.lock locks v/w@main at another commit than .github/workflows/actions.lock does" in (
+        capsys.readouterr().err
+    )
+    assert fakes.verified == []
+    assert not git(down, "status", "--porcelain")
+
+
+@pytest.mark.parametrize("given", [True, False])
+def test_bump_refuses_a_workflow_gh_actions_lock_changed(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], given: bool
+) -> None:
+    down = with_actions(upstream / "down")
+    fakes = Fakes(monkeypatch)
+
+    def edit(root: Path) -> None:
+        with (root / ".github/workflows/ci.yml").open("a") as f:
+            f.write("# edited\n")
+
+    def actions_lock(root: Path) -> bool:
+        edit(root)
+        return fakes.actions_lock(root)
+
+    monkeypatch.setattr(downstream_actions, "lock", actions_lock)
+    monkeypatch.setattr(downstream_actions, "verify", edit)
+    (upstream / "actions.lock").write_text(ACTIONS_LOCK_TEXT)
+    args = ["bump", "--version", "0.4.0", "--directory", "down"]
+    args += ["--actions-lock-file", "actions.lock"] if given else []
+    assert downstream.run(args) == 1
+    command = "gh actions-lock --verify" if given else "gh actions-lock"
+    assert (
+        capsys.readouterr().err
+        == f"down/.github/workflows/ci.yml changed while {command} ran, so the bump stops here\n"
+    )
+    assert not git(down, "status", "--porcelain")

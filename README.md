@@ -230,6 +230,7 @@ A downstream project needs no workflow of its own, but it must use `uv`.
   It fails if a `uses:` of the upstream repository has a ref that is not a tag of the form `vX.Y.Z`, or has a newer tag.
 - If it moved a `uses:`, it then regenerates `.github/workflows/actions.lock` with `gh actions-lock`, which also locks the actions that the actions of the upstream use.
   With `--actions-lock-file <file>`, it copies the file over `actions.lock` instead, and checks it with `gh actions-lock --verify`.
+  It fails if the file locks an action at another commit than `actions.lock` does, for an action whose ref the bump does not change.
   Both need `gh` with the `gh-actions-lock` extension, and a token that can read the repositories of the actions.
 - It does nothing if every pin and every `uses:` of the upstream repository is already at the version, and fails if any pin is newer.
 - With `--pr`, it commits only `pyproject.toml`, `uv.lock`, the files with a `uses:` that it moved, and `actions.lock`, to the branch `downstream/<package>-<version>`.

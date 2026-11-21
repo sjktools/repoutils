@@ -27,6 +27,14 @@ _USES_RE = re.compile(
     r"""(?P<action>(?P<repo>[^/@\s"'#]+/[^/@\s"'#]+)(?:/[^@\s"'#]*)?)@(?P<ref>[^@\s"'#]+)(?P=quote)"""
     r"""\s*(?:#.*)?$"""
 )
+# A release tag that bump moves. A shorter one, such as v1, is often a tag
+# that moves with each release, so moving it to a fixed tag is left to a person.
+_TAG_RE = re.compile(r"v\d+\.\d+\.\d+")
+# actions.lock's sections, its dependencies' entries, and their commits, in
+# the fixed layout `gh actions-lock` writes.
+_SECTION_RE = re.compile(r"^(?P<name>\S[^:]*):")
+_ENTRY_RE = re.compile(r"^ {4}'(?P<key>[^']+)':\s*$")
+_COMMIT_RE = re.compile(r"^ {8}commit:\s*'(?P<commit>[^']*)'\s*$")
 # A key whose value is a block scalar, such as `run: |`, whose lines follow,
 # indented further than the key's line.
 _BLOCK_RE = re.compile(r"""^(?P<indent>\s*)(?:-\s+)?[^\s#'"][^#]*?:\s*[|>][-+0-9]*\s*(?:#.*)?$""")
@@ -92,16 +100,12 @@ def stale(root: Path, upstream: str, version: str) -> list[Use]:
         if use.ref == tag(version):
             continue
         where = f"{root / use.file}:{use.line}"
-        try:
-            old = downstream_pins.release_key(use.ref.removeprefix("v")) if use.ref.startswith("v") else None
-        except ValueError:
-            old = None
-        if old is None:
+        if not _TAG_RE.fullmatch(use.ref):
             raise RuntimeError(
                 f"{where} uses {use.action}@{use.ref}, which bump can't move, as {use.ref} isn't a release tag "
                 "of the form vX.Y.Z, so bump it by hand"
             )
-        if old > new:
+        if downstream_pins.release_key(use.ref[1:]) > new:
             raise RuntimeError(
                 f"{where} uses {use.action}@{use.ref}, newer than {tag(version)}, and bump never lowers a ref"
             )
@@ -128,6 +132,37 @@ def move(root: Path, version: str, moving: list[Use]) -> list[str]:
         with (root / file).open("w", encoding="utf-8", newline="") as f:
             f.write("".join(lines))
     return sorted(files)
+
+
+def locked_commits(text: str) -> dict[str, str]:
+    """The commit an actions.lock's text records for each action under dependencies."""
+    commits: dict[str, str] = {}
+    section = key = None
+    for line in text.splitlines():
+        if match := _SECTION_RE.match(line):
+            section, key = match["name"], None
+        elif section == "dependencies" and (match := _ENTRY_RE.match(line)):
+            key = match["key"]
+        elif key is not None and (match := _COMMIT_RE.match(line)):
+            commits[key] = match["commit"]
+    return commits
+
+
+def check_kept(old: bytes, new: bytes, where: str) -> None:
+    """Raise RuntimeError if the actions.lock new, from where, records
+    another commit than old for an action that both lock. Each action's key
+    names its ref, so the upstream's moved actions are new keys, and only an
+    action whose ref didn't change can fail this, such as one at a branch
+    moved back to an older commit, which `gh actions-lock --verify` allows."""
+    try:
+        before, after = locked_commits(old.decode()), locked_commits(new.decode())
+    except UnicodeDecodeError as e:
+        raise RuntimeError(f"{where} isn't valid UTF-8") from e
+    if moved := sorted(key for key in before.keys() & after.keys() if before[key] != after[key]):
+        raise RuntimeError(
+            f"{where} locks {', '.join(moved)} at another commit than {ACTIONS_LOCK} does, though the bump "
+            "doesn't change its ref, so the bump stops here: regenerate actions.lock on the default branch first"
+        )
 
 
 def _gh_actions_lock(root: Path, *args: str) -> None:

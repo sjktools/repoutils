@@ -187,7 +187,8 @@ For the same reason, they run other files of this repository by that path, and n
 As in Bump uv, the `bump` job re-locks with no token that can write.
 It also moves each `uses:` of repoutils' actions to the release's tag, and regenerates `actions.lock` with `gh actions-lock`.
 The `push` job opens the PR with the `DOWNSTREAM_TOKEN` secret, and takes `uv.lock` and `actions.lock` from the `bump` job as data.
-It moves the `uses:` again itself, and checks `actions.lock` with `gh actions-lock --verify` before it commits it.
+It moves the `uses:` again itself.
+Before it commits `actions.lock`, it checks the file with `gh actions-lock --verify`, and checks that no other action's commit changed.
 That secret lives in the main-only `downstream` environment, and needs Contents and Pull requests write on each downstream.
 It also needs Workflows write on each downstream where the PR changes a file in `.github/workflows`, such as a workflow or `actions.lock` that uses repoutils' actions.
 

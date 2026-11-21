@@ -45,7 +45,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
 | `check-lock-platforms` | Fails if `uv.lock` contains wheels for platforms that the project does not allow. |
 | `dependabot-uv` | `show` prints the `uv` version from the newest successful Dependabot `uv` update run, `check` fails unless the minimum in `[tool.uv] required-version` is that version, and `bump` changes the project to that `uv` version (with `--pr`, in a new pull request, unless one for that version is already open). |
-| `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `bump` changes the pins of a downstream project to a release of this package, or to a dev version on TestPyPI, and re-locks it, and moves its uses of the actions of this package to the tag of the release, or for a dev version, to the commit that `--commit` names. With `--pr`, it opens a pull request (for a dev version, a draft test pull request), unless one for that release or a newer one is already open, and closes or comments on open pull requests for earlier releases, unless one for a newer release is open. |
+| `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `bump` changes the pins of a downstream project to a release of this package, or to a dev version on TestPyPI, and re-locks it, and moves its uses of the actions of this package to the tag of the release, or for a dev version, to the commit that `--commit` names. With `--pr`, it opens a pull request (for a dev version, a draft test pull request), unless one for that release or a newer one is already open, and closes or comments on open pull requests for earlier versions of the same kind (releases, or dev versions), unless one for a newer version of that kind is open. |
 | `github-releases` | `check` fails if a project whose release assets this project pins has a newer release, and `bump` pins the assets of that release (with `--pr`, in a new pull request, unless one for that release is already open). |
 | `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment (posting nothing with `--update-only` when none exists) or hides it when you pass `--hide-previous`. |
 | `added-strings` | Lists the added lines in a pull request that match strings configured in `pyproject.toml` (such as `# noqa:`), or posts the list to the pull request. |
@@ -251,7 +251,9 @@ A downstream project needs no workflow of its own, but it must use `uv`.
   To make CodeRabbit skip the pull request by its title too, add `ignore_title_keywords` to the CodeRabbit configuration of the downstream project.
 
 With `--pr`, `downstream bump` finds the open pull requests that earlier runs opened, by that marker and by their branch.
-The bump of a release finds only the pull requests of earlier releases, and the bump of a dev version finds only the pull requests of earlier dev versions:
+The bump of a release finds only the pull requests for releases, and the bump of a dev version finds only the pull requests for dev versions.
+Neither finds a pull request for a dev version from a branch `downstream/<package>-<version>`, which an earlier, unreleased build of repoutils opened, so close any such pull request by hand.
+It handles the pull requests that it finds as follows:
 
 - If one of them is for a newer version, the command changes nothing.
 - If one of them is for the same version, the command opens no pull request, but handles each earlier pull request, as a run that failed part of the way through would have.

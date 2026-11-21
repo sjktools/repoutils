@@ -242,7 +242,7 @@ A downstream project needs no workflow of its own, but it must use `uv`.
   - No tag exists for a dev version, so the command moves each `uses:` of the upstream repository to the commit that `--commit` names, the commit that the build came from.
     `--commit` is needed only if the downstream project uses the actions of the upstream repository.
   - A dev version `X.Y.Z.devN` is older than `X.Y.Z` and newer than any earlier version.
-  - The bump of a release fails if `[tool.uv.sources]` still takes the package from TestPyPI.
+- The bump of a release fails while `[tool.uv.sources]` still takes the package from TestPyPI, so remove that source by hand first.
 - With `--pr`, it commits only `pyproject.toml`, `uv.lock`, the files with a `uses:` that it moved, and `actions.lock`, to the branch `downstream/<package>-<version>`.
   The body of the pull request starts with a hidden marker, `<!-- <comment-prefix>-downstream-<package> -->`.
 

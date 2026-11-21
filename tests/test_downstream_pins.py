@@ -392,12 +392,21 @@ def test_add_source_refuses(tmp_path: Path, text: str, error: str) -> None:
     assert path.read_text() == text
 
 
+NAMELESS = INDEX.replace('name = "testpypi"\n', "")
+LIST_NAME = INDEX.replace('"testpypi"', '["testpypi"]')
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
         (f"{INDEX}\n{SOURCES}", True),
         (f"{INDEX.replace('testpypi', 'mine', 1)}\n{SOURCES.replace('testpypi', 'mine')}", True),
         (SOURCES, False),
+        (f"{INDEX.replace('test.pypi.org', 'example.com')}\n{SOURCES}", False),
+        # A TestPyPI index with no name, or a list as its name, and a source with a list as its index.
+        (f"{NAMELESS}\n[tool.uv.sources]\nrep-utils = {{ path = 'x' }}\n", False),
+        (f"{LIST_NAME}\n{SOURCES}", False),
+        (f"{INDEX}\n[tool.uv.sources]\nrep-utils = {{ index = ['testpypi'] }}\n", False),
         (f"{INDEX}\n[tool.uv.sources]\nother = {{ index = 'testpypi' }}\n", False),
         (f'{INDEX}\n[tool.uv.sources]\nrep-utils = {{ git = "https://x" }}\n', False),
         ("", False),

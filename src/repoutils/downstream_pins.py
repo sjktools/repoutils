@@ -320,13 +320,18 @@ def test_source(root: Path, package: str) -> bool:
     if not isinstance(indexes, list) or not isinstance(sources, dict):
         return False
     test = {
-        index.get("name")
+        index["name"]
         for index in indexes
-        if isinstance(index, dict) and str(index.get("url", "")).rstrip("/") == TEST_INDEX_URL.rstrip("/")
+        if isinstance(index, dict)
+        and isinstance(index.get("name"), str)
+        and str(index.get("url", "")).rstrip("/") == TEST_INDEX_URL.rstrip("/")
     }
     normalized = normalize_package_name(package)
     return any(
-        normalize_package_name(name) == normalized and isinstance(source, dict) and source.get("index") in test
+        normalize_package_name(name) == normalized
+        and isinstance(source, dict)
+        and isinstance(source.get("index"), str)
+        and source["index"] in test
         for name, source in sources.items()
     )
 

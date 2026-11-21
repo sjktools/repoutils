@@ -29,6 +29,7 @@ from repoutils import (
     pull_request,
     pypi_provenance,
 )
+from repoutils.commands import check_pins
 from repoutils.docstrings import summary
 from repoutils.locked_actions import ACTIONS_LOCK
 
@@ -146,14 +147,17 @@ def bump(
         base = pull_request.prepare(directory, branch)
 
     pyproject = directory / config.PYPROJECT
+    # Every workflow and local action, not just the ones the bump moves, as
+    # gh actions-lock or uv lock could edit any of them.
+    workflows = check_pins.workflow_files(directory)
     texts = {pyproject: pyproject.read_bytes()}
-    for path in [lockfile, actions_lock, *{directory / use.file for use in using}]:
+    for path in [lockfile, actions_lock, *workflows]:
         if path.is_file():
             texts[path] = path.read_bytes()
     try:
         downstream_pins.move(directory, package, version, moving)
         moved_files = downstream_actions.move(directory, version, using)
-        ours = {path: path.read_bytes() for path in [pyproject, *(directory / name for name in moved_files)]}
+        ours = {path: path.read_bytes() for path in [pyproject, *workflows]}
         relocked_actions = False
         if using:
             # Before uv lock, so it runs before any of the downstream's code.

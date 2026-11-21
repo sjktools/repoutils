@@ -919,14 +919,19 @@ def test_bump_refuses_an_actions_lock_file_that_moves_another_action(
 
 
 @pytest.mark.parametrize("given", [True, False])
+# The workflow that bump moves, and one it doesn't.
+@pytest.mark.parametrize("edited", ["ci.yml", "other.yml"])
 def test_bump_refuses_a_workflow_gh_actions_lock_changed(
-    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], given: bool
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], given: bool, edited: str
 ) -> None:
     down = with_actions(upstream / "down")
+    (down / ".github/workflows/other.yml").write_text("jobs: {}\n")
+    git(down, "add", "--all")
+    git(down, "commit", "--quiet", "--message", "other")
     fakes = Fakes(monkeypatch)
 
     def edit(root: Path) -> None:
-        with (root / ".github/workflows/ci.yml").open("a") as f:
+        with (root / ".github/workflows" / edited).open("a") as f:
             f.write("# edited\n")
 
     def actions_lock(root: Path) -> bool:
@@ -942,6 +947,6 @@ def test_bump_refuses_a_workflow_gh_actions_lock_changed(
     command = "gh actions-lock --verify" if given else "gh actions-lock"
     assert (
         capsys.readouterr().err
-        == f"down/.github/workflows/ci.yml changed while {command} ran, so the bump stops here\n"
+        == f"down/.github/workflows/{edited} changed while {command} ran, so the bump stops here\n"
     )
     assert not git(down, "status", "--porcelain")

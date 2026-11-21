@@ -10,6 +10,7 @@ refs checked against ``v<version>``, with a warning. It reads only local files.
 """
 
 import csv
+import io
 import json
 import re
 import sys
@@ -143,7 +144,10 @@ def build_info(distribution: Distribution, name: str) -> tuple[str, bool] | None
     The file is found through the distribution's RECORD, wherever the build
     hook's ``file`` put it. RECORD is read itself, as Distribution.files leaves
     out the files that are missing, and a missing build_info.json is an error."""
-    record = csv.reader((distribution.read_text("RECORD") or "").splitlines())
+    text = distribution.read_text("RECORD")
+    if text is None:
+        raise LockError(f"{name} has no readable RECORD, so its {BUILD_INFO} can't be found")
+    record = csv.reader(io.StringIO(text))
     found = [row[0] for row in record if row and PurePosixPath(row[0]).name == BUILD_INFO]
     if not found:
         return None

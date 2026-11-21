@@ -246,6 +246,14 @@ def test_a_build_info_that_record_lists_must_exist(project: Path) -> None:
         check(project, site(project))
 
 
+def test_a_package_without_record_is_an_error(project: Path) -> None:
+    site_dir = project.parent / "site"
+    install(site_dir, "example-tool", "1.2.0")
+    (site_dir / "example_tool-1.2.0.dist-info/RECORD").unlink()
+    with pytest.raises(LockError, match="example-tool has no readable RECORD"):
+        check(project, site(project))
+
+
 def test_two_build_infos_are_an_error(project: Path) -> None:
     site_dir = project.parent / "site"
     install(site_dir, "example-tool", "1.2.0", info={"commit": COMMIT, "dirty": False})

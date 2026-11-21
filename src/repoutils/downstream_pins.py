@@ -10,6 +10,9 @@ two by editing `pyproject.toml`'s text:
   dependency groups.
 - `uv.lock`, which `lock` re-locks with the downstream's own uv.
 
+A dev version, such as `0.4.1.dev123`, is a test build on TestPyPI, so for
+one, `add_source` also tells uv to take the package from TestPyPI.
+
 Stdlib-only, like every repoutils module."""
 
 import copy
@@ -24,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from repoutils import config
+from repoutils import config, pypi_provenance
 from repoutils.commands import check_pins
 from repoutils.commands.requirements_min_versions import (
     dependency_groups,
@@ -33,7 +36,7 @@ from repoutils.commands.requirements_min_versions import (
 )
 
 BUILD_SYSTEM = "build-system.requires"
-# How often, and how far apart, lock() tries `uv lock`, as PyPI's index can lag
+# How often, and how far apart, lock() tries `uv lock`, as the index can lag
 # behind a release for a minute or two.
 LOCK_ATTEMPTS = 5
 LOCK_DELAY = 30.0
@@ -46,9 +49,10 @@ _VERSION_RES = {
     "==": re.compile(r"(?<![=!~<>])(==(?!=)\s*)([^,\s;)]+)"),
     ">=": re.compile(r"(>=\s*)([^,\s;)]+)"),
 }
-_RELEASE_RE = re.compile(r"\d+(?:\.\d+)*")
-# A clause of a version specifier that bound() can check.
-_CLAUSE_RE = re.compile(r"(?P<op><=|>=|==|!=|<|>)\s*(?P<version>\d+(?:\.\d+)*)")
+# A release version, or a dev version of one.
+_RELEASE_RE = re.compile(r"(?P<release>\d+(?:\.\d+)*)(?:\.dev(?P<dev>\d+))?")
+# A clause of a version specifier that excludes() can check.
+_CLAUSE_RE = re.compile(r"(?P<op><=|>=|==|!=|<|>)\s*(?P<version>\d+(?:\.\d+)*(?:\.dev\d+)?)")
 _COMPARE = {
     "<": lambda a, b: a < b,
     "<=": lambda a, b: a <= b,
@@ -59,15 +63,41 @@ _COMPARE = {
 }
 
 
-def release_key(version: str) -> tuple[int, ...]:
-    """A release version (X.Y.Z, with any number of parts) as numbers for
-    comparing, with trailing zeros dropped, so 1.0 and 1.0.0 compare equal."""
-    if not _RELEASE_RE.fullmatch(version):
-        raise ValueError(f"{version} isn't a release version of the form X.Y.Z")
-    parts = [int(part) for part in version.split(".")]
+# The index a dev version's test build is on, and the name add_source gives it.
+TEST_INDEX = "testpypi"
+TEST_INDEX_URL = f"{pypi_provenance.TESTPYPI_URL}/simple/"
+
+
+def release_key(version: str) -> tuple[tuple[int, ...], int, int]:
+    """A release version (X.Y.Z, with any number of parts), or a dev version
+    of one (X.Y.Z.devN), as numbers for comparing. Trailing zeros are dropped,
+    so 1.0 and 1.0.0 compare equal, and X.Y.Z.devN sorts before X.Y.Z."""
+    match = _RELEASE_RE.fullmatch(version)
+    if match is None:
+        raise ValueError(f"{version} isn't a release version of the form X.Y.Z, or a dev version X.Y.Z.devN")
+    parts = [int(part) for part in match["release"].split(".")]
     while len(parts) > 1 and parts[-1] == 0:
         parts.pop()
-    return tuple(parts)
+    return (tuple(parts), 0, int(match["dev"])) if match["dev"] is not None else (tuple(parts), 1, 0)
+
+
+def is_dev(version: str) -> bool:
+    """Whether version is a dev version, X.Y.Z.devN, raising ValueError if it's neither that nor a release."""
+    return release_key(version)[1] == 0
+
+
+def index_url(version: str) -> str:
+    """The URL of the index that version's files are on: TestPyPI for a dev version, else PyPI."""
+    return pypi_provenance.TESTPYPI_URL if is_dev(version) else pypi_provenance.PYPI_URL
+
+
+def _meets(op: str, version: str, clause: str) -> bool:
+    """Whether version meets the clause op clause."""
+    new, bound = release_key(version), release_key(clause)
+    # PEP 440: <V excludes V's dev versions, unless V is one itself.
+    if op == "<" and new[0] == bound[0] and not is_dev(clause):
+        return False
+    return bool(_COMPARE[op](new, bound))
 
 
 @dataclass(frozen=True)
@@ -90,10 +120,9 @@ class Pin:
         moved = self.moved(version)
         name = _NAME_RE.match(moved)
         specifier = moved.split(";", 1)[0][name.end() if name else 0 :].strip(" ()")
-        new = release_key(version)
         for clause in (part.strip() for part in specifier.split(",")):
             match = _CLAUSE_RE.fullmatch(clause)
-            if match is not None and not _COMPARE[match["op"]](new, release_key(match["version"])):
+            if match is not None and not _meets(match["op"], version, match["version"]):
                 return clause
         return None
 
@@ -210,6 +239,160 @@ def move(root: Path, package: str, version: str, moving: list[Pin]) -> None:
         f.write(text)
 
 
+def _uv_table(pyproject: dict[str, Any], path: Path) -> dict[str, Any]:
+    tool = pyproject.get("tool", {})
+    uv = tool.get("uv", {}) if isinstance(tool, dict) else None
+    if not isinstance(uv, dict):
+        raise RuntimeError(f"{path} [tool.uv] isn't a table")
+    return uv
+
+
+def _test_index(uv: dict[str, Any], path: Path) -> str | None:
+    """The name of the uv index in uv, a [tool.uv] table, at TEST_INDEX_URL,
+    if there is one, raising RuntimeError if it isn't explicit, or another
+    index has TEST_INDEX's name."""
+    indexes = uv.get("index", [])
+    if not isinstance(indexes, list):
+        raise RuntimeError(f"{path} [tool.uv] index isn't a list of tables, so bump it by hand")
+    found = None
+    for index in indexes:
+        if not isinstance(index, dict):
+            raise RuntimeError(f"{path} [tool.uv] index isn't a list of tables, so bump it by hand")
+        if str(index.get("url", "")).rstrip("/") == TEST_INDEX_URL.rstrip("/"):
+            # An index that isn't explicit would let any package on it win.
+            if index.get("explicit") is not True:
+                raise RuntimeError(
+                    f"{path} has a [[tool.uv.index]] for {TEST_INDEX_URL} that isn't `explicit = true`, "
+                    "so any package there could win over PyPI's: make it explicit"
+                )
+            name = index.get("name")
+            if not isinstance(name, str) or not name:
+                raise RuntimeError(
+                    f"{path} has a [[tool.uv.index]] for {TEST_INDEX_URL} with no name, so bump it by hand"
+                )
+            found = found or name
+        elif index.get("name") == TEST_INDEX:
+            raise RuntimeError(
+                f"{path} has a [[tool.uv.index]] named {TEST_INDEX} at {index.get('url')!r}, "
+                f"not {TEST_INDEX_URL}, so bump it by hand"
+            )
+    return found
+
+
+def _sources(uv: dict[str, Any], path: Path) -> dict[str, Any]:
+    sources = uv.get("sources", {})
+    if not isinstance(sources, dict):
+        raise RuntimeError(f"{path} [tool.uv.sources] isn't a table, so bump it by hand")
+    return sources
+
+
+def needs_source(root: Path, package: str) -> bool:
+    """Whether root/pyproject.toml must gain a [tool.uv.sources] entry that
+    takes package from TestPyPI, as a dev version is only there. Raises
+    RuntimeError if it has another source for package, or an index for
+    TestPyPI that add_source can't use."""
+    path = root / config.PYPROJECT
+    uv = _uv_table(config.read_pyproject(path), path)
+    index = _test_index(uv, path)
+    normalized = normalize_package_name(package)
+    for name, source in _sources(uv, path).items():
+        if normalize_package_name(name) != normalized:
+            continue
+        if index is not None and source == {"index": index}:
+            return False
+        raise RuntimeError(
+            f"{path} [tool.uv.sources] already has a source for {package}, {source!r}, "
+            f"rather than TestPyPI's index, so bump it by hand"
+        )
+    return True
+
+
+def test_source(root: Path, package: str) -> bool:
+    """Whether root/pyproject.toml's [tool.uv.sources] takes package from an
+    index at TEST_INDEX_URL, as a dev version's bump makes it, so that a
+    release's bump would still resolve it from TestPyPI."""
+    tool = config.read_pyproject(root / config.PYPROJECT).get("tool", {})
+    uv = tool.get("uv", {}) if isinstance(tool, dict) else {}
+    if not isinstance(uv, dict):
+        return False
+    indexes = uv.get("index", [])
+    sources = uv.get("sources", {})
+    if not isinstance(indexes, list) or not isinstance(sources, dict):
+        return False
+    test = {
+        index["name"]
+        for index in indexes
+        if isinstance(index, dict)
+        and isinstance(index.get("name"), str)
+        and str(index.get("url", "")).rstrip("/") == TEST_INDEX_URL.rstrip("/")
+    }
+    normalized = normalize_package_name(package)
+    return any(
+        isinstance(entry, dict) and isinstance(entry.get("index"), str) and entry["index"] in test
+        for name, source in sources.items()
+        if normalize_package_name(name) == normalized
+        # A list of sources, each with a marker, or one source.
+        for entry in (source if isinstance(source, list) else [source])
+    )
+
+
+_SOURCES_HEADER_RE = re.compile(
+    r"^[ \t]*\[[ \t]*tool[ \t]*\.[ \t]*uv[ \t]*\.[ \t]*sources[ \t]*\][ \t]*(?:#[^\r\n]*)?(?=\r?$)", re.M
+)
+
+
+def _table(text: str, eol: str, *lines: str) -> str:
+    """lines, as a table to append to text, after a blank line unless text is empty."""
+    return (eol if text else "") + "".join(line + eol for line in lines)
+
+
+def add_source(root: Path, package: str) -> None:
+    """Make root/pyproject.toml take package from TestPyPI: add an explicit
+    [[tool.uv.index]] for TestPyPI, unless it has one, and a [tool.uv.sources]
+    entry for package that names it. Changes nothing else, and raises
+    RuntimeError, with the file unchanged, if it can't. uv applies the source
+    to [build-system] requires too."""
+    path = root / config.PYPROJECT
+    with path.open(encoding="utf-8", newline="") as f:
+        text = f.read()
+    before = tomllib.loads(text)
+    uv = _uv_table(before, path)
+    eol = "\r\n" if "\r\n" in text else "\n"
+    if text and not text.endswith("\n"):
+        text += eol
+    expected = copy.deepcopy(before)
+    expected_uv = expected.setdefault("tool", {}).setdefault("uv", {})
+    index = _test_index(uv, path)
+    if index is None:
+        index = TEST_INDEX
+        text += _table(
+            text, eol, "[[tool.uv.index]]", f'name = "{index}"', f'url = "{TEST_INDEX_URL}"', "explicit = true"
+        )
+        expected_uv.setdefault("index", []).append({"name": index, "url": TEST_INDEX_URL, "explicit": True})
+    entry = f"{config.toml_key(package)} = {{ index = {config.toml_string(index)} }}"
+    if "sources" not in uv:
+        text += _table(text, eol, "[tool.uv.sources]", entry)
+    else:
+        headers = list(_SOURCES_HEADER_RE.finditer(text))
+        if len(headers) != 1:
+            raise RuntimeError(
+                f"{path} doesn't have one [tool.uv.sources] header to add {package} under, so bump it by hand"
+            )
+        end = headers[0].end()
+        text = text[:end] + eol + entry + text[end:]
+    expected_uv.setdefault("sources", {})[package] = {"index": index}
+    # An inline table or dotted keys elsewhere would make these lines
+    # redefine a table, or add to another one.
+    try:
+        after = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        after = None
+    if after != expected:
+        raise RuntimeError(f"Taking {package} from TestPyPI in {path} would change more than that, so bump it by hand")
+    with path.open("w", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
 def locked_versions(text: str, package: str) -> set[str]:
     """The versions of package a uv.lock's text locks, raising ValueError if
     its [[package]] tables aren't tables."""
@@ -258,7 +441,7 @@ def _lock_once(command: list[str]) -> int:
 def lock(root: Path, package: str, version: str) -> bool:
     """Re-lock root's uv.lock, if it has one, upgrading only package, to
     version, with the uv root requires, and say whether uv.lock changed. It
-    tries LOCK_ATTEMPTS times, LOCK_DELAY seconds apart, in case PyPI's index
+    tries LOCK_ATTEMPTS times, LOCK_DELAY seconds apart, in case the index
     lags behind the release."""
     path = root / "uv.lock"
     if not path.is_file():
@@ -278,7 +461,7 @@ def lock(root: Path, package: str, version: str) -> bool:
     while (code := _lock_once(command)) != 0:
         if attempt >= LOCK_ATTEMPTS:
             raise subprocess.CalledProcessError(code, command)
-        print(f"uv lock failed, so trying again in {LOCK_DELAY:g}s, as PyPI's index may lag", file=sys.stderr)
+        print(f"uv lock failed, so trying again in {LOCK_DELAY:g}s, as the index may lag", file=sys.stderr)
         time.sleep(LOCK_DELAY)
         attempt += 1
     check_locked(path.read_text(encoding="utf-8"), package, version, str(path), required=depends(root, package))

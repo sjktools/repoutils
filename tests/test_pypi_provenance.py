@@ -106,3 +106,20 @@ def test_quotes_names(pypi: Callable[[Answers], list[str]]) -> None:
     pypi({url: [release()]})
     with pytest.raises(RuntimeError, match="has no files"):
         pypi_provenance.release_files("a/b", "1?")
+
+
+def test_check_testpypi(pypi: Callable[[Answers], list[str]], capsys: pytest.CaptureFixture[str]) -> None:
+    index = pypi_provenance.TESTPYPI_URL
+    sdist = f"{index}/integrity/pkg/1.0.dev2/pkg-1.0.dev2.tar.gz/provenance"
+    asked = pypi({f"{index}/pypi/pkg/1.0.dev2/json": [404, release("pkg-1.0.dev2.tar.gz")], sdist: [bundles(GOOD)]})
+    assert pypi_provenance.check("pkg", "1.0.dev2", "owner/repo", index) == ["pkg-1.0.dev2.tar.gz"]
+    assert asked[-1] == sdist
+    assert "TestPyPI has no pkg 1.0.dev2 yet" in capsys.readouterr().err
+    pypi({f"{index}/pypi/pkg/1.0.dev2/json": [release("pkg-1.0.dev2.tar.gz")], sdist: [404]})
+    with pytest.raises(RuntimeError, match="TestPyPI has no provenance for pkg-1.0.dev2.tar.gz"):
+        pypi_provenance.check("pkg", "1.0.dev2", "owner/repo", index)
+
+
+def test_index_name() -> None:
+    assert pypi_provenance.index_name("https://pypi.org") == "PyPI"
+    assert pypi_provenance.index_name("https://example.com") == "https://example.com"

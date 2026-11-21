@@ -9,7 +9,12 @@ downstream checkout that `--directory` names. It also moves the downstream's
 references to the upstream's GitHub Actions to the release's tag, and
 regenerates its `actions.lock`. Before it changes anything, it
 checks that PyPI's provenance for the release names the upstream's repository
-as its trusted publisher. Stdlib-only, like every repoutils module."""
+as its trusted publisher.
+
+Given a dev version, such as `0.4.1.dev123`, a test build on TestPyPI, `bump`
+checks TestPyPI's provenance instead, makes the downstream take the package
+from TestPyPI, and moves the actions to the commit the build came from.
+Stdlib-only, like every repoutils module."""
 
 import argparse
 import json
@@ -83,22 +88,34 @@ def bump(
     lock_file: Path | None = None,
     actions_lock_file: Path | None = None,
     marker: str = "",
+    commit: str | None = None,
 ) -> int:
     """Move directory's pins of package to version, and re-lock its uv.lock,
     or copy lock_file over it if given. Move its uses of upstream's actions to
-    the release's tag, and regenerate its actions.lock, or copy
-    actions_lock_file over it, and verify it, if given. With pr, commit that
-    to a new branch of repo, push it and open a pull request whose body
-    starts with marker."""
+    the release's tag, or for a dev version, to commit, and regenerate its
+    actions.lock, or copy actions_lock_file over it, and verify it, if given.
+    For a dev version, also make it take package from TestPyPI. With pr,
+    commit that to a new branch of repo, push it and open a pull request whose
+    body starts with marker."""
+    ref = downstream_actions.target(version, commit)
+    dev = downstream_pins.is_dev(version)
+    index = downstream_pins.index_url(version)
+    index_name = pypi_provenance.index_name(index)
     moving = downstream_pins.stale(directory, package, version)
-    using = downstream_actions.stale(directory, upstream, version)
-    if not moving and not using:
-        actions = (
-            f", and uses {upstream}'s actions at {downstream_actions.tag(version)}"
-            if downstream_actions.uses(directory, upstream)
-            else ""
+    sourcing = dev and downstream_pins.needs_source(directory, package)
+    if not dev and downstream_pins.test_source(directory, package):
+        raise RuntimeError(
+            f"{directory / config.PYPROJECT} [tool.uv.sources] takes {package} from TestPyPI, as a dev version's "
+            f"bump left it, so remove that source and bump it by hand"
         )
-        print(f"{directory / config.PYPROJECT} already pins {package} {version}{actions}, so there's nothing to bump")
+    using = downstream_actions.stale(directory, upstream, version, ref)
+    if not moving and not sourcing and not using:
+        actions = f", and uses {upstream}'s actions at {ref}" if downstream_actions.uses(directory, upstream) else ""
+        source = f" from {index_name}" if dev else ""
+        print(
+            f"{directory / config.PYPROJECT} already pins {package} {version}{source}{actions}, "
+            "so there's nothing to bump"
+        )
         return 0
     lockfile = directory / "uv.lock"
     new_lock = None
@@ -118,8 +135,8 @@ def bump(
         if not actions_lock.is_file():
             raise RuntimeError(f"There's no {actions_lock} for {actions_lock_file} to replace")
         new_actions_lock = actions_lock_file.read_bytes()
-    files = pypi_provenance.check(package, version, upstream)
-    print(f"PyPI's provenance names {upstream} as the publisher of {', '.join(files)}")
+    files = pypi_provenance.check(package, version, upstream, index)
+    print(f"{index_name}'s provenance names {upstream} as the publisher of {', '.join(files)}")
 
     branch, base = downstream_prs.branch_name(package, version), ""
     key = downstream_pins.release_key(version)
@@ -156,7 +173,10 @@ def bump(
             texts[path] = path.read_bytes()
     try:
         downstream_pins.move(directory, package, version, moving)
-        moved_files = downstream_actions.move(directory, version, using)
+        if sourcing:
+            downstream_pins.add_source(directory, package)
+        # stale() finds nothing to move unless there's a ref.
+        moved_files = downstream_actions.move(directory, ref or "", using)
         ours = {path: path.read_bytes() for path in [pyproject, *workflows]}
         relocked_actions = False
         if using:
@@ -182,7 +202,7 @@ def bump(
         else:
             lockfile.write_bytes(new_lock)
             relocked = new_lock != texts[lockfile]
-        names = ([config.PYPROJECT] if moving else []) + (["uv.lock"] if relocked else []) + actions_names
+        names = ([config.PYPROJECT] if moving or sourcing else []) + (["uv.lock"] if relocked else []) + actions_names
         if pr:
             # prepare() saw a clean tree, so anything else changed came from this run.
             listed = pull_request.git(directory, "ls-files", "--modified", "--others", "--exclude-standard")
@@ -198,24 +218,30 @@ def bump(
     if moving:
         old = ", ".join(sorted({pin.version for pin in moving}, key=downstream_pins.release_key))
         what, change = package, f"from {old} to {version}"
-    else:
+    elif using:
         # The pins were already current, so only the actions moved.
-        tags = sorted({use.ref for use in using}, key=lambda ref: downstream_pins.release_key(ref[1:]))
-        what, change = f"{package}'s actions", f"from {', '.join(tags)} to {downstream_actions.tag(version)}"
+        tags = sorted({use.ref for use in using}, key=lambda tag: downstream_pins.release_key(tag[1:]))
+        what, change = f"{package}'s actions", f"from {', '.join(tags)} to {ref}"
+    else:
+        # The pins were already at the dev version, so only the source moved.
+        what, change = f"{package}'s source", f"to {index_name}"
     print(f"Bumped {what} {change} in {', '.join(names)}")
     if not pr:
         return 0
 
     changes = [f"- `{pin.where}`: `{pin.requirement}` to `{pin.moved(version)}`" for pin in moving]
-    new_tag = downstream_actions.tag(version)
+    if sourcing:
+        changes.append(f"- `tool.uv.sources`: take `{package}` from {index_name}'s explicit index")
     # Each action once for each file, however many steps use it.
-    changes += dict.fromkeys(f"- `{use.file}`: `{use.action}@{use.ref}` to `@{new_tag}`" for use in using)
+    changes += dict.fromkeys(f"- `{use.file}`: `{use.action}@{use.ref}` to `@{ref}`" for use in using)
     pins = "\n".join(changes)
     # The run this is part of, in a workflow of the upstream's.
     run_id = os.environ.get("GITHUB_RUN_ID")
     server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
     run = f" in {server}/{upstream}/actions/runs/{run_id}" if run_id else ""
     left_open = "".join(f"{note}\n\n" for note in _left_open(package, kept))
+    # What the bump moved, if not the pins.
+    of = "" if moving else "the actions of " if using else "the source of "
     url = pull_request.submit(
         directory,
         repo,
@@ -226,11 +252,11 @@ def bump(
         title=f"Bump {package} to {version}",
         message=f"Bumps {what} {change}.\n\n{downstream_prs.TRAILER}",
         body=f"{marker}\n"
-        f"Bumps {'' if moving else 'the actions of '}[{package}](https://pypi.org/project/{package}/{version}/) "
+        f"Bumps {of}[{package}]({index}/project/{package}/{version}/) "
         f"{change}, "
         f"which [{upstream}](https://github.com/{upstream}) released.\n\n"
         f"{pins}\n\n"
-        f"PyPI's provenance names {upstream} as the trusted publisher of each of the release's files.\n\n"
+        f"{index_name}'s provenance names {upstream} as the trusted publisher of each of the release's files.\n\n"
         f"{left_open}"
         f"Opened by `repoutils downstream bump --pr`{run}.",
     )
@@ -344,13 +370,22 @@ def main(argv: list[str]) -> int:
         "if there is one. First it checks that PyPI's provenance names the upstream's repository as the "
         "trusted publisher of each of the release's files. It does nothing if every pin and uses: is already at "
         "the version, and fails if one is newer, or a uses: of the upstream's actions is at a ref that isn't a "
-        "release tag.",
+        "release tag. Given a dev version, X.Y.Z.devN, a test build on TestPyPI, it checks TestPyPI's provenance "
+        "instead, adds an explicit [[tool.uv.index]] for TestPyPI and a [tool.uv.sources] entry that takes the "
+        "package from it, and moves the uses: to --commit.",
         epilog="--pr uses $GITHUB_TOKEN, defaulting to `gh auth token`, which needs the Pull requests write "
         "permission on the downstream, and pushes with Git's own credentials, which also need Workflows write "
         "if the bump changes a workflow. Regenerating or verifying actions.lock needs gh, with the "
         "github/gh-actions-lock extension, and a token that can read the actions' repositories.",
     )
-    bump_parser.add_argument("--version", required=True, help="the release to bump to, such as 0.4.0")
+    bump_parser.add_argument(
+        "--version", required=True, help="the release to bump to, such as 0.4.0, or a dev version on TestPyPI"
+    )
+    bump_parser.add_argument(
+        "--commit",
+        help="for a dev version, which has no tag, the full hash of the commit its build came from, which the "
+        "uses: of the upstream's actions move to (needed only if there are any)",
+    )
     bump_parser.add_argument(
         "--directory", type=Path, required=True, help="the downstream's checkout, on its default branch"
     )
@@ -414,6 +449,7 @@ def main(argv: list[str]) -> int:
             lock_file=args.lock_file,
             actions_lock_file=args.actions_lock_file,
             marker=marker,
+            commit=args.commit,
         )
     except subprocess.CalledProcessError as e:
         # A command run without capturing its output (uv lock) has already shown its stderr.

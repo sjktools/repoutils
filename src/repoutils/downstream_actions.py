@@ -8,8 +8,11 @@ the version it pins on PyPI. `move` sets the ref of each `uses:` that names
 the upstream's repository, in the workflows and local actions that check-pins
 reads, to `v<version>`, and changes nothing else in those files. `lock` then
 regenerates `.github/workflows/actions.lock` with `gh actions-lock`, which
-also locks the actions that the upstream's actions use in turn. Stdlib-only,
-like every repoutils module."""
+also locks the actions that the upstream's actions use in turn.
+
+A dev version, a test build on TestPyPI, has no tag, so for one, `move` sets
+the refs to the commit the build came from instead. Stdlib-only, like every
+repoutils module."""
 
 import re
 import subprocess
@@ -42,9 +45,28 @@ _COMMIT_RE = re.compile(r"^ {8}commit:\s*'(?P<commit>[^']*)'\s*$")
 _BLOCK_RE = re.compile(r"""^(?P<indent>\s*(?:-\s+)?)[^\s#'"][^#]*?:\s*[|>][-+0-9]*\s*(?:#.*)?$""")
 
 
+_HASH_RE = re.compile(r"[0-9a-f]{40}")
+
+
 def tag(version: str) -> str:
     """The upstream's release tag for version."""
     return f"v{version}"
+
+
+def target(version: str, commit: str | None) -> str | None:
+    """The ref that bump moves the upstream's actions to: a release's tag, or
+    for a dev version, which has no tag, commit, the commit its build came
+    from, if given. Raises ValueError if commit isn't a full commit hash, or
+    is given for a release."""
+    if commit is not None and not _HASH_RE.fullmatch(commit):
+        raise ValueError(f"{commit!r} isn't a full commit hash of 40 lowercase hex digits")
+    if not downstream_pins.is_dev(version):
+        if commit is not None:
+            raise ValueError(
+                f"{version} is a release, so the upstream's actions move to {tag(version)}, not to a commit"
+            )
+        return tag(version)
+    return commit
 
 
 @dataclass(frozen=True)
@@ -93,15 +115,21 @@ def uses(root: Path, upstream: str) -> list[Use]:
     return found
 
 
-def stale(root: Path, upstream: str, version: str) -> list[Use]:
-    """The `uses:` of the upstream's actions in root that aren't at its tag
-    for version, raising RuntimeError if one isn't at a release tag, or is at
-    a newer one, as bump never lowers a ref."""
+def stale(root: Path, upstream: str, version: str, ref: str | None) -> list[Use]:
+    """The `uses:` of the upstream's actions in root that aren't at ref, the
+    tag for version or the commit its dev build came from, raising
+    RuntimeError if one isn't at a release tag, or is at a newer one than
+    version, as bump never lowers a ref, or if there's one and ref is None."""
     new, result = downstream_pins.release_key(version), []
     for use in uses(root, upstream):
-        if use.ref == tag(version):
+        if use.ref == ref:
             continue
         where = f"{root / use.file}:{use.line}"
+        if ref is None:
+            raise RuntimeError(
+                f"{where} uses {use.action}@{use.ref}, and {version} is a dev version, which has no tag to move it "
+                "to, so give the commit the build came from"
+            )
         if not _TAG_RE.fullmatch(use.ref):
             raise RuntimeError(
                 f"{where} uses {use.action}@{use.ref}, which bump can't move, as {use.ref} isn't a release tag "
@@ -109,17 +137,17 @@ def stale(root: Path, upstream: str, version: str) -> list[Use]:
             )
         if downstream_pins.release_key(use.ref[1:]) > new:
             raise RuntimeError(
-                f"{where} uses {use.action}@{use.ref}, newer than {tag(version)}, and bump never lowers a ref"
+                f"{where} uses {use.action}@{use.ref}, newer than {version}, and bump never lowers a ref"
             )
         result.append(use)
     return result
 
 
-def move(root: Path, version: str, moving: list[Use]) -> list[str]:
-    """Set the ref of each of the `uses:` in moving to the tag for version,
-    changing nothing else, and return the files that changed, relative to
-    root. Raises RuntimeError, with no file changed, if a line has changed
-    since stale() read it."""
+def move(root: Path, ref: str, moving: list[Use]) -> list[str]:
+    """Set the ref of each of the `uses:` in moving to ref, changing nothing
+    else, and return the files that changed, relative to root. Raises
+    RuntimeError, with no file changed, if a line has changed since stale()
+    read it."""
     files: dict[str, list[str]] = {}
     for use in moving:
         lines = files.setdefault(use.file, _lines(root / use.file))
@@ -129,7 +157,7 @@ def move(root: Path, version: str, moving: list[Use]) -> list[str]:
         if match is None or (match["action"], match["ref"]) != (use.action, use.ref):
             raise RuntimeError(f"{root / use.file}:{use.line} changed while bump ran, so the bump stops here")
         start, end = match.span("ref")
-        lines[use.line - 1] = body[:start] + tag(version) + body[end:] + line[len(body) :]
+        lines[use.line - 1] = body[:start] + ref + body[end:] + line[len(body) :]
     for file, lines in files.items():
         with (root / file).open("w", encoding="utf-8", newline="") as f:
             f.write("".join(lines))

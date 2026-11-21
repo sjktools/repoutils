@@ -201,6 +201,7 @@ class Fakes:
         commits: dict[int, list[dict[str, Any]]] | None = None,
     ) -> None:
         self.checked: list[tuple[str, str, str]] = []
+        self.indexes: list[str] = []
         self.locked: list[tuple[Path, str, str]] = []
         # The roots gh actions-lock ran in, and the roots it verified.
         self.actions_locked: list[Path] = []
@@ -222,9 +223,10 @@ class Fakes:
     def created(self) -> list[Any]:
         return [body for method, url, body in self.changes if (method, url) == ("POST", "/pulls")]
 
-    def check(self, package: str, version: str, repository: str) -> list[str]:
+    def check(self, package: str, version: str, repository: str, index: str) -> list[str]:
         self.checked.append((package, version, repository))
-        return ["pkg-0.4.0.tar.gz"]
+        self.indexes.append(index)
+        return [f"pkg-{version}.tar.gz"]
 
     def lock(self, root: Path, package: str, version: str) -> bool:
         self.locked.append((root, package, version))
@@ -243,8 +245,8 @@ class Fakes:
         assert token == "tok"
         path = url.removeprefix(API).split("?")[0]
         if method == "GET":
-            if url == f"{API}/pulls?state=open&head=d%3Adownstream%2Fpkg-0.4.0":
-                return [p for p in self.pulls if p["head"]["ref"] == BRANCH]
+            if head := re.fullmatch(rf"{re.escape(API)}/pulls\?state=open&head=d%3A(.+)", url):
+                return [p for p in self.pulls if p["head"]["ref"] == urllib.parse.unquote(head[1])]
             if path == "/pulls":
                 return _page(self.pulls, url)
             if match := re.fullmatch(r"/pulls/(\d+)", path):
@@ -498,7 +500,7 @@ def test_bump_provenance_failure_changes_nothing(
 ) -> None:
     fakes = Fakes(monkeypatch)
 
-    def check(package: str, version: str, repository: str) -> NoReturn:
+    def check(package: str, version: str, repository: str, index: str) -> NoReturn:
         raise RuntimeError("bad provenance")
 
     monkeypatch.setattr(pypi_provenance, "check", check)
@@ -970,3 +972,98 @@ def test_bump_refuses_a_workflow_gh_actions_lock_changed(
         == f"down/.github/workflows/{edited} changed while {command} ran, so the bump stops here\n"
     )
     assert not git(down, "status", "--porcelain")
+
+
+DEV = "0.4.1.dev5"
+COMMIT = "0123456789abcdef0123456789abcdef01234567"
+SOURCE = (
+    '\n[[tool.uv.index]]\nname = "testpypi"\nurl = "https://test.pypi.org/simple/"\nexplicit = true\n'
+    '\n[tool.uv.sources]\npkg = { index = "testpypi" }\n'
+)
+
+
+def test_bump_to_a_dev_version(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    down = with_actions(upstream / "down")
+    fakes = Fakes(monkeypatch)
+    monkeypatch.setenv("GITHUB_RUN_ID", "77")
+    (upstream / "new.lock").write_text(lock_text(DEV))
+    (upstream / "actions.lock").write_text("regenerated\n")
+    args = ["bump", "--version", DEV, "--commit", COMMIT, "--directory", "down", "--pr", "--repo", "d/down"]
+    args += ["--lock-file", "new.lock", "--actions-lock-file", "actions.lock"]
+    assert downstream.run(args) == 0
+    out = capsys.readouterr().out
+    assert out.startswith(f"TestPyPI's provenance names u/up as the publisher of pkg-{DEV}.tar.gz\n")
+    assert f"Bumped pkg from 0.3.0 to {DEV} in pyproject.toml, uv.lock, .github/workflows/ci.yml" in out
+    assert fakes.checked == [("pkg", DEV, "u/up")]
+    assert fakes.indexes == ["https://test.pypi.org"]
+    assert git(down, "show", f"origin/downstream/pkg-{DEV}:pyproject.toml") + "\n" == (
+        DOWNSTREAM.replace("0.3.0", DEV) + SOURCE
+    )
+    assert git(down, "show", f"origin/downstream/pkg-{DEV}:.github/workflows/ci.yml") + "\n" == (
+        WORKFLOW.replace("@v0.3.0", f"@{COMMIT}")
+    )
+    body = fakes.created[0]["body"]
+    assert f"Bumps [pkg](https://test.pypi.org/project/pkg/{DEV}/) from 0.3.0 to {DEV}, " in body
+    assert "- `tool.uv.sources`: take `pkg` from TestPyPI's explicit index\n" in body
+    assert f"- `.github/workflows/ci.yml`: `u/up/.github/actions/a@v0.3.0` to `@{COMMIT}`\n" in body
+    assert "TestPyPI's provenance names u/up as the trusted publisher" in body
+
+
+def test_bump_only_the_source(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (upstream / "down/pyproject.toml").write_text(DOWNSTREAM.replace("0.3.0", DEV))
+    git(upstream / "down", "commit", "--quiet", "--all", "--message", "dev")
+    fakes = Fakes(monkeypatch)
+    assert downstream.run(["bump", "--version", DEV, "--directory", "down", "--pr", "--repo", "d/down"]) == 0
+    assert "Bumped pkg's source to TestPyPI in pyproject.toml, uv.lock\n" in capsys.readouterr().out
+    assert fakes.created[0]["body"].startswith(
+        f"<!-- up-downstream-pkg -->\nBumps the source of [pkg](https://test.pypi.org/project/pkg/{DEV}/) to TestPyPI, "
+    )
+    expected = DOWNSTREAM.replace("0.3.0", DEV) + SOURCE
+    assert git(upstream / "down", "show", f"origin/downstream/pkg-{DEV}:pyproject.toml") + "\n" == expected
+    (upstream / "down/pyproject.toml").write_text(expected)
+    assert downstream.run(["bump", "--version", DEV, "--directory", "down"]) == 0
+    assert f"already pins pkg {DEV} from TestPyPI, so there's nothing to bump" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("args", "error"),
+    [
+        (["--version", DEV], f"ci.yml:5 uses u/up/.github/actions/a@v0.3.0, and {DEV} is a dev version"),
+        (["--version", "0.4.0", "--commit", COMMIT], "0.4.0 is a release, so the upstream's actions move to v0.4.0"),
+        (["--version", DEV, "--commit", "main"], "'main' isn't a full commit hash"),
+    ],
+)
+def test_bump_refuses_a_commit(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], args: list[str], error: str
+) -> None:
+    down = with_actions(upstream / "down")
+    fakes = Fakes(monkeypatch)
+    assert downstream.run(["bump", "--directory", "down", *args]) == 1
+    assert error in capsys.readouterr().err
+    assert fakes.checked == []
+    assert not git(down, "status", "--porcelain")
+
+
+def test_bump_puts_the_source_back_if_locking_fails(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    Fakes(monkeypatch)
+
+    def lock(root: Path, package: str, version: str) -> NoReturn:
+        raise subprocess.CalledProcessError(1, ["uv", "lock"])
+
+    monkeypatch.setattr(downstream_pins, "lock", lock)
+    assert downstream.run(["bump", "--version", DEV, "--directory", "down"]) == 1
+    assert (upstream / "down/pyproject.toml").read_text() == DOWNSTREAM
+
+
+def test_bump_refuses_a_release_while_taking_it_from_testpypi(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (upstream / "down/pyproject.toml").write_text(DOWNSTREAM + SOURCE)
+    fakes = Fakes(monkeypatch)
+    assert downstream.run(["bump", "--version", "0.4.0", "--directory", "down"]) == 1
+    assert "takes pkg from TestPyPI, as a dev version's bump left it" in capsys.readouterr().err
+    assert fakes.checked == []

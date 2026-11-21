@@ -54,7 +54,7 @@ def test_uses(root: Path) -> None:
 
 def test_stale_leaves_the_current_tag(root: Path) -> None:
     (root / ".github/workflows/ci.yml").write_text(WORKFLOW.replace("v0.3.0", "v0.3.5"))
-    assert downstream_actions.stale(root, "u/up", "0.3.5") == [
+    assert downstream_actions.stale(root, "u/up", "0.3.5", "v0.3.5") == [
         Use(".github/actions/z/action.yml", 4, "u/up/.github/actions/y", "v0.3.0")
     ]
 
@@ -67,21 +67,21 @@ def test_stale_leaves_the_current_tag(root: Path) -> None:
         ("a" * 40, "isn't a release tag"),
         ("v1", "as v1 isn't a release tag"),
         ("v0.3", "as v0.3 isn't a release tag"),
-        ("v0.5.0", "uses u/up/.github/actions/y@v0.5.0, newer than v0.4.0, and bump never lowers a ref"),
+        ("v0.5.0", "uses u/up/.github/actions/y@v0.5.0, newer than 0.4.0, and bump never lowers a ref"),
     ],
 )
 def test_stale_refuses(root: Path, ref: str, error: str) -> None:
     (root / ".github/actions/z/action.yml").write_text(ACTION.replace("v0.3.0", ref))
     with pytest.raises(RuntimeError, match=r"action\.yml:4 uses ") as raised:
-        downstream_actions.stale(root, "u/up", "0.4.0")
+        downstream_actions.stale(root, "u/up", "0.4.0", "v0.4.0")
     assert error in str(raised.value)
 
 
 def test_move(root: Path) -> None:
     path = root / ".github/workflows/ci.yml"
     path.write_bytes(WORKFLOW.replace("\n", "\r\n").encode())
-    moving = downstream_actions.stale(root, "u/up", "0.4.0")
-    assert downstream_actions.move(root, "0.4.0", moving) == [
+    moving = downstream_actions.stale(root, "u/up", "0.4.0", "v0.4.0")
+    assert downstream_actions.move(root, "v0.4.0", moving) == [
         ".github/actions/z/action.yml",
         ".github/workflows/ci.yml",
     ]
@@ -93,14 +93,51 @@ def test_move(root: Path) -> None:
     )
     assert path.read_bytes() == expected.replace("\n", "\r\n").encode()
     assert (root / ".github/actions/z/action.yml").read_text() == ACTION.replace("v0.3.0", "v0.4.0")
-    assert downstream_actions.stale(root, "u/up", "0.4.0") == []
+    assert downstream_actions.stale(root, "u/up", "0.4.0", "v0.4.0") == []
+
+
+COMMIT = "0123456789abcdef0123456789abcdef01234567"
+
+
+def test_target() -> None:
+    assert downstream_actions.target("0.4.0", None) == "v0.4.0"
+    assert downstream_actions.target("0.4.1.dev5", COMMIT) == COMMIT
+    assert downstream_actions.target("0.4.1.dev5", None) is None
+    with pytest.raises(ValueError, match="is a release, so the upstream's actions move to v0.4.0, not to a commit"):
+        downstream_actions.target("0.4.0", COMMIT)
+    for commit in ("abc", COMMIT.upper(), COMMIT + "0", "main"):
+        with pytest.raises(ValueError, match="isn't a full commit hash"):
+            downstream_actions.target("0.4.1.dev5", commit)
+
+
+def test_move_to_a_commit(root: Path) -> None:
+    moving = downstream_actions.stale(root, "u/up", "0.4.1.dev5", COMMIT)
+    assert len(moving) == 5
+    downstream_actions.move(root, COMMIT, moving)
+    assert (root / ".github/actions/z/action.yml").read_text() == ACTION.replace("v0.3.0", COMMIT)
+    assert downstream_actions.stale(root, "u/up", "0.4.1.dev5", COMMIT) == []
+    # A later dev build's commit can't be told from an older one, so bump leaves a commit to a person.
+    with pytest.raises(RuntimeError, match=f"@{COMMIT}, which bump can't move"):
+        downstream_actions.stale(root, "u/up", "0.4.1.dev6", "f" * 40)
+
+
+def test_stale_refuses_a_newer_tag_than_a_dev_version(root: Path) -> None:
+    (root / ".github/actions/z/action.yml").write_text(ACTION.replace("v0.3.0", "v0.4.1"))
+    with pytest.raises(RuntimeError, match="newer than 0.4.1.dev5, and bump never lowers a ref"):
+        downstream_actions.stale(root, "u/up", "0.4.1.dev5", COMMIT)
+
+
+def test_stale_needs_a_ref_for_a_dev_version(root: Path) -> None:
+    with pytest.raises(RuntimeError, match="0.4.1.dev5 is a dev version, which has no tag to move it to"):
+        downstream_actions.stale(root, "u/up", "0.4.1.dev5", None)
+    assert downstream_actions.stale(root / "none", "u/up", "0.4.1.dev5", None) == []
 
 
 def test_move_refuses_a_changed_line(root: Path) -> None:
-    moving = downstream_actions.stale(root, "u/up", "0.4.0")
+    moving = downstream_actions.stale(root, "u/up", "0.4.0", "v0.4.0")
     (root / ".github/workflows/ci.yml").write_text("jobs: {}\n")
     with pytest.raises(RuntimeError, match=r"ci\.yml:3 changed while bump ran"):
-        downstream_actions.move(root, "0.4.0", moving)
+        downstream_actions.move(root, "v0.4.0", moving)
     # Nothing is written, not even the file it read first.
     assert (root / ".github/actions/z/action.yml").read_text() == ACTION
 

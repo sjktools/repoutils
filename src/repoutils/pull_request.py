@@ -63,10 +63,13 @@ def submit(
     title: str,
     message: str,
     body: str,
+    pr_title: str | None = None,
+    draft: bool = False,
 ) -> str:
     """Commit paths (relative to root) to a new branch with title and message
     as the commit message, push it to REMOTE, switch back to base, and open a
-    pull request from branch into base. Returns the pull request's URL."""
+    pull request from branch into base, titled pr_title if given, else
+    title, as a draft if draft. Returns the pull request's URL."""
     git(root, "switch", "--create", branch)
     try:
         # Literal, so a path with a glob character in it stages only itself.
@@ -80,7 +83,8 @@ def submit(
             "POST",
             f"{github.API_URL}/repos/{repo}/pulls",
             token,
-            json_body={"title": title, "head": branch, "base": base, "body": body},
+            json_body={"title": pr_title or title, "head": branch, "base": base, "body": body}
+            | ({"draft": True} if draft else {}),
         )
     except OSError as e:
         reason, detail = str(e), ""

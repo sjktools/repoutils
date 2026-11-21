@@ -45,7 +45,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
 | `check-lock-platforms` | Fails if `uv.lock` contains wheels for platforms that the project does not allow. |
 | `dependabot-uv` | `show` prints the `uv` version from the newest successful Dependabot `uv` update run, `check` fails unless the minimum in `[tool.uv] required-version` is that version, and `bump` changes the project to that `uv` version (with `--pr`, in a new pull request, unless one for that version is already open). |
-| `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `bump` changes the pins of a downstream project to a release of this package, or to a dev version on TestPyPI, and re-locks it, and moves its uses of the actions of this package to the tag of the release, or for a dev version, to the commit that `--commit` names. With `--pr`, it opens a pull request, unless one for that release or a newer one is already open, and closes or comments on open pull requests for earlier releases, unless one for a newer release is open. |
+| `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `bump` changes the pins of a downstream project to a release of this package, or to a dev version on TestPyPI, and re-locks it, and moves its uses of the actions of this package to the tag of the release, or for a dev version, to the commit that `--commit` names. With `--pr`, it opens a pull request (for a dev version, a draft test pull request), unless one for that release or a newer one is already open, and closes or comments on open pull requests for earlier releases, unless one for a newer release is open. |
 | `github-releases` | `check` fails if a project whose release assets this project pins has a newer release, and `bump` pins the assets of that release (with `--pr`, in a new pull request, unless one for that release is already open). |
 | `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment (posting nothing with `--update-only` when none exists) or hides it when you pass `--hide-previous`. |
 | `added-strings` | Lists the added lines in a pull request that match strings configured in `pyproject.toml` (such as `# noqa:`), or posts the list to the pull request. |
@@ -245,8 +245,13 @@ A downstream project needs no workflow of its own, but it must use `uv`.
 - The bump of a release fails while `[tool.uv.sources]` still takes the package from TestPyPI, so remove that source by hand first.
 - With `--pr`, it commits only `pyproject.toml`, `uv.lock`, the files with a `uses:` that it moved, and `actions.lock`, to the branch `downstream/<package>-<version>`.
   The body of the pull request starts with a hidden marker, `<!-- <comment-prefix>-downstream-<package> -->`.
+- With `--pr` and a dev version, it opens a draft pull request, from the branch `downstream-test/<package>-<version>`, titled `TEST PR: DO NOT MERGE: SKIP AI CODE REVIEW`.
+  The body of the pull request starts with the hidden marker `<!-- <comment-prefix>-downstream-test-<package> -->`, and then a note that asks code-review AIs not to review it.
+  CodeRabbit skips a draft pull request by default.
+  To make CodeRabbit skip the pull request by its title too, add `ignore_title_keywords` to the CodeRabbit configuration of the downstream project.
 
-With `--pr`, `downstream bump` finds the open pull requests that earlier runs opened, by that marker and by their branch:
+With `--pr`, `downstream bump` finds the open pull requests that earlier runs opened, by that marker and by their branch.
+The bump of a release finds only the pull requests of earlier releases, and the bump of a dev version finds only the pull requests of earlier dev versions:
 
 - If one of them is for a newer version, the command changes nothing.
 - If one of them is for the same version, the command opens no pull request, but handles each earlier pull request, as a run that failed part of the way through would have.

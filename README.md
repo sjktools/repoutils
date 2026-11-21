@@ -243,9 +243,9 @@ A downstream project needs no workflow of its own, but it must use `uv`.
     `--commit` is needed only if the downstream project uses the actions of the upstream repository.
   - A dev version `X.Y.Z.devN` is older than `X.Y.Z` and newer than any earlier version.
 - The bump of a release fails while `[tool.uv.sources]` still takes the package from TestPyPI, so remove that source by hand first.
-- With `--pr`, it commits only `pyproject.toml`, `uv.lock`, the files with a `uses:` that it moved, and `actions.lock`, to the branch `downstream/<package>-<version>`.
-  The body of the pull request starts with a hidden marker, `<!-- <comment-prefix>-downstream-<package> -->`.
-- With `--pr` and a dev version, it opens a draft pull request, from the branch `downstream-test/<package>-<version>`, titled `TEST PR: DO NOT MERGE: SKIP AI CODE REVIEW`.
+- With `--pr`, it commits only `pyproject.toml`, `uv.lock`, the files with a `uses:` that it moved, and `actions.lock`, to a new branch.
+  For a release, the branch is `downstream/<package>-<version>`, and the body of the pull request starts with a hidden marker, `<!-- <comment-prefix>-downstream-<package> -->`.
+- With `--pr` and a dev version, it opens a draft pull request instead, from the branch `downstream-test/<package>-<version>`, titled `TEST PR: DO NOT MERGE: SKIP AI CODE REVIEW`.
   The body of the pull request starts with the hidden marker `<!-- <comment-prefix>-downstream-test-<package> -->`, and then a note that asks code-review AIs not to review it.
   CodeRabbit skips a draft pull request by default.
   To make CodeRabbit skip the pull request by its title too, add `ignore_title_keywords` to the CodeRabbit configuration of the downstream project.

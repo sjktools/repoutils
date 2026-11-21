@@ -307,6 +307,30 @@ def needs_source(root: Path, package: str) -> bool:
     return True
 
 
+def test_source(root: Path, package: str) -> bool:
+    """Whether root/pyproject.toml's [tool.uv.sources] takes package from an
+    index at TEST_INDEX_URL, as a dev version's bump makes it, so that a
+    release's bump would still resolve it from TestPyPI."""
+    tool = config.read_pyproject(root / config.PYPROJECT).get("tool", {})
+    uv = tool.get("uv", {}) if isinstance(tool, dict) else {}
+    if not isinstance(uv, dict):
+        return False
+    indexes = uv.get("index", [])
+    sources = uv.get("sources", {})
+    if not isinstance(indexes, list) or not isinstance(sources, dict):
+        return False
+    test = {
+        index.get("name")
+        for index in indexes
+        if isinstance(index, dict) and str(index.get("url", "")).rstrip("/") == TEST_INDEX_URL.rstrip("/")
+    }
+    normalized = normalize_package_name(package)
+    return any(
+        normalize_package_name(name) == normalized and isinstance(source, dict) and source.get("index") in test
+        for name, source in sources.items()
+    )
+
+
 _SOURCES_HEADER_RE = re.compile(
     r"^[ \t]*\[[ \t]*tool[ \t]*\.[ \t]*uv[ \t]*\.[ \t]*sources[ \t]*\][ \t]*(?:#.*)?$", re.M
 )

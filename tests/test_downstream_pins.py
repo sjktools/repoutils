@@ -390,3 +390,22 @@ def test_add_source_refuses(tmp_path: Path, text: str, error: str) -> None:
     with pytest.raises(RuntimeError, match=error):
         downstream_pins.add_source(tmp_path, "rep-utils")
     assert path.read_text() == text
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (f"{INDEX}\n{SOURCES}", True),
+        (f"{INDEX.replace('testpypi', 'mine', 1)}\n{SOURCES.replace('testpypi', 'mine')}", True),
+        (SOURCES, False),
+        (f"{INDEX}\n[tool.uv.sources]\nother = {{ index = 'testpypi' }}\n", False),
+        (f'{INDEX}\n[tool.uv.sources]\nrep-utils = {{ git = "https://x" }}\n', False),
+        ("", False),
+        ("tool = 1\n", False),
+        ("[tool]\nuv = 1\n", False),
+        ("[tool.uv]\nindex = 1\n", False),
+    ],
+)
+def test_test_source(tmp_path: Path, text: str, expected: bool) -> None:
+    (tmp_path / "pyproject.toml").write_text(text)
+    assert downstream_pins.test_source(tmp_path, "rep_utils") is expected

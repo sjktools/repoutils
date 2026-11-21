@@ -23,8 +23,9 @@ inputs:
     required: true
   commit:
     description: >-
-      For a dev version, which has no tag, the commit its build came from,
-      which the downstream's uses of the upstream's actions move to.
+      For a dev version, which has no tag, the full 40-character hash of the
+      commit its build came from, which the downstream's uses of the
+      upstream's actions move to.
     required: false
     default: ""
   package:

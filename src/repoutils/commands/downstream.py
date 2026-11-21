@@ -103,6 +103,11 @@ def bump(
     index_name = pypi_provenance.index_name(index)
     moving = downstream_pins.stale(directory, package, version)
     sourcing = dev and downstream_pins.needs_source(directory, package)
+    if not dev and downstream_pins.test_source(directory, package):
+        raise RuntimeError(
+            f"{directory / config.PYPROJECT} [tool.uv.sources] takes {package} from TestPyPI, as a dev version's "
+            f"bump left it, so remove that source and bump it by hand"
+        )
     using = downstream_actions.stale(directory, upstream, version, ref)
     if not moving and not sourcing and not using:
         actions = f", and uses {upstream}'s actions at {ref}" if downstream_actions.uses(directory, upstream) else ""

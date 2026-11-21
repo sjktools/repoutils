@@ -45,7 +45,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
 | `check-lock-platforms` | Fails if `uv.lock` contains wheels for platforms that the project does not allow. |
 | `dependabot-uv` | `show` prints the `uv` version from the newest successful Dependabot `uv` update run, `check` fails unless the minimum in `[tool.uv] required-version` is that version, and `bump` changes the project to that `uv` version (with `--pr`, in a new pull request, unless one for that version is already open). |
-| `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `bump` changes the pins of a downstream project to a release of this package, or to a dev version on TestPyPI, and re-locks it, and moves its uses of the actions of this package to the tag of the release. With `--pr`, it opens a pull request, unless one for that release or a newer one is already open, and closes or comments on open pull requests for earlier releases, unless one for a newer release is open. |
+| `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `bump` changes the pins of a downstream project to a release of this package, or to a dev version on TestPyPI, and re-locks it, and moves its uses of the actions of this package to the tag of the release, or for a dev version, to the commit that `--commit` names. With `--pr`, it opens a pull request, unless one for that release or a newer one is already open, and closes or comments on open pull requests for earlier releases, unless one for a newer release is open. |
 | `github-releases` | `check` fails if a project whose release assets this project pins has a newer release, and `bump` pins the assets of that release (with `--pr`, in a new pull request, unless one for that release is already open). |
 | `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment (posting nothing with `--update-only` when none exists) or hides it when you pass `--hide-previous`. |
 | `added-strings` | Lists the added lines in a pull request that match strings configured in `pyproject.toml` (such as `# noqa:`), or posts the list to the pull request. |
@@ -217,7 +217,7 @@ A downstream project needs no workflow of its own, but it must use `uv`.
 
 - It takes the package name from `[project] name` in the `pyproject.toml` of the upstream project, unless you pass `--package`.
 - It changes the `==` pins of the package in `[build-system] requires`, and the `>=` minimums in the dependencies, optional dependencies and dependency groups.
-  It changes nothing else in `pyproject.toml`.
+  It changes nothing else in `pyproject.toml`, except for a dev version, as described below.
 - It then re-locks `uv.lock`, and upgrades only the package.
   It uses the `uv` version that `[tool.uv] required-version` of the downstream project names, or the `uv` on the `PATH` if the project names none.
   PyPI can be a minute or two late to list a release, so the command tries the re-lock again for about two minutes.
@@ -242,6 +242,7 @@ A downstream project needs no workflow of its own, but it must use `uv`.
   - No tag exists for a dev version, so the command moves each `uses:` of the upstream repository to the commit that `--commit` names, the commit that the build came from.
     `--commit` is needed only if the downstream project uses the actions of the upstream repository.
   - A dev version `X.Y.Z.devN` is older than `X.Y.Z` and newer than any earlier version.
+  - The bump of a release fails if `[tool.uv.sources]` still takes the package from TestPyPI.
 - With `--pr`, it commits only `pyproject.toml`, `uv.lock`, the files with a `uses:` that it moved, and `actions.lock`, to the branch `downstream/<package>-<version>`.
   The body of the pull request starts with a hidden marker, `<!-- <comment-prefix>-downstream-<package> -->`.
 

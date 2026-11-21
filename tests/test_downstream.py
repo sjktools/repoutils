@@ -1057,3 +1057,13 @@ def test_bump_puts_the_source_back_if_locking_fails(upstream: Path, monkeypatch:
     monkeypatch.setattr(downstream_pins, "lock", lock)
     assert downstream.run(["bump", "--version", DEV, "--directory", "down"]) == 1
     assert (upstream / "down/pyproject.toml").read_text() == DOWNSTREAM
+
+
+def test_bump_refuses_a_release_while_taking_it_from_testpypi(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (upstream / "down/pyproject.toml").write_text(DOWNSTREAM + SOURCE)
+    fakes = Fakes(monkeypatch)
+    assert downstream.run(["bump", "--version", "0.4.0", "--directory", "down"]) == 1
+    assert "takes pkg from TestPyPI, as a dev version's bump left it" in capsys.readouterr().err
+    assert fakes.checked == []

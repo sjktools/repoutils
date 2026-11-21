@@ -28,8 +28,9 @@ name: Bump downstream
 #   gh actions-lock --verify.
 #
 # DOWNSTREAM_TOKEN needs Contents and Pull requests write on each downstream,
-# and Workflows write on each that uses this repository's actions, as the PR
-# then changes its workflows.
+# and Workflows write on each where the PR changes a file in
+# .github/workflows, such as a workflow or actions.lock that uses this
+# repository's actions.
 # It's a token rather than the GITHUB_TOKEN, which can't write to another
 # repository.
 on:

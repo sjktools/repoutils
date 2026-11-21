@@ -205,7 +205,7 @@ A downstream project needs no workflow of its own, but it must use `uv`.
   The actions run `repoutils` from their own commit with the `python3` of the runner, and install nothing but `uv` and the `gh-actions-lock` extension of `gh`.
 - The `plan` job runs the `downstream-plan` action, which runs `downstream list` and gives the repositories as a job matrix.
 - The `bump` job runs the `downstream-bump` action once for each downstream project.
-  The action checks out the default branch of the downstream project, runs `downstream bump`, and uploads `uv.lock` and `actions.lock` as an artifact.
+  The action checks out the default branch of the downstream project, runs `downstream bump`, and uploads `uv.lock` and `actions.lock`, if the downstream project has them, as an artifact.
   Re-locking runs the build backends of the downstream project, so this job has only a read-only `GITHUB_TOKEN`.
   That token can check out only a public repository, so each downstream repository must be public.
 - The `push` job runs the `downstream-push` action once for each downstream project, in an environment that only the default branch can deploy to.
@@ -263,7 +263,7 @@ To set up the same workflow for another package:
 4. Set the `DOWNSTREAM_REPOS` variable.
 5. Create a `downstream` environment that only the default branch can deploy to, and store the `DOWNSTREAM_TOKEN` secret in it.
    The token needs the Contents `write` and Pull requests `write` permissions on each downstream repository.
-   It also needs the Workflows `write` permission on each downstream repository that uses the actions of the package, because the pull request then changes files in `.github/workflows`.
+   It also needs the Workflows `write` permission on each downstream repository where the pull request changes a file in `.github/workflows`, such as a workflow or `actions.lock` that uses the actions of the package.
    A fine-grained token has one resource owner, so downstream repositories of a second owner need a second token.
    For each owner, use a copy of the workflow with its own variable, environment and token.
 6. In each downstream project, tell Dependabot to ignore the package, so that only the workflow bumps it.

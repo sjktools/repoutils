@@ -30,7 +30,10 @@ pkg = ["pkg>=0.3.0"]
 
 
 ACTIONS_LOCK = Path(".github/workflows/actions.lock")
-ACTIONS_LOCK_TEXT = "workflows:\n    '.github/workflows/ci.yml':\n        - 'u/up/.github/actions/a@v0.3.0'\n"
+ACTIONS_LOCK_TEXT = (
+    "workflows:\n    '.github/workflows/ci.yml':\n        - 'actions/checkout@v7.0.1'\n"
+    "        - 'u/up/.github/actions/a@v0.3.0'\n        - 'u/up/.github/actions/b@v0.3.0'\n"
+)
 WORKFLOW = """\
 jobs:
   bump:
@@ -782,13 +785,19 @@ def test_bump_only_the_actions(
     args += ["--lock-file", "new.lock", "--actions-lock-file", "actions.lock"]
     assert downstream.run(args) == 0
     assert capsys.readouterr().out.endswith(
-        "Bumped pkg from 0.3.0 to 0.4.0 in .github/workflows/ci.yml, .github/workflows/actions.lock\n"
+        "Bumped pkg's actions from v0.3.0 to v0.4.0 in .github/workflows/ci.yml, .github/workflows/actions.lock\n"
         "Opened https://github.com/d/down/pull/5\n"
     )
     assert fakes.actions_locked == []
     assert fakes.verified == [Path("down")]
-    assert (
-        "- `.github/workflows/ci.yml`: `u/up/.github/actions/b@v0.3.0` to `@v0.4.0`\n\n" in (fakes.created[0]["body"])
+    assert fakes.created[0]["body"].startswith(
+        "<!-- up-downstream-pkg -->\n"
+        "Bumps the actions of [pkg](https://pypi.org/project/pkg/0.4.0/) from v0.3.0 to v0.4.0, "
+        "which [u/up](https://github.com/u/up) released.\n\n"
+        "- `.github/workflows/ci.yml`: `u/up/.github/actions/b@v0.3.0` to `@v0.4.0`\n\n"
+    )
+    assert git(down, "log", "-1", "--format=%B", f"origin/{BRANCH}").startswith(
+        "Bump pkg to 0.4.0\n\nBumps pkg's actions from v0.3.0 to v0.4.0.\n\n"
     )
     assert git(down, "diff", "--name-only", "main", f"origin/{BRANCH}").splitlines() == [
         ".github/workflows/actions.lock",

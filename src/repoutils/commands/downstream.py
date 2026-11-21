@@ -187,9 +187,14 @@ def bump(
         for path, text in texts.items():
             path.write_bytes(text)
         raise
-    olds = {pin.version for pin in moving} | {use.ref.removeprefix("v") for use in using}
-    old = ", ".join(sorted(olds, key=downstream_pins.release_key))
-    print(f"Bumped {package} from {old} to {version} in {', '.join(names)}")
+    if moving:
+        old = ", ".join(sorted({pin.version for pin in moving}, key=downstream_pins.release_key))
+        what, change = package, f"from {old} to {version}"
+    else:
+        # The pins were already current, so only the actions moved.
+        tags = sorted({use.ref for use in using}, key=lambda ref: downstream_pins.release_key(ref[1:]))
+        what, change = f"{package}'s actions", f"from {', '.join(tags)} to {downstream_actions.tag(version)}"
+    print(f"Bumped {what} {change} in {', '.join(names)}")
     if not pr:
         return 0
 
@@ -211,9 +216,10 @@ def bump(
         base=base,
         paths=names,
         title=f"Bump {package} to {version}",
-        message=f"Bumps {package} from {old} to {version}.\n\n{downstream_prs.TRAILER}",
+        message=f"Bumps {what} {change}.\n\n{downstream_prs.TRAILER}",
         body=f"{marker}\n"
-        f"Bumps [{package}](https://pypi.org/project/{package}/{version}/) from {old} to {version}, "
+        f"Bumps {'' if moving else 'the actions of '}[{package}](https://pypi.org/project/{package}/{version}/) "
+        f"{change}, "
         f"which [{upstream}](https://github.com/{upstream}) released.\n\n"
         f"{pins}\n\n"
         f"PyPI's provenance names {upstream} as the trusted publisher of each of the release's files.\n\n"

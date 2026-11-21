@@ -27,6 +27,9 @@ _USES_RE = re.compile(
     r"""(?P<action>(?P<repo>[^/@\s"'#]+/[^/@\s"'#]+)(?:/[^@\s"'#]*)?)@(?P<ref>[^@\s"'#]+)(?P=quote)"""
     r"""\s*(?:#.*)?$"""
 )
+# A key whose value is a block scalar, such as `run: |`, whose lines follow,
+# indented further than the key's line.
+_BLOCK_RE = re.compile(r"""^(?P<indent>\s*)(?:-\s+)?[^\s#'"][^#]*?:\s*[|>][-+0-9]*\s*(?:#.*)?$""")
 
 
 def tag(version: str) -> str:
@@ -51,13 +54,29 @@ def _lines(path: Path) -> list[str]:
         return f.read().splitlines(keepends=True)
 
 
+def _outside_blocks(lines: list[str]) -> list[tuple[int, str]]:
+    """Each line, from 1, with its line ending, that isn't in a block scalar,
+    such as a `run: |` script, whose text could read as a `uses:`."""
+    found: list[tuple[int, str]] = []
+    block: int | None = None
+    for number, line in enumerate(lines, 1):
+        body = line.rstrip("\r\n")
+        if block is not None and (not body.strip() or len(body) - len(body.lstrip()) > block):
+            continue
+        block = None
+        if match := _BLOCK_RE.match(body):
+            block = len(match["indent"])
+        found.append((number, body))
+    return found
+
+
 def uses(root: Path, upstream: str) -> list[Use]:
     """Every `uses:` in root's workflows and local actions that names the
     upstream's repository, in file and line order."""
     found: list[Use] = []
     for path in check_pins.workflow_files(root):
-        for number, line in enumerate(_lines(path), 1):
-            match = _USES_RE.match(line.rstrip("\r\n"))
+        for number, line in _outside_blocks(_lines(path)):
+            match = _USES_RE.match(line)
             # GitHub's names are case-insensitive.
             if match is not None and match["repo"].lower() == upstream.lower():
                 found.append(Use(path.relative_to(root).as_posix(), number, match["action"], match["ref"]))

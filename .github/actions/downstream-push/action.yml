@@ -21,8 +21,9 @@ inputs:
   token:
     description: >-
       A token with Contents and Pull requests write on the downstream, which
-      pushes the branch and opens the pull request. If the downstream uses
-      the upstream's actions, it also needs Workflows write.
+      pushes the branch and opens the pull request. If the pull request
+      changes a file in .github/workflows, such as actions.lock, it also
+      needs Workflows write.
     required: true
   package:
     description: The package to bump (default, the [project] name in the upstream's pyproject.toml).

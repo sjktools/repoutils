@@ -18,6 +18,13 @@ jobs:
       - uses: "u/up/.github/actions/x@v0.3.0"  # the bump
       -   uses: 'u/up@v0.3.5'
       - run: echo uses u/up@v0.1.0
+      - run: |
+          cat <<'EOF'
+          uses: u/up@v0.1.0
+
+          - uses: u/up@main
+          EOF
+        shell: bash
       - uses: u/upper/.github/actions/x@v0.1.0
 """
 ACTION = "runs:\n  using: composite\n  steps:\n    - uses: u/up/.github/actions/y@v0.3.0\n"

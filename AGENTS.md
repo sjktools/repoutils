@@ -189,7 +189,7 @@ It also moves each `uses:` of repoutils' actions to the release's tag, and regen
 The `push` job opens the PR with the `DOWNSTREAM_TOKEN` secret, and takes `uv.lock` and `actions.lock` from the `bump` job as data.
 It moves the `uses:` again itself, and checks `actions.lock` with `gh actions-lock --verify` before it commits it.
 That secret lives in the main-only `downstream` environment, and needs Contents and Pull requests write on each downstream.
-It also needs Workflows write on each downstream that uses repoutils' actions, as the PR then changes its workflows.
+It also needs Workflows write on each downstream where the PR changes a file in `.github/workflows`, such as a workflow or `actions.lock` that uses repoutils' actions.
 
 `claude.yml` and `claude-code-review.yml` run Claude Code when a comment starts with `@claude` (with the `CLAUDE_CODE_OAUTH_TOKEN` secret).
 Their `route` jobs run `repoutils claude-route` from a sparse checkout of `src/repoutils/` with the runner's `python3`, installing nothing.

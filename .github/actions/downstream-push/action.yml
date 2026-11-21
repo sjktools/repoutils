@@ -1,0 +1,106 @@
+name: Open a downstream bump pull request
+description: >-
+  Makes the bump job's changes to a downstream again, takes uv.lock from the
+  bump job's artifact as data, and opens the pull request, with `repoutils
+  downstream bump --pr`.
+
+# The push job of a Bump downstream workflow (see the README), once for each
+# downstream, in an environment that only main can deploy to, which holds the
+# token. It runs only repoutils, from this action's own commit, with the
+# runner's python3, installing nothing, and runs no code from the downstream.
+# It runs in the upstream's checkout, which gives the package's name, and
+# checks out the downstream inside it.
+inputs:
+  repository:
+    description: The downstream, as owner/name.
+    required: true
+  version:
+    description: The upstream's release to bump to, such as 0.4.0.
+    required: true
+  token:
+    description: >-
+      A token with Contents and Pull requests write on the downstream, which
+      pushes the branch and opens the pull request.
+    required: true
+  package:
+    description: The package to bump (default, the [project] name in the upstream's pyproject.toml).
+    required: false
+    default: ""
+  path:
+    description: Where to check out the downstream, inside the upstream's checkout.
+    required: false
+    default: downstream
+
+runs:
+  using: composite
+  steps:
+    - name: Check the token is set
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.token }}
+      run: |
+        if [ -z "$TOKEN" ]; then
+          echo "::error::The token input is empty: is the secret set in the job's environment?"
+          exit 1
+        fi
+
+    - name: Name the artifact
+      id: name
+      shell: bash
+      env:
+        REPOSITORY: ${{ inputs.repository }}
+      run: echo "artifact=downstream-${REPOSITORY/\//_}" >> "$GITHUB_OUTPUT"
+
+    # If this fails, the bump job for this downstream failed too.
+    - name: Download the bump
+      uses: actions/download-artifact@v8.0.2
+      with:
+        name: ${{ steps.name.outputs.artifact }}
+        path: ${{ runner.temp }}/downstream-bump
+
+    # Its default branch, which the pull request goes into. The stored token
+    # is what `bump --pr` pushes with.
+    - name: Check out the downstream
+      uses: actions/checkout@v7.0.1
+      with:
+        repository: ${{ inputs.repository }}
+        path: ${{ inputs.path }}
+        token: ${{ inputs.token }}
+        persist-credentials: true
+
+    # The bump job re-locked the downstream as it was at that commit.
+    - name: Check the downstream hasn't moved on
+      shell: bash
+      env:
+        DIRECTORY: ${{ inputs.path }}
+      run: |
+        commit=$(cat "$RUNNER_TEMP/downstream-bump/commit")
+        # It's data from a job that ran the downstream's code.
+        if [[ ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+          echo "::error::The bump job's commit file doesn't hold a commit."
+          exit 1
+        fi
+        if [ "$(git -C "$DIRECTORY" rev-parse HEAD)" != "$commit" ]; then
+          echo "::error::The downstream has moved on from $commit, so run the workflow again."
+          exit 1
+        fi
+
+    - name: Open the pull request
+      shell: bash
+      env:
+        DIRECTORY: ${{ inputs.path }}
+        GITHUB_TOKEN: ${{ inputs.token }}
+        PACKAGE: ${{ inputs.package }}
+        REPOSITORY: ${{ inputs.repository }}
+        VERSION: ${{ inputs.version }}
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+        PYTHONSAFEPATH: "1"
+      run: |
+        git -C "$DIRECTORY" config user.name "github-actions[bot]"
+        git -C "$DIRECTORY" config user.email "github-actions[bot]@users.noreply.github.com"
+        lock=()
+        if [ -f "$RUNNER_TEMP/downstream-bump/uv.lock" ]; then
+          lock=(--lock-file "$RUNNER_TEMP/downstream-bump/uv.lock")
+        fi
+        python3 -m repoutils downstream bump --pr --repo "$REPOSITORY" --version "$VERSION" \
+          --directory "$DIRECTORY" ${PACKAGE:+--package "$PACKAGE"} "${lock[@]}"

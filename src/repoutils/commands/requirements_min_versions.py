@@ -14,7 +14,7 @@ from repoutils import config
 from repoutils.docstrings import summary
 
 
-def _normalize_package_name(name: str) -> str:
+def normalize_package_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
@@ -22,7 +22,7 @@ def _parse_locked_versions() -> dict[str, set[str]]:
     lock = tomllib.loads(Path("uv.lock").read_text(encoding="utf-8"))
     locked: dict[str, set[str]] = {}
     for package in lock.get("package", []):
-        name = _normalize_package_name(package["name"])
+        name = normalize_package_name(package["name"])
         version = package.get("version")
         if version is None:
             continue
@@ -40,7 +40,7 @@ def _parse_dependency(dep: str) -> tuple[str, str] | None:
     minimum_version_match = _MINIMUM_RE.search(dep.split(";", 1)[0])
     if minimum_version_match is None:
         return None
-    return _normalize_package_name(dependency_name_match.group(1)), minimum_version_match.group(2)
+    return normalize_package_name(dependency_name_match.group(1)), minimum_version_match.group(2)
 
 
 class _LockError(Exception):
@@ -60,7 +60,7 @@ class _Mismatch:
         return _MINIMUM_RE.sub(rf"\g<1>{self.actual}", self.dep, count=1)
 
 
-def _dependency_groups(pyproject: dict[str, Any]) -> list[tuple[str, list[Any]]]:
+def dependency_groups(pyproject: dict[str, Any]) -> list[tuple[str, list[Any]]]:
     """Return ``(name, dependencies)`` for the main dependencies, each optional extra and each dependency group."""
     project = pyproject.get("project", {})
     groups = [("project.dependencies", project.get("dependencies", []))]
@@ -120,7 +120,7 @@ def _check(mismatches: list[_Mismatch]) -> int:
     return 0
 
 
-def _replace_dependency(text: str, old: str, new: str) -> tuple[str, int]:
+def replace_dependency(text: str, old: str, new: str) -> tuple[str, int]:
     """Replace the first TOML string in *text* that is exactly *old*, in either quote style, with *new*.
 
     Returns the new text and the number of replacements (0 or 1).
@@ -138,7 +138,7 @@ def _fix(mismatches: list[_Mismatch], pyproject_path: Path, pyproject_text: str)
         print("No dependency minimum version updates needed.")
         return 0
     for m in mismatches:
-        pyproject_text, count = _replace_dependency(pyproject_text, m.dep, m.fixed_dep)
+        pyproject_text, count = replace_dependency(pyproject_text, m.dep, m.fixed_dep)
         if count == 0:
             print(f"Couldn't find {m.dep!r} in pyproject.toml", file=sys.stderr)
             return 1
@@ -154,7 +154,7 @@ def main(mode: str) -> int:
     pyproject = config.read_pyproject(pyproject_path)
     pyproject_text = pyproject_path.read_text(encoding="utf-8")
     try:
-        mismatches = _find_mismatches(_dependency_groups(pyproject), _parse_locked_versions())
+        mismatches = _find_mismatches(dependency_groups(pyproject), _parse_locked_versions())
     except _LockError as exc:
         print(exc, file=sys.stderr)
         return 1

@@ -39,7 +39,9 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
   `src/repoutils/secret_levels.py` is the format they pass those names in, which `secrets inspect` and `secrets export` read.
 - `src/repoutils/uv_bump.py` is `dependabot-uv bump`'s changes to the files that `check-pins` checks, and its re-lock of `uv.lock`, kept apart from the command for length.
   It changes them only if `check-pins` passes, before and after, and puts them back if re-locking fails.
-- `src/repoutils/pull_request.py` commits a change to a new branch, pushes it and opens a PR, for `bump --pr` in `dependabot-uv` and `github-releases`.
+- `src/repoutils/pull_request.py` commits a change to a new branch, pushes it and opens a PR, for `bump --pr` in `dependabot-uv`, `downstream` and `github-releases`.
+- `src/repoutils/downstream_pins.py` holds `downstream bump`'s changes to a downstream's pins and its re-lock, kept apart from the command for length.
+  `src/repoutils/pypi_provenance.py` checks that PyPI's provenance for a release names the upstream's repository as its trusted publisher.
 - `src/repoutils/release_pins.py` is the format of the pins file that `github-releases bump` writes, kept apart from the command for length.
 - `src/repoutils/workflows.py` reads the workflows in `.github/workflows` for the secrets and variables they use and each job's environment, without a YAML parser.
   `secrets check-workflows` and `variables check-workflows` use it.
@@ -172,6 +174,14 @@ Its `bump` job re-locks with the new uv and no token that can write, and hands `
 The `push` job makes the other changes for the same version with main's repoutils and `--lock-file`, then opens the PR with the `UV_BUMP_TOKEN` secret.
 That secret lives in the `uv-bump` environment, which only `main` can deploy to.
 It needs Contents and Pull requests write, and Workflows write, as the PR changes the `setup-uv` pins.
+
+`bump-downstream.yml` runs when Publish succeeds on a `v*` tag.
+It opens a PR in each repository that the `DOWNSTREAM_REPOS` variable names, with `repoutils downstream bump --pr`.
+Each of its three jobs runs one composite action in `.github/actions/`: `downstream-plan`, `downstream-bump` or `downstream-push`.
+The actions run repoutils from `${{ github.action_path }}`, so other projects can use them too.
+As in Bump uv, the `bump` job re-locks with no token that can write.
+The `push` job opens the PR with the `DOWNSTREAM_TOKEN` secret, and takes `uv.lock` from the `bump` job as data.
+That secret lives in the main-only `downstream` environment, and needs Contents and Pull requests write on each downstream.
 
 `claude.yml` and `claude-code-review.yml` run Claude Code when a comment starts with `@claude` (with the `CLAUDE_CODE_OAUTH_TOKEN` secret).
 Their `route` jobs run `repoutils claude-route` from a sparse checkout of `src/repoutils/` with the runner's `python3`, installing nothing.

@@ -1,0 +1,82 @@
+name: Bump a downstream
+description: >-
+  Checks out a downstream repository's default branch, moves its pins of the
+  upstream's package to a release and re-locks it, with `repoutils downstream
+  bump`, and uploads what the push job needs as an artifact.
+
+# The bump job of a Bump downstream workflow (see the README), once for each
+# downstream. Re-locking runs the downstream's build backends, so the job must
+# hold no token that can write, and this action takes none. It runs in the
+# upstream's checkout, which gives the package's name, and checks out the
+# downstream inside it. It runs repoutils from this action's own commit, with
+# the runner's python3, installing only uv.
+inputs:
+  repository:
+    description: The downstream, as owner/name.
+    required: true
+  version:
+    description: The upstream's release to bump to, such as 0.4.0.
+    required: true
+  package:
+    description: The package to bump (default, the [project] name in the upstream's pyproject.toml).
+    required: false
+    default: ""
+  path:
+    description: Where to check out the downstream, inside the upstream's checkout.
+    required: false
+    default: downstream
+
+runs:
+  using: composite
+  steps:
+    # The artifact's name, as an artifact's name can't have a slash. An owner
+    # can't have an underscore, so the name is still unique.
+    - name: Name the artifact
+      id: name
+      shell: bash
+      env:
+        REPOSITORY: ${{ inputs.repository }}
+      run: echo "artifact=downstream-${REPOSITORY/\//_}" >> "$GITHUB_OUTPUT"
+
+    # Its default branch, as no ref is given.
+    - name: Check out the downstream
+      uses: actions/checkout@v7.0.1
+      with:
+        repository: ${{ inputs.repository }}
+        path: ${{ inputs.path }}
+        persist-credentials: false
+
+    # Keep version in step with pyproject.toml's [tool.uv] required-version.
+    # It runs the downstream's own uv with `uv tool run`. No cache: the
+    # upstream's other jobs on main would restore it.
+    - name: Install uv
+      uses: astral-sh/setup-uv@v10.3.3
+      with:
+        version: "0.13.6"
+        enable-cache: false
+
+    - name: Bump the downstream
+      shell: bash
+      env:
+        DIRECTORY: ${{ inputs.path }}
+        PACKAGE: ${{ inputs.package }}
+        VERSION: ${{ inputs.version }}
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+        PYTHONSAFEPATH: "1"
+      run: |
+        python3 -m repoutils downstream bump --version "$VERSION" --directory "$DIRECTORY" \
+          ${PACKAGE:+--package "$PACKAGE"}
+        # The push job checks the downstream hasn't moved on from this commit.
+        mkdir "$RUNNER_TEMP/downstream-bump"
+        git -C "$DIRECTORY" rev-parse HEAD > "$RUNNER_TEMP/downstream-bump/commit"
+        if [ -f "$DIRECTORY/uv.lock" ]; then
+          cp "$DIRECTORY/uv.lock" "$RUNNER_TEMP/downstream-bump/uv.lock"
+        fi
+
+    - name: Upload the bump
+      uses: actions/upload-artifact@v7.0.2
+      with:
+        name: ${{ steps.name.outputs.artifact }}
+        path: ${{ runner.temp }}/downstream-bump/
+        retention-days: 1
+        if-no-files-found: error

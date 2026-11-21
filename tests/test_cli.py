@@ -131,6 +131,7 @@ def test_check_screenshots_dir(monkeypatch: pytest.MonkeyPatch, capsys: pytest.C
         (["dependabot-relock"], "base-ref"),
         (["dependabot-uv"], "{show,check,bump}"),
         (["github-releases"], "{check,bump}"),
+        (["downstream"], "{list,bump}"),
         (["requirements-min-versions", "neither"], "{check,fix}"),
         (["check-attestations", "a", "b"], "[dist]"),
         (["labels"], "{check,ensure,dump}"),
@@ -373,7 +374,7 @@ def test_this_repos_variables_match_its_workflows(
     monkeypatch.chdir(ROOT)
     assert cli.main(["variables", "check-workflows"]) == 0
     assert "The workflows use exactly the" in capsys.readouterr().out
-    assert load_variables(ROOT).lists == {"actions": ["SECRETS_EXPORT_KEY"]}
+    assert load_variables(ROOT).lists == {"actions": ["DOWNSTREAM_REPOS", "SECRETS_EXPORT_KEY"]}
 
 
 def test_environments(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

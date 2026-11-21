@@ -1,0 +1,141 @@
+name: Bump downstream
+
+# After a release reaches PyPI, opens a PR in each downstream repository that
+# the DOWNSTREAM_REPOS variable names (space-separated owner/name), bumping its
+# pins of repoutils to the release with `repoutils downstream bump --pr`. It
+# does nothing for a downstream that already pins the release, or that already
+# has that release's PR open. Before it changes anything, it checks that PyPI's
+# provenance names this repository as the release's trusted publisher.
+#
+# It runs when Publish succeeds on a v* tag. A `release: published` trigger
+# would never fire, as ci.yml's release job creates the release with its
+# GITHUB_TOKEN. Run it by hand from main, with a version, to bump again.
+#
+# Three jobs, one composite action each, so the code that re-locks never runs
+# alongside a token that can push:
+#
+# - plan checks DOWNSTREAM_REPOS and gives the matrix.
+# - bump checks out each downstream's default branch, moves its pins and
+#   re-locks it with its own uv, which runs its build backends. It has only a
+#   read-only GITHUB_TOKEN, and hands uv.lock on as an artifact.
+# - push makes the PR with DOWNSTREAM_TOKEN, which lives in the downstream
+#   environment that only main can deploy to. It runs only main's repoutils,
+#   with the runner's python3, installing nothing, and takes uv.lock from bump
+#   as data.
+#
+# DOWNSTREAM_TOKEN needs Contents and Pull requests write on each downstream.
+# It's a token rather than the GITHUB_TOKEN, which can't write to another
+# repository.
+on:
+  workflow_run:
+    workflows: [Publish]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The release to bump to, such as 0.4.0"
+        required: true
+
+concurrency:
+  group: bump-downstream
+
+permissions: {}
+
+jobs:
+  plan:
+    if: >-
+      github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    outputs:
+      repositories: ${{ steps.plan.outputs.repositories }}
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout repoutils' source
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /.github/actions/downstream-plan/
+            /src/repoutils/
+          sparse-checkout-cone-mode: false
+
+      # A Publish run's head branch is the tag it ran on, v<version>.
+      - name: Find the version
+        id: version
+        env:
+          DISPATCHED: ${{ inputs.version }}
+          TAG: ${{ github.event.workflow_run.head_branch }}
+        run: echo "version=${DISPATCHED:-${TAG#v}}" >> "$GITHUB_OUTPUT"
+
+      - name: Plan
+        id: plan
+        uses: $/.github/actions/downstream-plan
+        with:
+          repositories: ${{ vars.DOWNSTREAM_REPOS }}
+
+  bump:
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        repository: ${{ fromJSON(needs.plan.outputs.repositories) }}
+
+    steps:
+      - name: Checkout repoutils' source
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /.github/actions/downstream-bump/
+            /pyproject.toml
+            /src/repoutils/
+          sparse-checkout-cone-mode: false
+
+      - name: Bump ${{ matrix.repository }}
+        uses: $/.github/actions/downstream-bump
+        with:
+          repository: ${{ matrix.repository }}
+          version: ${{ needs.plan.outputs.version }}
+
+  # Each downstream's push runs whether or not another's bump failed.
+  push:
+    needs: [plan, bump]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: downstream
+    # DOWNSTREAM_TOKEN does the writing.
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        repository: ${{ fromJSON(needs.plan.outputs.repositories) }}
+
+    steps:
+      - name: Checkout repoutils' source
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /.github/actions/downstream-push/
+            /pyproject.toml
+            /src/repoutils/
+          sparse-checkout-cone-mode: false
+
+      - name: Open the pull request in ${{ matrix.repository }}
+        uses: $/.github/actions/downstream-push
+        with:
+          repository: ${{ matrix.repository }}
+          version: ${{ needs.plan.outputs.version }}
+          token: ${{ secrets.DOWNSTREAM_TOKEN }}

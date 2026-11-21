@@ -328,11 +328,11 @@ def test_source(root: Path, package: str) -> bool:
     }
     normalized = normalize_package_name(package)
     return any(
-        normalize_package_name(name) == normalized
-        and isinstance(source, dict)
-        and isinstance(source.get("index"), str)
-        and source["index"] in test
+        isinstance(entry, dict) and isinstance(entry.get("index"), str) and entry["index"] in test
         for name, source in sources.items()
+        if normalize_package_name(name) == normalized
+        # A list of sources, each with a marker, or one source.
+        for entry in (source if isinstance(source, list) else [source])
     )
 
 

@@ -416,6 +416,14 @@ LIST_NAME = INDEX.replace('"testpypi"', '["testpypi"]')
         (f"{NAMELESS}\n[tool.uv.sources]\nrep-utils = {{ path = 'x' }}\n", False),
         (f"{LIST_NAME}\n{SOURCES}", False),
         (f"{INDEX}\n[tool.uv.sources]\nrep-utils = {{ index = ['testpypi'] }}\n", False),
+        # A list of sources with markers.
+        (
+            f"{INDEX}\n[tool.uv.sources]\nrep-utils = [\n"
+            "  { path = 'x', marker = \"sys_platform == 'win32'\" },\n"
+            "  { index = 'testpypi', marker = \"sys_platform != 'win32'\" },\n]\n",
+            True,
+        ),
+        (f"{INDEX}\n[tool.uv.sources]\nrep-utils = [{{ path = 'x' }}, 1]\n", False),
         (f"{INDEX}\n[tool.uv.sources]\nother = {{ index = 'testpypi' }}\n", False),
         (f'{INDEX}\n[tool.uv.sources]\nrep-utils = {{ git = "https://x" }}\n', False),
         ("", False),

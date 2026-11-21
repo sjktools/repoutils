@@ -37,7 +37,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `check-screenshots-dir` | Fails unless `.gitignore` is the only tracked file in the screenshots directory and ignores all other files in that directory. |
 | `git-config-setup` | Sets the local `blame.ignoreRevsFile` Git setting (idempotent, so a justfile can run it before every recipe). |
 | `long-files` | Lists the files over a line limit as Markdown (with changed files first), or posts that list to a pull request. |
-| `check-pins` | Fails unless every `setup-uv` and `setup-just` workflow step pins the versions required by `pyproject.toml` and the justfile, and the actions that the project uses from the repository of a locked package come from the commit of that package (see [Checking actions against a locked package](#checking-actions-against-a-locked-package)). |
+| `check-pins` | Fails unless every `setup-uv` and `setup-just` workflow step pins the versions required by `pyproject.toml` and the justfile, and the actions that the project uses from the repository of a locked package come from the commit of that package, or only from the tag of its version if the package does not record its commit (see [Checking actions against a locked package](#checking-actions-against-a-locked-package)). |
 | `check-checkout-credentials` | Fails on any `actions/checkout` step that does not set `persist-credentials`. |
 | `autofix` | Starts the PR Fixes workflow on a pull request, waits for the workflow that pushes its fixes, and prints the new head commit of the branch. |
 | `claude-route` | Reads a comment from standard input and prints `review`, `other` or `none` to route between the Claude workflows. |
@@ -1133,7 +1133,7 @@ It reads only local files:
 If the package has no `build_info.json`, or its `commit` is `null`, `check-pins` checks only that the ref of each action is `v<version>`, and prints a warning.
 The check fails on any of these errors:
 
-- The installed version of the package differs from the version in `uv.lock`.
+- The installed version of a package whose repository has an action in `actions.lock` is not a version in `uv.lock`.
 - `actions.lock` or `uv.lock` cannot be read.
 - The package has more than one `build_info.json`, or a `build_info.json` that cannot be read.
 

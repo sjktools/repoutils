@@ -95,9 +95,10 @@ def read_actions_lock(text: str, path: Path = ACTIONS_LOCK) -> list[LockedAction
     return actions
 
 
-def read_uv_lock(text: str, path: Path = UV_LOCK) -> dict[str, str]:
-    """Each package's version in uv.lock, by name. A package with no version
-    (the project itself, when it's virtual) is left out."""
+def read_uv_lock(text: str, path: Path = UV_LOCK) -> dict[str, list[str]]:
+    """Each package's versions in uv.lock, by name. A package can have more
+    than one, for different markers. A package with no version (the project
+    itself, when it's virtual) is left out."""
     try:
         lock = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
@@ -105,12 +106,12 @@ def read_uv_lock(text: str, path: Path = UV_LOCK) -> dict[str, str]:
     packages = lock.get("package", [])
     if not isinstance(packages, list):
         raise LockError(f"{path}: package isn't a list of tables")
-    versions: dict[str, str] = {}
+    versions: dict[str, list[str]] = {}
     for package in packages:
         if not isinstance(package, dict) or not isinstance(package.get("name"), str):
             raise LockError(f"{path}: a package has no name")
         if isinstance(version := package.get("version"), str):
-            versions[package["name"]] = version
+            versions.setdefault(package["name"], []).append(version)
     return versions
 
 
@@ -143,18 +144,23 @@ def build_info(distribution: Distribution, name: str) -> tuple[str, bool] | None
         raise LockError(f"{name}'s {path} can't be read: {e}") from e
     commit = info.get("commit") if isinstance(info, dict) else None
     dirty = info.get("dirty") if isinstance(info, dict) else None
-    if not isinstance(info, dict) or not isinstance(commit, str | None) or not isinstance(dirty, bool | None):
-        raise LockError(f'{name}\'s {path} isn\'t of the form {{"commit": ..., "dirty": ...}}')
-    return None if commit is None else (commit, bool(dirty))
+    # The hook writes both as null, or a commit and a boolean.
+    if isinstance(commit, str) and isinstance(dirty, bool):
+        return commit, dirty
+    if isinstance(info, dict) and commit is None and dirty is None:
+        return None
+    raise LockError(f'{name}\'s {path} isn\'t of the form {{"commit": ..., "dirty": ...}}')
 
 
-def check_package(name: str, locked: str, distribution: Distribution, actions: list[LockedAction]) -> Result:
-    """Compare one installed package with the actions from its repository."""
+def check_package(name: str, versions: list[str], distribution: Distribution, actions: list[LockedAction]) -> Result:
+    """Compare one installed package, at one of uv.lock's versions of it,
+    with the actions from its repository."""
     result = Result()
-    installed = distribution.version
-    if installed != locked:
+    locked = distribution.version
+    if locked not in versions:
         raise LockError(
-            f"{name} {installed} is installed, but uv.lock pins {locked}, so its actions can't be checked (run uv sync)"
+            f"{name} {locked} is installed, but uv.lock pins {' or '.join(versions)}, so its actions can't be checked "
+            "(run uv sync)"
         )
     info = build_info(distribution, name)
     if info is None:
@@ -202,12 +208,12 @@ def check(root: Path, path: list[str] | None = None) -> Result:
         raise LockError(str(e)) from e
     actions = read_actions_lock(actions_text, ACTIONS_LOCK)
     repos = {action.repo for action in actions}
-    for name, locked in sorted(read_uv_lock(uv_text, UV_LOCK).items()):
+    for name, versions in sorted(read_uv_lock(uv_text, UV_LOCK).items()):
         distribution = _find(name, path)
         repo = repository(distribution) if distribution is not None else None
         if distribution is None or repo not in repos:
             continue
-        found = check_package(name, locked, distribution, [action for action in actions if action.repo == repo])
+        found = check_package(name, versions, distribution, [action for action in actions if action.repo == repo])
         result.problems += found.problems
         result.warnings += found.warnings
         result.matched += found.matched

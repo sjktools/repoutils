@@ -132,7 +132,7 @@ def test_read_actions_lock_rejects_what_it_cant_read(text: str, error: str) -> N
 
 
 def test_read_uv_lock() -> None:
-    assert read_uv_lock(UV_LOCK) == {"example-tool": "1.2.0", "unrelated": "3.0", "not-installed": "1.0"}
+    assert read_uv_lock(UV_LOCK) == {"example-tool": ["1.2.0"], "unrelated": ["3.0"], "not-installed": ["1.0"]}
     for text, error in [
         ("version = ", "uv.lock: "),
         ("package = 3\n", "package isn't a list"),
@@ -156,7 +156,7 @@ def test_build_info_is_found_wherever_record_puts_it(project: Path) -> None:
         "example-tool",
         "1.2.0",
         "https://GitHub.com/Example/Tool.git",
-        {"commit": COMMIT.upper(), "dirty": None},
+        {"commit": COMMIT.upper(), "dirty": False},
         "somewhere/else/build_info.json",
     )
     assert check(project, site(project)).problems == []
@@ -201,8 +201,15 @@ def test_without_build_info_another_tag_fails(project: Path) -> None:
 
 def test_installed_version_must_match_uv_lock(project: Path) -> None:
     install(project.parent / "site", "example-tool", "1.1.0", info={"commit": COMMIT, "dirty": False})
-    with pytest.raises(LockError, match=r"example-tool 1\.1\.0 is installed, but uv\.lock pins 1\.2\.0"):
+    with pytest.raises(LockError, match=r"example-tool 1\.1\.0 is installed, but uv\.lock pins 1\.2\.0, so"):
         check(project, site(project))
+    # uv.lock can have more than one version of a package, for different markers.
+    second = '[[package]]\nname = "example-tool"\nversion = "{}"\nsource = {{ registry = "https://pypi.org/simple" }}\n'
+    (project / "uv.lock").write_text(UV_LOCK + "\n" + second.format("1.3.0"))
+    with pytest.raises(LockError, match=r"uv\.lock pins 1\.2\.0 or 1\.3\.0, so"):
+        check(project, site(project))
+    (project / "uv.lock").write_text(UV_LOCK + "\n" + second.format("1.1.0"))
+    assert check(project, site(project)).matched == [f"example-tool 1.1.0's actions are at its commit {COMMIT[:12]}"]
 
 
 @pytest.mark.parametrize(
@@ -212,6 +219,8 @@ def test_installed_version_must_match_uv_lock(project: Path) -> None:
         ([], "isn't of the form"),
         ({"commit": 3, "dirty": False}, "isn't of the form"),
         ({"commit": COMMIT, "dirty": "no"}, "isn't of the form"),
+        ({"commit": COMMIT, "dirty": None}, "isn't of the form"),
+        ({"commit": None, "dirty": True}, "isn't of the form"),
     ],
 )
 def test_unreadable_build_info_is_an_error(project: Path, info: object, error: str) -> None:
@@ -248,7 +257,7 @@ def test_nothing_to_check_without_both_lock_files(project: Path) -> None:
 
 def test_unreadable_lock_file_is_an_error(project: Path) -> None:
     (project / "uv.lock").write_bytes(b"\xff")
-    with pytest.raises(LockError):
+    with pytest.raises(LockError, match="can't decode"):
         check(project, site(project))
 
 

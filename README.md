@@ -235,7 +235,7 @@ With `--pr`, `downstream bump` finds the open pull requests that earlier runs op
 - Otherwise, the command opens the new pull request first, and then handles each earlier pull request.
 - An earlier pull request is untouched if `downstream bump` made each of its commits, apart from merges that the Update branch button of GitHub made.
   The command finds its own commits by their `Bumped-By: repoutils downstream bump` trailer.
-  A commit that someone amended or rebased keeps the trailer, but gets a new committer, so it counts as another commit.
+  A commit that someone amended or rebased keeps the trailer, but gets a new committer or commit time, so it counts as another commit.
   This includes a rebase by the Update branch button, because an amended commit looks the same after that rebase.
   It reads the commits and not the changes, because a merge or a re-lock also changes `uv.lock`.
 - The command deletes the branch of an untouched pull request, closes the pull request, and comments "Superseded by #N".

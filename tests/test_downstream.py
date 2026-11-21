@@ -131,15 +131,20 @@ def pull(
 
 
 def commit(
-    message: str, *, parents: int = 1, committer: str | None = "bot", git_committer: str = "bot"
+    message: str,
+    *,
+    parents: int = 1,
+    committer: str | None = "bot",
+    git_committer: str = "bot",
+    committed: str = "2026-11-21T00:00:00Z",
 ) -> dict[str, Any]:
     """A commit as GitHub's API lists a pull request's, made by bot unless
     git_committer says otherwise, and committer, its GitHub account."""
     return {
         "commit": {
             "message": message,
-            "author": {"name": "bot", "email": "bot@example.com"},
-            "committer": {"name": git_committer, "email": f"{git_committer}@example.com"},
+            "author": {"name": "bot", "email": "bot@example.com", "date": "2026-11-21T00:00:00Z"},
+            "committer": {"name": git_committer, "email": f"{git_committer}@example.com", "date": committed},
         },
         "parents": [{"sha": "p"}] * parents,
         "committer": {"login": committer} if committer else None,
@@ -501,6 +506,8 @@ def test_bump_pr_supersedes_an_untouched_pr(
         [BUMP_COMMIT, commit("Fix the tests")],
         # Amended, or rebased, by a person, who becomes its committer, or rebased by Update branch.
         [commit(BUMP_COMMIT["commit"]["message"], git_committer="simon")],
+        # Amended by the identity that made it.
+        [commit(BUMP_COMMIT["commit"]["message"], committed="2026-11-21T01:00:00Z")],
         [REBASED],
         # The trailer must be in the message's last paragraph.
         [commit(f"Bump\n\n{downstream.TRAILER}\n\nmore")],
@@ -599,7 +606,11 @@ def test_bump_pr_rerun_finishes_earlier_prs(
         {3: [BUMP_COMMIT], 4: [commit("Fix")]},
     )
     done = {"user": {"login": "bot"}, "body": "<!-- up-downstream-pkg-0.4.0 -->\nSuperseded by #5."}
-    fakes.comments = {3: [{"user": {"login": "someone"}, "body": done["body"]}, done], 4: [done]}
+    # A deleted account's comment has a null user.
+    fakes.comments = {
+        3: [{"user": None, "body": "hi"}, {"user": {"login": "someone"}, "body": done["body"]}],
+        4: [done],
+    }
     assert downstream.run(PR_ARGS) == 0
     out = capsys.readouterr().out
     assert "Pull request https://github.com/d/down/pull/5 already bumps pkg to 0.4.0\n" in out

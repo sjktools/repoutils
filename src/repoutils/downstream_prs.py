@@ -83,16 +83,17 @@ def open_bumps(repo: str, token: str, package: str, marker: str) -> list[Bump]:
         page += 1
 
 
-def _identity(person: dict[str, Any]) -> tuple[str, str]:
-    return person["name"], person["email"]
+def _identity(person: dict[str, Any]) -> tuple[str, str, str]:
+    return person["name"], person["email"], person["date"]
 
 
 def _is_bump_commit(commit: dict[str, Any]) -> bool:
     """Whether commit is one that `downstream bump` made: TRAILER is a line
-    of its message's last paragraph, and it was committed by its author. An
-    amend or a rebase keeps the trailer, but makes someone else the
-    committer, so a rebased bump counts as another change, even one by
-    GitHub's Update branch button, which can't tell it from an amended one."""
+    of its message's last paragraph, and it was committed by its author, at
+    the time it was written. An amend or a rebase keeps the trailer and the
+    author, but sets a new committer and commit time, so a rebased bump
+    counts as another change, even one by GitHub's Update branch button,
+    which can't tell it from an amended one."""
     message: str = commit["commit"]["message"]
     git = commit["commit"]
     return (

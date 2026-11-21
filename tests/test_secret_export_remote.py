@@ -7,8 +7,9 @@ from typing import Any
 
 import pytest
 
-from repoutils import github, secret_export, secret_export_remote, workflow_summaries
+from repoutils import github, secret_export, secret_export_remote, secret_levels, workflow_summaries
 from repoutils.commands import secrets
+from tests.test_workflow_summaries import NAME_PAGES
 
 API = github.API_URL
 RUN = f"{API}/repos/o/r/actions/runs/7"
@@ -39,6 +40,8 @@ class FakeGitHub:
             return None
         if url == f"{API}/repos/o/r":
             return {"default_branch": "main"}
+        if url in NAME_PAGES:
+            return NAME_PAGES[url]
         if url == RUN:
             return self.run
         if url.startswith(f"{RUN}/artifacts?"):
@@ -167,6 +170,113 @@ def test_failed_decryption_prints_no_secrets_and_keeps_the_artifacts(
     assert all(method != "DELETE" for method, _ in fake.calls)
 
 
+def test_secret_set_again_during_the_run_fails(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    # release/A was deleted and set again, and release/B deleted, while the run went on.
+    before = {"release/A": "t1", "release/B": "t1", "uv/C": "t1"}
+    times = iter([before, {"release/A": "t2", "uv/C": "t1", "uv/NEW": "t2"}])
+    commands: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run", _fake_age(commands))
+    with pytest.raises(RuntimeError, match=r"set again, while the run.*: release/A, release/B\. Nothing was printed"):
+        _remote(secret_times=lambda: next(times), save=tmp_path)
+    assert capsys.readouterr().out == ""
+    # Nothing was decrypted or saved, and the untrustworthy export is deleted, so --run-id can't print it later.
+    assert commands == []
+    assert list(tmp_path.iterdir()) == []
+    deleted = [url for method, url in fake.calls if method == "DELETE"]
+    assert deleted == [f"{API}/repos/o/r/actions/artifacts/3", f"{API}/repos/o/r/actions/artifacts/2"]
+
+
+def test_secret_set_again_deletes_the_artifacts_even_if_asked_to_keep_them(fake: FakeGitHub) -> None:
+    # Kept, a later --run-id read, which can't check, could print the untrustworthy export.
+    times = iter([{"release/A": "t1"}, {}])
+    with pytest.raises(RuntimeError, match=r"run 7's artifacts were deleted\. Run it again"):
+        _remote(secret_times=lambda: next(times), keep_artifacts=True)
+    deleted = [url for method, url in fake.calls if method == "DELETE"]
+    assert deleted == [f"{API}/repos/o/r/actions/artifacts/3", f"{API}/repos/o/r/actions/artifacts/2"]
+
+
+def test_secret_set_again_names_the_artifacts_it_could_not_delete(
+    fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request = fake.request
+
+    def failing_delete(method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        if method == "DELETE" and url.endswith("/3"):
+            raise OSError("HTTP Error 500")
+        return request(method, url, token, json_body=json_body)
+
+    monkeypatch.setattr(github, "request", failing_delete)
+    times = iter([{"release/A": "t1"}, {}])
+    with pytest.raises(RuntimeError) as raised:
+        _remote(secret_times=lambda: next(times))
+    # The reason it failed isn't lost, and the caller learns what to delete by hand.
+    assert "release/A" in str(raised.value)
+    assert "couldn't be deleted, so delete them, and don't read them with --run-id" in str(raised.value)
+    assert "secrets-release (HTTP Error 500)" in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError("HTTP Error 502"),
+        ValueError("Expecting value"),
+        KeyError("updated_at"),
+        TypeError("'NoneType' object is not iterable"),
+    ],
+    ids=repr,
+)
+def test_failing_to_list_the_times_again_deletes_the_artifacts(fake: FakeGitHub, error: Exception) -> None:
+    calls = iter(range(2))
+
+    def times() -> dict[str, str]:
+        if next(calls):
+            raise error
+        return {"release/A": "t1"}
+
+    with pytest.raises(RuntimeError, match=r"couldn't list the environment secrets again.*deleted"):
+        _remote(secret_times=times)
+    deleted = [url for method, url in fake.calls if method == "DELETE"]
+    assert deleted == [f"{API}/repos/o/r/actions/artifacts/3", f"{API}/repos/o/r/actions/artifacts/2"]
+
+
+def test_secret_added_during_the_run_passes(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
+    # An environment secret added meanwhile can't have been exported as an inherited one by mistake.
+    monkeypatch.setattr(subprocess, "run", _fake_age([]))
+    times = iter([{"release/A": "t1"}, {"release/A": "t1", "release/NEW": "t2"}])
+    assert _remote(secret_times=lambda: next(times)) == 0
+
+
+def _names(environments: dict[str, list[str]]) -> dict[str, str]:
+    return {workflow_summaries.SECRET_NAMES_INPUT: secret_levels.names_json([], environments)}
+
+
+def test_secret_set_after_the_times_were_read_fails(fake: FakeGitHub) -> None:
+    # release/B was set between reading the times and listing the names, so it has no time to
+    # compare with, and could then have been deleted during the run unseen.
+    times = iter([{"release/A": "t1"}, {"release/A": "t1"}])
+    with pytest.raises(RuntimeError, match=r"set again, while the run.*: release/B\. Nothing was printed"):
+        _remote(secret_times=lambda: next(times), inputs=lambda: _names({"Release": ["A", "b"]}))
+    deleted = [url for method, url in fake.calls if method == "DELETE"]
+    assert deleted == [f"{API}/repos/o/r/actions/artifacts/3", f"{API}/repos/o/r/actions/artifacts/2"]
+
+
+def test_listed_secrets_with_unchanged_times_pass(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(subprocess, "run", _fake_age([]))
+    times = iter([{"Release/A": "t1", "uv/C": "t1"}, {"Release/A": "t1", "uv/C": "t1"}])
+    assert _remote(secret_times=lambda: next(times), inputs=lambda: _names({"release": ["a"], "uv": ["C"]})) == 0
+
+
+def test_secret_times_are_not_read_for_an_existing_run(fake: FakeGitHub, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(subprocess, "run", _fake_age([]))
+
+    def no_listing() -> dict[str, str]:
+        raise AssertionError("listed the secrets")
+
+    assert _remote(run_id=7, inputs=no_listing, secret_times=no_listing) == 0
+
+
 def test_missing_age_starts_nothing(fake: FakeGitHub) -> None:
     with pytest.raises(ValueError, match="can't run /no/age: install age, or give its path with --age"):
         _remote(age="/no/age")
@@ -233,6 +343,9 @@ def test_command_line_finds_keys_in_home(
     argv = ["export-remote", "--repo", "o/r", "--ref", "dev", "--timeout", "1", "--age", "/bin/age"]
     assert secrets.main(argv) == 0
     assert commands[0] == ["/bin/age", "--decrypt", "--identity", str(tmp_path / ".ssh" / "id_ed25519")]
+    # Starting a run lists the secret names set at each level (test_command_line_reports_errors
+    # shows it lists none when it can't decrypt).
+    assert {url for _, url in fake.calls if url in NAME_PAGES} == set(NAME_PAGES)
     assert "[ACTIONS]" in capsys.readouterr().out
 
 
@@ -256,6 +369,7 @@ def test_command_line_reports_errors(
     monkeypatch.setenv("GITHUB_TOKEN", "tok")
     assert secrets.main(["export-remote", "--repo", "o/r"]) == 1
     assert "found no SSH private key" in capsys.readouterr().err
+    assert fake.calls == []
 
 
 @pytest.mark.skipif(

@@ -17,10 +17,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from repoutils import github, workflow_summaries
+from repoutils import github, secret_levels, workflow_summaries
 
 DEFAULT_WORKFLOW = "export-secrets.yml"
 # The prefix of the artifacts that hold export-secrets.yml's encrypted files.
@@ -52,6 +53,14 @@ def delete_artifact(repo: str, artifact: dict[str, Any], token: str) -> None:
     github.request("DELETE", f"{github.API_URL}/repos/{repo}/actions/artifacts/{artifact['id']}", token)
 
 
+def changed_secrets(before: dict[str, str], after: dict[str, str]) -> list[str]:
+    """Each environment secret in before (ENVIRONMENT/NAME to when it was last
+    set) that is gone, or was set again, in after. While it was deleted, a job
+    could have got the repository's or the organization's value of that name,
+    and exported it as the environment's, which the job can't tell."""
+    return sorted(name for name, time in before.items() if after.get(name) != time)
+
+
 def export_remote(
     repo: str,
     token: str,
@@ -65,10 +74,14 @@ def export_remote(
     save: Path | None = None,
     age: str = "age",
     keep_artifacts: bool = False,
+    inputs: Callable[[], dict[str, str]] = dict,
+    secret_times: Callable[[], dict[str, str]] | None = None,
 ) -> int:
     """Run (or read) the workflow, and print the secrets its artifacts hold,
     decrypted with identities, saving the encrypted files in save if given.
-    Exits 0 only if the run succeeded and kept some."""
+    If it starts a run, with the inputs inputs() gives, and secret_times gives
+    when each environment secret was last set, it fails if one changed during
+    the run, or if the names list one it had no time for. Exits 0 only if the run succeeded and kept some."""
     if not identities and save is None:
         raise ValueError(
             "found no SSH private key to decrypt with (~/.ssh/id_ed25519 or ~/.ssh/id_rsa): "
@@ -82,10 +95,64 @@ def export_remote(
         # mkdir() doesn't check an existing directory can be written to, but this does.
         with tempfile.TemporaryFile(dir=save):
             pass
+    # When each environment secret was last set, as the run starts, if it starts one.
+    times_before: list[dict[str, str]] = []
+    # The environment secrets the names list but times_before lacks, as they were set after it.
+    unrecorded: list[str] = []
+
+    def remember() -> dict[str, str]:
+        if secret_times is None:
+            return inputs()
+        # Before the names, so a change after the names are listed is caught too.
+        times = secret_times()
+        times_before.append(times)
+        given = inputs()
+        levels = secret_levels.read_levels(given.get(workflow_summaries.SECRET_NAMES_INPUT))
+        if levels is not None:
+            recorded = {(env.lower(), name.upper()) for env, _, name in (key.rpartition("/") for key in times)}
+            unrecorded.extend(
+                f"{env}/{name}"
+                for env, names in levels.environments.items()
+                for name in sorted(names)
+                if (env, name) not in recorded
+            )
+        return given
+
     run_id, run = workflow_summaries.start(
-        repo, token, workflow=workflow, ref=ref, run_id=run_id, interval=interval, timeout=timeout
+        repo, token, workflow=workflow, ref=ref, run_id=run_id, interval=interval, timeout=timeout, inputs=remember
     )
     found = workflow_summaries.artifacts(repo, run_id, token, ARTIFACT_PREFIX)
+    # Before anything is saved or decrypted. An export that fails the check can't be trusted, so
+    # it's deleted too, even with --keep-artifacts, so a later --run-id read, which can't check,
+    # can't print it.
+    problem = ""
+    if secret_times is not None and times_before:
+        try:
+            changed = sorted({*changed_secrets(times_before[0], secret_times()), *unrecorded})
+        # Any failure to list them (an HTTP error, a response of the wrong shape) leaves the
+        # export unchecked, so whatever it raises, the export is rejected.
+        except Exception as e:
+            problem = f"couldn't list the environment secrets again to check none changed during the run ({e})"
+        else:
+            if changed:
+                problem = (
+                    "these environment secrets were deleted, or set again, while the run was going, so its "
+                    f"export may hold inherited values in their place: {', '.join(changed)}"
+                )
+    if problem:
+        kept: list[str] = []
+        for artifact in found:
+            try:
+                delete_artifact(repo, artifact, token)
+            except (OSError, RuntimeError, ValueError) as e:
+                kept.append(f"{artifact['name']} ({e})")
+        deleted = (
+            f"run {run_id}'s artifacts were deleted"
+            if not kept
+            else f"these of run {run_id}'s artifacts couldn't be deleted, so delete them, and don't read them "
+            f"with --run-id, which doesn't check: {', '.join(kept)}"
+        )
+        raise RuntimeError(f"{problem}. Nothing was printed or saved, and {deleted}. Run it again.")
     plaintexts: list[bytes] = []
     saved: set[Path] = set()
     for artifact in found:
@@ -138,7 +205,9 @@ def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]"
         "Fails unless the run succeeds and keeps some encrypted files. "
         "Uses $GITHUB_TOKEN, defaulting to `gh auth token`, "
         "which needs the Actions write permission to dispatch and to delete the artifacts, "
-        "or only Actions read with --run-id and --keep-artifacts.",
+        "or only Actions read with --run-id and --keep-artifacts. "
+        "To start a run, it also needs the Secrets, Actions and Environments read permissions, "
+        "to list the secret names set at each level that it passes the workflow, unless given --no-secret-names.",
     )
     workflow_summaries.add_run_options(parser, DEFAULT_WORKFLOW)
     parser.add_argument(

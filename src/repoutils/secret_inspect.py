@@ -11,6 +11,15 @@ that two secrets holding the same token can be told apart from two holding
 different ones. An OpenSSH
 private key gives its public key's fingerprint, as GitHub's deploy key page
 shows it. Anything else is reported by name only.
+
+A job that deploys to an environment gets the repository's and the
+organization's secrets as well as the environment's, and nothing in the run
+says which level each came from. So ``secrets inspect-remote`` lists the names
+set at each level, which the run's own token can't, and passes them to the
+workflow, which hands them on in $SECRET_NAMES (see repoutils.secret_levels). With them, an environment's job
+reports a secret it only inherits as missing from the environment, and leaves
+out an unlisted one, which the repository's job reports. Without them, it says
+it can't tell inherited secrets apart.
 Stdlib-only, like every repoutils module."""
 
 import argparse
@@ -32,6 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from repoutils import github
+from repoutils.secret_levels import Levels, unknown_levels
 
 # The environment variable the workflow passes the secrets in.
 ENV_VAR = "SECRETS_JSON"
@@ -263,10 +273,15 @@ def _cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ") or " "
 
 
-def summary_markdown(title: str, findings: list[Finding]) -> str:
+# What a report says of a listed secret the job doesn't have, as `secrets check` does.
+MISSING = "missing"
+
+
+def summary_markdown(title: str, findings: list[Finding], note: str = "") -> str:
     lines = [
         f"## {title}",
         "",
+        *([f"> [!NOTE]\n> {note}", ""] if note else []),
         "| Secret | What it is | Owner | Expires | Access | SHA-256 starts |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
@@ -330,21 +345,41 @@ def inspect(
     exit_zero: bool,
     summary: Path | None = None,
     now: datetime | None = None,
+    levels: Levels | None = None,
+    environment: str | None = None,
 ) -> int:
     """Report on each secret in wanted, and on every other secret the job has
     in secrets_json that isn't in expected, which is unexpected. expected is
-    every name pyproject.toml lists that the job can get, inspected here or not."""
+    every name pyproject.toml lists that the job can get, inspected here or not.
+
+    With levels, an environment's job knows which names its environment sets.
+    A secret the job has that the environment doesn't set is inherited from the
+    repository or the organization: a wanted one is missing, and an unlisted
+    one is left out, as the repository's job reports it. Without levels, it
+    says it can't tell them apart."""
     now = now or datetime.now(UTC)
     values = read_secrets(secrets_json)
-    findings = [
-        describe(name, values[name.upper()], now, within) if name.upper() in values else Finding(name, "not set here")
-        for name in wanted
-    ]
-    known = {name.upper() for name in [*wanted, *expected]} | {_BUILT_IN}
+    here = levels.environment(environment) if levels is not None and environment is not None else None
+    findings: list[Finding] = []
+    for name in wanted:
+        key = name.upper()
+        if key not in values:
+            findings.append(Finding(name, MISSING))
+        elif levels is not None and here is not None and key not in here:
+            findings.append(Finding(name, f"{MISSING}: the job gets {levels.source(name)} secret of this name"))
+        else:
+            findings.append(describe(name, values[key], now, within))
+    # With here, an inherited secret is left out below, so only the environment's own list is expected.
+    known = {name.upper() for name in [*wanted, *([] if here is not None else expected)]} | {_BUILT_IN}
     for name in sorted(name for name in values if name not in known):
+        if here is not None and name not in here:
+            continue
         finding = describe(name, values[name], now, within)
         finding.unexpected = True
         findings.append(finding)
+    note = unknown_levels("secrets inspect-remote") if environment is not None and levels is None else ""
+    if note:
+        print(note)
     for finding in findings:
         print(_line(finding))
     for finding in findings:
@@ -356,7 +391,7 @@ def inspect(
             print(f"{finding.name}: {finding.error}", file=sys.stderr)
     if summary is not None:
         with summary.open("a") as file:
-            file.write(summary_markdown(title, findings))
+            file.write(summary_markdown(title, findings, note))
     # An unexpected secret's problems and errors are reported, but never fail:
     # the job only answers for the secrets pyproject.toml lists for it.
     listed = [finding for finding in findings if not finding.unexpected]

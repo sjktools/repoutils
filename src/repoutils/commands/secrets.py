@@ -35,7 +35,9 @@ its SHA-256 hash, or an SSH key's fingerprint, never the value. It also reports
 every other secret the job gets, with a warning that it's unexpected (see
 repoutils.secret_inspect).
 ``inspect-remote`` runs the workflow that runs ``inspect`` and prints its step
-summaries (see repoutils.workflow_summaries).
+summaries (see repoutils.workflow_summaries). It passes the workflow the
+secret names the repository and each environment have, so that an
+environment's job can tell its own secrets from those it inherits.
 ``export`` writes the same secrets' values as TOML encrypted with age, for a
 workflow to upload as a backup (see repoutils.secret_export).
 ``export-remote`` runs the workflow that runs ``export``, and decrypts and
@@ -60,6 +62,7 @@ from repoutils import (
     secret_export,
     secret_export_remote,
     secret_inspect,
+    secret_levels,
     workflow_summaries,
     workflows,
 )
@@ -88,7 +91,8 @@ class Kind:
     title: str
 
 
-KINDS = (Kind("actions", "actions/secrets", "Actions"), Kind("dependabot", "dependabot/secrets", "Dependabot"))
+ACTIONS = Kind("actions", "actions/secrets", "Actions")
+KINDS = (ACTIONS, Kind("dependabot", "dependabot/secrets", "Dependabot"))
 
 
 @dataclass(frozen=True)
@@ -233,16 +237,21 @@ def check_workflows(root: Path = Path()) -> int:
     return 0
 
 
-def _secret_names(url: str, token: str) -> list[str]:
-    """The names of every secret the list at url gives."""
-    names: list[str] = []
+def _secrets(url: str, token: str) -> list[dict[str, Any]]:
+    """Every secret the list at url gives, as the API describes it (never its value)."""
+    secrets: list[dict[str, Any]] = []
     page = 1
     while True:
         batch = github.request("GET", f"{url}?per_page={PER_PAGE}&page={page}", token)["secrets"]
-        names += [secret["name"] for secret in batch]
+        secrets += batch
         if len(batch) < PER_PAGE:
-            return names
+            return secrets
         page += 1
+
+
+def _secret_names(url: str, token: str) -> list[str]:
+    """The names of every secret the list at url gives."""
+    return [secret["name"] for secret in _secrets(url, token)]
 
 
 def repo_secrets(repo: str, token: str, kind: Kind) -> list[str]:
@@ -250,10 +259,23 @@ def repo_secrets(repo: str, token: str, kind: Kind) -> list[str]:
     return _secret_names(f"{github.API_URL}/repos/{repo}/{kind.path}", token)
 
 
+def _environment_url(repo: str, environment: str) -> str:
+    return f"{github.API_URL}/repos/{repo}/environments/{urllib.parse.quote(environment, safe='')}/secrets"
+
+
 def environment_secrets(repo: str, token: str, environment: str) -> list[str]:
     """The names of every secret the repository's environment has."""
-    quoted = urllib.parse.quote(environment, safe="")
-    return _secret_names(f"{github.API_URL}/repos/{repo}/environments/{quoted}/secrets", token)
+    return _secret_names(_environment_url(repo, environment), token)
+
+
+def environment_secret_times(repo: str, token: str) -> dict[str, str]:
+    """When each environment secret was last set, by ``ENVIRONMENT/NAME``: a
+    secret deleted and set again, or updated, has a new time."""
+    return {
+        f"{environment}/{secret['name']}": str(secret["updated_at"])
+        for environment in repo_environments(repo, token)
+        for secret in _secrets(_environment_url(repo, environment), token)
+    }
 
 
 def repo_environments(repo: str, token: str) -> list[str]:
@@ -387,8 +409,23 @@ def inspect(listed: Listed, environment: str | None, *, within: int, exit_zero: 
     # An environment's job also gets the repository's and organization's secrets.
     expected = [name for key in ("actions", OTHER) for name in listed.lists.get(key, [])]
     return secret_inspect.inspect(
-        title, wanted, expected, secrets_json, within=within, exit_zero=exit_zero, summary=summary
+        title,
+        wanted,
+        expected,
+        secrets_json,
+        within=within,
+        exit_zero=exit_zero,
+        summary=summary,
+        levels=secret_levels.read_levels(os.environ.get(secret_levels.NAMES_ENV_VAR)),
+        environment=environment,
     )
+
+
+def secret_names_input(repo: str, token: str) -> dict[str, str]:
+    """The workflow inputs that tell its jobs the secret names set at each level."""
+    environments = {name: environment_secrets(repo, token, name) for name in repo_environments(repo, token)}
+    names = secret_levels.names_json(repo_secrets(repo, token, ACTIONS), environments)
+    return {workflow_summaries.SECRET_NAMES_INPUT: names}
 
 
 def main(argv: list[str]) -> int:
@@ -459,6 +496,7 @@ def main(argv: list[str]) -> int:
             return workflow_summaries.inspect_remote(
                 repo,
                 token,
+                inputs=dict if args.no_secret_names else lambda: secret_names_input(repo, token),
                 workflow=args.workflow,
                 ref=args.ref,
                 run_id=args.run_id,
@@ -471,6 +509,8 @@ def main(argv: list[str]) -> int:
             return secret_export_remote.export_remote(
                 repo,
                 token,
+                inputs=dict if args.no_secret_names else lambda: secret_names_input(repo, token),
+                secret_times=None if args.no_secret_names else lambda: environment_secret_times(repo, token),
                 workflow=args.workflow,
                 ref=args.ref,
                 run_id=args.run_id,
@@ -493,6 +533,7 @@ def main(argv: list[str]) -> int:
                 age=args.age,
                 armor=args.armor,
                 summary=args.summary,
+                levels=secret_levels.read_levels(os.environ.get(secret_levels.NAMES_ENV_VAR)),
             )
         # dump doesn't read pyproject.toml, so it works before there are any secrets there.
         listed = Listed({}, None) if args.mode == "dump" else _load(Path())

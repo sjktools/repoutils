@@ -5,7 +5,9 @@ inspect``, which only runs inside a workflow. Kept apart from the secrets
 command for length.
 
 It dispatches the workflow on a branch (by default the repository's default
-branch), or reads a run that already exists with ``--run-id``. While GitHub
+branch), or reads a run that already exists with ``--run-id``. It passes the
+workflow the secret names set at each level, which the run's own token can't
+list, in its ``secret-names`` input (see repoutils.secret_inspect). While GitHub
 holds the run for approval, it prints the run's page, where a maintainer can
 approve it, and keeps waiting.
 Stdlib-only, like every repoutils module."""
@@ -17,6 +19,7 @@ import os
 import sys
 import urllib.error
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from time import monotonic, sleep
 from typing import Any
@@ -24,6 +27,8 @@ from typing import Any
 from repoutils import github
 
 DEFAULT_WORKFLOW = "inspect-secrets.yml"
+# The workflow input that takes the secret names set at each level.
+SECRET_NAMES_INPUT = "secret-names"
 # The prefix of the artifacts that hold a run's step summaries (see AGENTS.md).
 ARTIFACT_PREFIX = "step-summaries-"
 PER_PAGE = 100
@@ -159,13 +164,15 @@ def start(
     run_id: int | None,
     interval: float,
     timeout: float,
+    inputs: Callable[[], dict[str, str]] = dict,
 ) -> tuple[int, dict[str, Any]]:
-    """Dispatch workflow on ref (default: the default branch), or take the
-    existing run run_id, and wait for it to complete. Returns its ID and the run."""
+    """Dispatch workflow on ref (default: the default branch) with the inputs
+    that inputs() gives, or take the existing run run_id, and wait for it to
+    complete. Returns its ID and the run."""
     just_started = run_id is None
     if run_id is None:
         ref = ref or default_branch(repo, token)
-        run_id = dispatch(repo, workflow, ref, token)
+        run_id = dispatch(repo, workflow, ref, token, inputs())
         print(f"Started {workflow} on {ref}: https://github.com/{repo}/actions/runs/{run_id}", file=sys.stderr)
     return run_id, wait(repo, run_id, token, interval=interval, timeout=timeout, just_started=just_started)
 
@@ -179,10 +186,13 @@ def inspect_remote(
     run_id: int | None,
     interval: float,
     timeout: float,
+    inputs: Callable[[], dict[str, str]] = dict,
 ) -> int:
     """Run (or read) the workflow and print its step summaries; exit 0 only
     if the run succeeded and kept some."""
-    run_id, run = start(repo, token, workflow=workflow, ref=ref, run_id=run_id, interval=interval, timeout=timeout)
+    run_id, run = start(
+        repo, token, workflow=workflow, ref=ref, run_id=run_id, interval=interval, timeout=timeout, inputs=inputs
+    )
     found = summaries(repo, run_id, token)
     for summary in found:
         print(f"<!-- {summary.artifact}/{summary.path} -->")
@@ -236,6 +246,12 @@ def add_run_options(parser: argparse.ArgumentParser, workflow: str) -> None:
         metavar="SECONDS",
         help="how often to check on the run (default: 10)",
     )
+    parser.add_argument(
+        "--no-secret-names",
+        action="store_true",
+        help=f"don't list the secret names set at each level and pass them in the {SECRET_NAMES_INPUT} input, "
+        "for a workflow without that input or a token that can't list secrets",
+    )
 
 
 # argparse has no public name for the type add_subparsers() returns.
@@ -249,6 +265,8 @@ def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]"
         "While GitHub holds the run for approval, print where to approve it and keep waiting. "
         "Fails unless the run succeeds and keeps some step summaries. "
         "Uses $GITHUB_TOKEN, defaulting to `gh auth token`, "
-        "which needs the Actions write permission to dispatch, and Actions read for --run-id.",
+        "which needs the Actions write permission to dispatch, and Actions read for --run-id. "
+        "To start a run, it also needs the Secrets, Actions and Environments read permissions, "
+        "to list the secret names set at each level that it passes the workflow, unless given --no-secret-names.",
     )
     add_run_options(parser, DEFAULT_WORKFLOW)

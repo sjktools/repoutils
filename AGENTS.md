@@ -34,6 +34,9 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
   `src/repoutils/workflow_summaries.py` is `secrets inspect-remote`, which starts the workflow that runs `secrets inspect` and prints the step summaries it keeps as artifacts.
   `src/repoutils/secret_export.py` is `secrets export`, which encrypts those secrets' values with age for a backup.
   `src/repoutils/secret_export_remote.py` is `secrets export-remote`, which starts the workflow that runs `secrets export`, and decrypts the files it keeps as artifacts with age.
+  Unless given `--no-secret-names`, both remote commands pass the workflow the secret names set at each level, as the run's own token can't list them.
+  With those names, an environment's job tells its own secrets from inherited ones.
+  `src/repoutils/secret_levels.py` is the format they pass those names in, which `secrets inspect` and `secrets export` read.
 - `src/repoutils/uv_bump.py` is `dependabot-uv bump`'s changes to the files that `check-pins` checks, and its re-lock of `uv.lock`, kept apart from the command for length.
   It changes them only if `check-pins` passes, before and after, and puts them back if re-locking fails.
 - `src/repoutils/pull_request.py` commits a change to a new branch, pushes it and opens a PR, for `bump --pr` in `dependabot-uv` and `github-releases`.

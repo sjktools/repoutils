@@ -14,6 +14,15 @@ API = github.API_URL
 RUN = f"{API}/repos/o/r/actions/runs/7"
 PAGE = "https://github.com/o/r/actions/runs/7"
 
+# The secret names the repository o/r has at each level, as the API lists them.
+NAME_PAGES = {
+    f"{API}/repos/o/r/environments?per_page=100&page=1": {"environments": [{"name": "release"}]},
+    f"{API}/repos/o/r/actions/secrets?per_page=100&page=1": {"secrets": [{"name": "REPO_TOKEN"}]},
+    f"{API}/repos/o/r/environments/release/secrets?per_page=100&page=1": {
+        "secrets": [{"name": "DEPLOY_KEY", "updated_at": "2026-11-20T00:00:00Z"}]
+    },
+}
+
 
 def _zip(files: dict[str, str]) -> bytes:
     buffer = io.BytesIO()
@@ -39,6 +48,8 @@ class FakeGitHub:
             return {"workflow_run_id": 7, "html_url": PAGE}
         if url == f"{API}/repos/o/r":
             return {"default_branch": "trunk"}
+        if url in NAME_PAGES:
+            return NAME_PAGES[url]
         if url == RUN:
             return self.runs.pop(0) if len(self.runs) > 1 else self.runs[0]
         if url.startswith(f"{RUN}/artifacts?per_page={workflow_summaries.PER_PAGE}&page="):
@@ -265,9 +276,30 @@ def test_command_line(
     monkeypatch.setenv("GITHUB_TOKEN", "tok")
     argv = ["inspect-remote", "--repo", "o/r", "--workflow", "w.yml", "--ref", "dev", "--timeout", "1"]
     assert secrets.main(argv) == 0
+    names = '{"actions":["REPO_TOKEN"],"environments":{"release":["DEPLOY_KEY"]}}'
+    dispatches = [call for call in fake.calls if call[0] == "POST"]
+    assert dispatches == [
+        (
+            "POST",
+            f"{API}/repos/o/r/actions/workflows/w.yml/dispatches",
+            {"ref": "dev", "return_run_details": True, "inputs": {"secret-names": names}},
+        )
+    ]
+
+
+def test_command_line_no_secret_names(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], no_sleep: list[float]
+) -> None:
+    zips = {f"{API}/zip/step-summaries-x": _zip({"s.md": "S"})}
+    fake = FakeGitHub([_done()], [_artifact("step-summaries-x")], zips)
+    _install(monkeypatch, fake)
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+    assert secrets.main(["inspect-remote", "--repo", "o/r", "--ref", "dev", "--no-secret-names"]) == 0
+    # Neither lists a secret nor passes the input.
+    assert not any(url in NAME_PAGES for _, url, _ in fake.calls)
     assert fake.calls[0] == (
         "POST",
-        f"{API}/repos/o/r/actions/workflows/w.yml/dispatches",
+        f"{API}/repos/o/r/actions/workflows/inspect-secrets.yml/dispatches",
         {"ref": "dev", "return_run_details": True},
     )
 
@@ -281,6 +313,8 @@ def test_command_line_run_id_starts_nothing(
     monkeypatch.setenv("GITHUB_TOKEN", "tok")
     assert secrets.main(["inspect-remote", "--repo", "o/r", "--run-id", "7"]) == 0
     assert all(method == "GET" for method, _, _ in fake.calls)
+    # Nor lists the secret names, which only a new run needs.
+    assert not any(url in NAME_PAGES for _, url, _ in fake.calls)
 
 
 def test_command_line_converts_minutes_to_seconds(monkeypatch: pytest.MonkeyPatch) -> None:

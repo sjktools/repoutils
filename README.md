@@ -45,7 +45,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
 | `check-lock-platforms` | Fails if `uv.lock` contains wheels for platforms that the project does not allow. |
 | `dependabot-uv` | `show` prints the `uv` version from the newest successful Dependabot `uv` update run, `check` fails unless the minimum in `[tool.uv] required-version` is that version, and `bump` changes the project to that `uv` version (with `--pr`, in a new pull request, unless one for that version is already open). |
-| `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `bump` changes the pins of a downstream project to a release of this package and re-locks it (with `--pr`, in a new pull request, unless one for that release is already open). |
+| `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `bump` changes the pins of a downstream project to a release of this package and re-locks it (with `--pr`, in a new pull request, which replaces an open pull request for an earlier release). |
 | `github-releases` | `check` fails if a project whose release assets this project pins has a newer release, and `bump` pins the assets of that release (with `--pr`, in a new pull request, unless one for that release is already open). |
 | `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment (posting nothing with `--update-only` when none exists) or hides it when you pass `--hide-previous`. |
 | `added-strings` | Lists the added lines in a pull request that match strings configured in `pyproject.toml` (such as `# noqa:`), or posts the list to the pull request. |
@@ -225,6 +225,21 @@ A downstream project needs no workflow of its own, but it must use `uv`.
   The pull request skips any Dependabot cooldown of the downstream project, so this check replaces the delay of the cooldown.
 - It does nothing if every pin is already at the version, and fails if any pin is newer.
 - With `--pr`, it commits only `pyproject.toml` and `uv.lock`, to the branch `downstream/<package>-<version>`.
+  The body of the pull request starts with a hidden marker, `<!-- <comment-prefix>-downstream-<package> -->`.
+
+With `--pr`, `downstream bump` finds the open pull requests that earlier runs opened, by that marker and by their branch:
+
+- If one of them is for the same version or a newer one, the command changes nothing.
+- Otherwise, the command opens the new pull request first, and then handles each earlier pull request.
+- An earlier pull request is untouched if `downstream bump` made each of its commits, apart from merges that the Update branch button of GitHub made.
+  The command finds its own commits by their `Bumped-By: repoutils downstream bump` trailer.
+  It reads the commits and not the changes, because a merge or a re-lock also changes `uv.lock`.
+- The command closes an untouched pull request with the comment "Superseded by #N", and deletes its branch.
+  It does not delete the branch if the branch changed after the command read its commits.
+- The command does not close a pull request that has other commits, for example from `/autofix` or a person.
+  It comments that the new pull request bumps the package, and that the changes of the earlier pull request probably need to move across.
+  The body of the new pull request links the earlier pull request too.
+- If the command fails after it opens the new pull request, run it again to handle the earlier pull requests.
 
 To set up the same workflow for another package:
 

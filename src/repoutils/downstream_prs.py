@@ -36,6 +36,7 @@ class Bump:
     # The commit at the head of its branch when it was listed.
     head: str
     version: str
+    body: str
 
 
 def branch_name(package: str, version: str) -> str:
@@ -56,7 +57,8 @@ def open_bumps(repo: str, token: str, package: str, marker: str) -> list[Bump]:
             head = pull["head"]
             source = (head.get("repo") or {}).get("full_name", "")
             ref: str = head["ref"]
-            if source.lower() != repo.lower() or not (pull.get("body") or "").startswith(marker):
+            body: str = pull.get("body") or ""
+            if source.lower() != repo.lower() or not body.startswith(marker):
                 continue
             version = ref.removeprefix(prefix)
             if ref == version:
@@ -73,6 +75,7 @@ def open_bumps(repo: str, token: str, package: str, marker: str) -> list[Bump]:
                     base=pull["base"]["ref"],
                     head=head["sha"],
                     version=version,
+                    body=body,
                 )
             )
         if len(pulls) < 100:

@@ -108,7 +108,14 @@ def bump(
         kept = [b for b in earlier if not downstream_prs.untouched(repo, token, b)]
         if same := [b for b in bumps if downstream_pins.release_key(b.version) == key]:
             # A rerun, after an earlier run opened it, finishes with the earlier ones.
-            print(f"Pull request {same[0].url} already bumps {package} to {version}")
+            current = same[0]
+            print(f"Pull request {current.url} already bumps {package} to {version}")
+            # One may have gained other commits since the earlier run opened it.
+            if missing := [note for note in _left_open(package, kept) if note not in current.body]:
+                body = current.body.rstrip() + "\n\n" + "\n\n".join(missing)
+                github.request(
+                    "PATCH", f"{github.API_URL}/repos/{repo}/pulls/{current.number}", token, json_body={"body": body}
+                )
             return _follow_up(directory, repo, token, earlier, kept, same[0].number, package, version, marker)
         # One whose body has lost the marker.
         if existing := pull_request.open_pr(repo, branch, token):
@@ -154,11 +161,7 @@ def bump(
     run_id = os.environ.get("GITHUB_RUN_ID")
     server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
     run = f" in {server}/{upstream}/actions/runs/{run_id}" if run_id else ""
-    left_open = "".join(
-        f"#{b.number} bumps {package} to {b.version}, and stays open, as it has commits that "
-        "`repoutils downstream bump` didn't make. Its changes probably need moving across.\n\n"
-        for b in kept
-    )
+    left_open = "".join(f"{note}\n\n" for note in _left_open(package, kept))
     url = pull_request.submit(
         directory,
         repo,
@@ -178,6 +181,15 @@ def bump(
     )
     print(f"Opened {url}")
     return _follow_up(directory, repo, token, earlier, kept, int(url.rsplit("/", 1)[1]), package, version, marker)
+
+
+def _left_open(package: str, kept: list[downstream_prs.Bump]) -> list[str]:
+    """A paragraph for the new pull request's body on each earlier one in kept, which it leaves open."""
+    return [
+        f"#{b.number} bumps {package} to {b.version}, and stays open, as it has commits that "
+        "`repoutils downstream bump` didn't make. Its changes probably need moving across."
+        for b in kept
+    ]
 
 
 def _follow_up(

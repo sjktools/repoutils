@@ -575,14 +575,26 @@ def test_bump_pr_leaves_a_newer_pr(
     assert (upstream / "down/pyproject.toml").read_text() == DOWNSTREAM
 
 
+LINK_4 = (
+    "#4 bumps pkg to 0.3.6, and stays open, as it has commits that `repoutils downstream bump` didn't make. "
+    "Its changes probably need moving across."
+)
+
+
+# Whether the run that opened #5 had already seen #4's other commits, and linked it.
+@pytest.mark.parametrize("linked", [False, True])
 def test_bump_pr_rerun_finishes_earlier_prs(
-    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], linked: bool
 ) -> None:
     sha = push_old(upstream)
     # The run that opened #5 commented on #3 and #4, then failed.
     fakes = Fakes(
         monkeypatch,
-        [pull(3, OLD, sha=sha), pull(4, "downstream/pkg-0.3.6"), pull(5, "downstream/pkg-0.4")],
+        [
+            pull(3, OLD, sha=sha),
+            pull(4, "downstream/pkg-0.3.6"),
+            pull(5, "downstream/pkg-0.4", body=f"{MARKER}\n\n{LINK_4}\n" if linked else MARKER),
+        ],
         {3: [BUMP_COMMIT], 4: [commit("Fix")]},
     )
     done = {"user": {"login": "bot"}, "body": "<!-- up-downstream-pkg-0.4.0 -->\nSuperseded by #5."}
@@ -592,8 +604,10 @@ def test_bump_pr_rerun_finishes_earlier_prs(
     assert "Pull request https://github.com/d/down/pull/5 already bumps pkg to 0.4.0\n" in out
     assert "Closed https://github.com/d/down/pull/3" in out
     assert "Left https://github.com/d/down/pull/4 open" in out
-    # The comments are there already, from the bot.
-    assert [(method, path) for method, path, _ in fakes.changes] == [("PATCH", "/pulls/3")]
+    # The comments are there already, but #5's body may not link #4 yet.
+    closing = [("PATCH", "/pulls/3", {"state": "closed"})]
+    linking = [] if linked else [("PATCH", "/pulls/5", {"body": f"{MARKER}\n\n{LINK_4}"})]
+    assert fakes.changes == linking + closing
     assert remote_branches(upstream) == []
     assert (upstream / "down/pyproject.toml").read_text() == DOWNSTREAM
 

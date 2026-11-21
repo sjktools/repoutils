@@ -46,6 +46,7 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
   `src/repoutils/downstream_actions.py` moves a downstream's `uses:` of the upstream's actions to the release's tag, and regenerates its `actions.lock`.
   It moves them to a dev version's commit instead, as a dev version has no tag.
   `src/repoutils/downstream_prs.py` finds the open PRs of earlier `downstream bump --pr` runs, and closes or comments on them once the new PR is open.
+  A dev version's bump opens a draft test PR with its own marker and branch prefix, so a release's bump and a test bump never close or comment on each other's PRs.
   `src/repoutils/pypi_provenance.py` checks that PyPI's provenance for a release, or TestPyPI's for a dev version, names the upstream's repository as its trusted publisher.
 - `src/repoutils/release_pins.py` is the format of the pins file that `github-releases bump` writes, kept apart from the command for length.
 - `src/repoutils/workflows.py` reads the workflows in `.github/workflows` for the secrets and variables they use and each job's environment, without a YAML parser.

@@ -307,7 +307,7 @@ To set up the same workflow for another package:
 2. Copy `bump-downstream.yml`, and change `Publish` to the name of the workflow that publishes the package.
    The test run expects a run of that workflow that someone starts by hand to publish the next patch release as a dev version numbered by the run ID, such as `0.4.1.dev123`, to TestPyPI, as the Publish workflow of this repository does.
    If the workflow does something else, change the `Find the version` step, or remove the test run.
-   If the default branch of the package is not `main`, change `refs/heads/main` in the `if` of the `plan` job too.
+   If the default branch of the package is not `main`, change both `refs/heads/main` and `head_branch == 'main'` in the `if` of the `plan` job to that branch too.
 3. Replace each `uses: $/.github/actions/<action>` with `uses: sjktools/repoutils/.github/actions/<action>@<tag>`, and replace the sparse checkouts with a checkout of `pyproject.toml`.
    Use a release tag, such as `v0.4.0`, so that `downstream bump` can move it when repoutils releases.
 4. Set the `DOWNSTREAM_REPOS` variable.

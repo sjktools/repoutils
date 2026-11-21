@@ -238,6 +238,14 @@ def test_unreadable_build_info_is_an_error(project: Path, info: object, error: s
         check(project, site(project))
 
 
+def test_a_build_info_that_record_lists_must_exist(project: Path) -> None:
+    site_dir = project.parent / "site"
+    install(site_dir, "example-tool", "1.2.0", info={"commit": COMMIT, "dirty": False})
+    (site_dir / "example_tool/build_info.json").unlink()
+    with pytest.raises(LockError, match="build_info.json can't be read"):
+        check(project, site(project))
+
+
 def test_two_build_infos_are_an_error(project: Path) -> None:
     site_dir = project.parent / "site"
     install(site_dir, "example-tool", "1.2.0", info={"commit": COMMIT, "dirty": False})

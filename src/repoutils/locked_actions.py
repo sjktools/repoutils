@@ -9,13 +9,14 @@ with the commit in the installed wheel's ``build_info.json``, which
 refs checked against ``v<version>``, with a warning. It reads only local files.
 """
 
+import csv
 import json
 import re
 import sys
 import tomllib
 from dataclasses import dataclass, field
 from importlib.metadata import Distribution
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ACTIONS_LOCK = Path(".github/workflows/actions.lock")
 UV_LOCK = Path("uv.lock")
@@ -140,12 +141,14 @@ def build_info(distribution: Distribution, name: str) -> tuple[str, bool] | None
     """The commit in a distribution's build_info.json, and whether the build
     was dirty, or None if the distribution has none or its commit is null.
     The file is found through the distribution's RECORD, wherever the build
-    hook's ``file`` put it."""
-    found = [file for file in distribution.files or [] if file.name == BUILD_INFO]
+    hook's ``file`` put it. RECORD is read itself, as Distribution.files leaves
+    out the files that are missing, and a missing build_info.json is an error."""
+    record = csv.reader((distribution.read_text("RECORD") or "").splitlines())
+    found = [row[0] for row in record if row and PurePosixPath(row[0]).name == BUILD_INFO]
     if not found:
         return None
     if len(found) > 1:
-        raise LockError(f"{name} has more than one {BUILD_INFO}: {', '.join(sorted(str(f) for f in found))}")
+        raise LockError(f"{name} has more than one {BUILD_INFO}: {', '.join(sorted(found))}")
     path = Path(str(distribution.locate_file(found[0])))
     try:
         info = json.loads(path.read_text())

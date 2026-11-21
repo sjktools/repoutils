@@ -23,7 +23,9 @@ BUILD_INFO = "build_info.json"
 
 # actions.lock is YAML that `gh actions-lock` writes in a fixed layout, so,
 # with no YAML parser in the standard library, it's read line by line.
-_SECTION_RE = re.compile(r"^(?P<name>[a-z_]+):\s*$")
+_SECTION_RE = re.compile(r"^(?P<name>[a-z_]+):\s*(?P<empty>\{\}|\[\])?\s*$")
+_VERSION_RE = re.compile(r"^version:\s*'[^']*'\s*$")
+SECTIONS = ("workflows", "dependencies")
 _ENTRY_RE = re.compile(r"^ {4}'(?P<key>[^']+)':\s*$")
 _LIST_ITEM_RE = re.compile(r"^ {8}- '(?P<key>[^']+)'\s*$")
 _FIELD_RE = re.compile(r"^ {8}(?P<name>[a-z_]+):\s*'(?P<value>[^']*)'\s*$")
@@ -59,14 +61,16 @@ def read_actions_lock(text: str, path: Path = ACTIONS_LOCK) -> list[LockedAction
     their own repository's actions at another commit."""
     direct: set[str] = set()
     fields: dict[str, dict[str, str]] = {}
+    sections: set[str] = set()
     section = entry = None
     for number, line in enumerate(text.splitlines(), 1):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         if match := _SECTION_RE.match(line):
             section, entry = match["name"], None
-        elif not line.startswith(" "):
-            continue  # A top-level scalar, such as version.
+            sections.add(section)
+        elif _VERSION_RE.match(line):
+            section = entry = None
         elif match := _ENTRY_RE.match(line):
             entry = match["key"]
             if section == "dependencies":
@@ -79,6 +83,8 @@ def read_actions_lock(text: str, path: Path = ACTIONS_LOCK) -> list[LockedAction
             continue  # The actions this one uses, which aren't checked.
         else:
             raise LockError(f"{path}:{number}: unexpected line {line.strip()!r}")
+    if missing := [name for name in SECTIONS if name not in sections]:
+        raise LockError(f"{path}: no {' or '.join(missing)} section")
     actions: list[LockedAction] = []
     for key in sorted(direct):
         action = _ACTION_RE.match(key)
@@ -110,8 +116,11 @@ def read_uv_lock(text: str, path: Path = UV_LOCK) -> dict[str, list[str]]:
     for package in packages:
         if not isinstance(package, dict) or not isinstance(package.get("name"), str):
             raise LockError(f"{path}: a package has no name")
-        if isinstance(version := package.get("version"), str):
-            versions.setdefault(package["name"], []).append(version)
+        if "version" not in package:
+            continue
+        if not isinstance(version := package["version"], str):
+            raise LockError(f"{path}: {package['name']}'s version isn't a string")
+        versions.setdefault(package["name"], []).append(version)
     return versions
 
 
@@ -147,7 +156,7 @@ def build_info(distribution: Distribution, name: str) -> tuple[str, bool] | None
     # The hook writes both as null, or a commit and a boolean.
     if isinstance(commit, str) and isinstance(dirty, bool):
         return commit, dirty
-    if isinstance(info, dict) and commit is None and dirty is None:
+    if isinstance(info, dict) and {"commit", "dirty"} <= info.keys() and commit is None and dirty is None:
         return None
     raise LockError(f'{name}\'s {path} isn\'t of the form {{"commit": ..., "dirty": ...}}')
 

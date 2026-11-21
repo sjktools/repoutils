@@ -105,6 +105,10 @@ def site(project: Path) -> list[str]:
     return [str(project.parent / "site")]
 
 
+def test_read_actions_lock_accepts_empty_sections() -> None:
+    assert read_actions_lock("version: 'v0.0.3'\nworkflows: {}\ndependencies: {}\n") == []
+
+
 def test_read_actions_lock_takes_only_direct_actions() -> None:
     actions = read_actions_lock(ACTIONS_LOCK)
     assert [(a.key, a.repo, a.ref, a.commit) for a in actions] == [
@@ -118,8 +122,11 @@ def test_read_actions_lock_takes_only_direct_actions() -> None:
     ("text", "error"),
     [
         ("workflows:\n  '.github/workflows/a.yml':\n", r"actions\.lock:2: unexpected line"),
+        ("version: 'v1'\nworkflows: [\ndependencies:\n", r"actions\.lock:2: unexpected line 'workflows: \['"),
+        ("workflows:\n", "no dependencies section"),
+        ("", "no workflows or dependencies section"),
         ("workflows:\n    'a.yml':\n        - 'nope'\ndependencies:\n", "'nope' isn't of the form"),
-        ("workflows:\n    'a.yml':\n        - 'a/b@v1'\n", "a/b@v1 has no entry under dependencies"),
+        ("workflows:\n    'a.yml':\n        - 'a/b@v1'\ndependencies: {}\n", "a/b@v1 has no entry under dependencies"),
         (
             "workflows:\n    'a.yml':\n        - 'a/b@v1'\ndependencies:\n    'a/b@v1':\n        ref: 'v1'\n",
             "a/b@v1 has no ref or no commit",
@@ -137,6 +144,7 @@ def test_read_uv_lock() -> None:
         ("version = ", "uv.lock: "),
         ("package = 3\n", "package isn't a list"),
         ("[[package]]\nversion = '1'\n", "a package has no name"),
+        ("[[package]]\nname = 'a'\nversion = 1\n", "a's version isn't a string"),
     ]:
         with pytest.raises(LockError, match=error):
             read_uv_lock(text)
@@ -221,6 +229,7 @@ def test_installed_version_must_match_uv_lock(project: Path) -> None:
         ({"commit": COMMIT, "dirty": "no"}, "isn't of the form"),
         ({"commit": COMMIT, "dirty": None}, "isn't of the form"),
         ({"commit": None, "dirty": True}, "isn't of the form"),
+        ({}, "isn't of the form"),
     ],
 )
 def test_unreadable_build_info_is_an_error(project: Path, info: object, error: str) -> None:

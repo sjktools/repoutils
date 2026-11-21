@@ -57,6 +57,7 @@ def test_list_reads_the_variable(monkeypatch: pytest.MonkeyPatch, capsys: pytest
         ("o/r/x", "has 'o/r/x'"),
         ("-o/r", "has '-o/r'"),
         ("o_x/r", "has 'o_x/r'"),
+        ("o--x/r", "has 'o--x/r'"),
         ("o/..", "has 'o/..'"),
         ("o/r O/R", "names O/R more than once"),
     ],
@@ -76,7 +77,8 @@ def upstream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.chdir(root)
     monkeypatch.setenv("GITHUB_TOKEN", "tok")
     monkeypatch.setenv("GITHUB_REPOSITORY", "u/up")
-    for name in ("GITHUB_RUN_ID", "GITHUB_SERVER_URL"):
+    # Git variables, such as a hook's, that would point Git at another repository.
+    for name in ("GITHUB_RUN_ID", "GITHUB_SERVER_URL", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
         monkeypatch.delenv(name, raising=False)
     for name, value in {
         "GIT_AUTHOR_NAME": "a",
@@ -234,6 +236,8 @@ def test_bump_pr_refuses_other_changes(
         capsys.readouterr().err
     )
     assert fakes.created == []
+    # pyproject.toml and uv.lock are put back.
+    assert git(upstream / "down", "status", "--porcelain") == "?? build.log"
 
 
 def test_bump_puts_files_back_if_locking_fails(
@@ -267,6 +271,24 @@ def test_bump_refuses_lock_file(
         (upstream / "down/uv.lock").unlink()
     assert downstream.run(["bump", "--version", "0.4.0", "--directory", "down", "--lock-file", "new.lock"]) == 1
     assert error in capsys.readouterr().err
+
+
+def test_bump_refuses_a_lock_file_that_isnt_utf8(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    Fakes(monkeypatch)
+    (upstream / "new.lock").write_bytes(b"\xff")
+    assert downstream.run(["bump", "--version", "0.4.0", "--directory", "down", "--lock-file", "new.lock"]) == 1
+    assert capsys.readouterr().err == "new.lock isn't valid UTF-8\n"
+
+
+def test_bump_refuses_a_lock_file_without_the_package(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    Fakes(monkeypatch)
+    (upstream / "new.lock").write_text("version = 1\n")
+    assert downstream.run(["bump", "--version", "0.4.0", "--directory", "down", "--lock-file", "new.lock"]) == 1
+    assert "new.lock doesn't lock pkg, which the project depends on" in capsys.readouterr().err
 
 
 def test_bump_pr_needs_repo(upstream: Path, capsys: pytest.CaptureFixture[str]) -> None:

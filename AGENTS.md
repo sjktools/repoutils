@@ -178,7 +178,7 @@ It needs Contents and Pull requests write, and Workflows write, as the PR change
 `bump-downstream.yml` runs when Publish succeeds on a `v*` tag.
 It opens a PR in each repository that the `DOWNSTREAM_REPOS` variable names, with `repoutils downstream bump --pr`.
 Each of its three jobs runs one composite action in `.github/actions/`: `downstream-plan`, `downstream-bump` or `downstream-push`.
-The actions run repoutils from `${{ github.action_path }}`, so other projects can use them too.
+The actions find repoutils' source relative to `${{ github.action_path }}`, so other projects can use them too.
 As in Bump uv, the `bump` job re-locks with no token that can write.
 The `push` job opens the PR with the `DOWNSTREAM_TOKEN` secret, and takes `uv.lock` from the `bump` job as data.
 That secret lives in the main-only `downstream` environment, and needs Contents and Pull requests write on each downstream.

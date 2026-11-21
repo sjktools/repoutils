@@ -23,7 +23,7 @@ from repoutils.docstrings import summary
 
 # An owner is letters, digits and single hyphens, and a repository's name is
 # letters, digits, `.`, `_` and `-`.
-_REPOSITORY_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9._-]+")
+_REPOSITORY_RE = re.compile(r"[A-Za-z0-9](?:-?[A-Za-z0-9])*/[A-Za-z0-9._-]+")
 # A commit trailer that marks the commits `bump --pr` makes, so that a later
 # bump can tell an untouched bump PR from one a person has added to.
 TRAILER = "Bumped-By: repoutils downstream bump"
@@ -90,7 +90,12 @@ def bump(
         if not lockfile.is_file():
             raise RuntimeError(f"There's no {lockfile} for {lock_file} to replace")
         new_lock = lock_file.read_bytes()
-        downstream_pins.check_locked(new_lock.decode(errors="replace"), package, version, str(lock_file))
+        try:
+            lock_text = new_lock.decode()
+        except UnicodeDecodeError as e:
+            raise RuntimeError(f"{lock_file} isn't valid UTF-8") from e
+        required = downstream_pins.depends(directory, package)
+        downstream_pins.check_locked(lock_text, package, version, str(lock_file), required=required)
     files = pypi_provenance.check(package, version, upstream)
     print(f"PyPI's provenance names {upstream} as the publisher of {', '.join(files)}")
 
@@ -112,22 +117,24 @@ def bump(
         else:
             lockfile.write_bytes(new_lock)
             relocked = new_lock != texts[lockfile]
+        names = [config.PYPROJECT] + (["uv.lock"] if relocked else [])
+        if pr:
+            # prepare() saw a clean tree, so anything else changed came from this run.
+            listed = pull_request.git(directory, "ls-files", "--modified", "--others", "--exclude-standard")
+            changed = sorted(set(listed.splitlines()))
+            if changed != sorted(names):
+                raise RuntimeError(
+                    f"The bump changed {', '.join(changed)}, not just {', '.join(names)}, so it stops here"
+                )
     except BaseException:
         for path, text in texts.items():
             path.write_bytes(text)
         raise
-    names = [config.PYPROJECT] + (["uv.lock"] if relocked else [])
     old = ", ".join(sorted({pin.version for pin in moving}, key=downstream_pins.release_key))
     print(f"Bumped {package} from {old} to {version} in {', '.join(names)}")
     if not pr:
         return 0
 
-    # prepare() saw a clean tree, so anything else changed came from this run.
-    changed = sorted(
-        set(pull_request.git(directory, "ls-files", "--modified", "--others", "--exclude-standard").splitlines())
-    )
-    if changed != sorted(names):
-        raise RuntimeError(f"The bump changed {', '.join(changed)}, not just {', '.join(names)}, so it stops here")
     pins = "\n".join(f"- `{pin.where}`: `{pin.requirement}` to `{pin.moved(version)}`" for pin in moving)
     # The run this is part of, in a workflow of the upstream's.
     run_id = os.environ.get("GITHUB_RUN_ID")

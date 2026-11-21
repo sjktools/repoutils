@@ -39,13 +39,24 @@ LOCK_ATTEMPTS = 5
 LOCK_DELAY = 30.0
 
 _NAME_RE = re.compile(r"^\s*(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^]]*\])?")
-# The version after each operator, which ends at a comma, space or marker.
-# `===` is left alone, as an arbitrary-equality pin isn't a release version.
+# The version after each operator, which ends at a comma, space, marker or
+# closing parenthesis. `===` is left alone, as an arbitrary-equality pin isn't
+# a release version.
 _VERSION_RES = {
-    "==": re.compile(r"(?<![=!~<>])(==(?!=)\s*)([^,\s;]+)"),
-    ">=": re.compile(r"(>=\s*)([^,\s;]+)"),
+    "==": re.compile(r"(?<![=!~<>])(==(?!=)\s*)([^,\s;)]+)"),
+    ">=": re.compile(r"(>=\s*)([^,\s;)]+)"),
 }
 _RELEASE_RE = re.compile(r"\d+(?:\.\d+)*")
+# A clause of a version specifier that bound() can check.
+_CLAUSE_RE = re.compile(r"(?P<op><=|>=|==|!=|<|>)\s*(?P<version>\d+(?:\.\d+)*)")
+_COMPARE = {
+    "<": lambda a, b: a < b,
+    "<=": lambda a, b: a <= b,
+    ">": lambda a, b: a > b,
+    ">=": lambda a, b: a >= b,
+    "==": lambda a, b: a == b,
+    "!=": lambda a, b: a != b,
+}
 
 
 def release_key(version: str) -> tuple[int, ...]:
@@ -71,6 +82,20 @@ class Pin:
     def moved(self, version: str) -> str:
         """The requirement with its version set to version."""
         return _VERSION_RES[self.operator].sub(rf"\g<1>{version}", self.requirement, count=1)
+
+    def excludes(self, version: str) -> str | None:
+        """The clause of the moved requirement, such as `<0.4`, that version
+        doesn't meet, if there is one. A clause this can't read (`~=`, a
+        wildcard) is left to uv."""
+        moved = self.moved(version)
+        name = _NAME_RE.match(moved)
+        specifier = moved.split(";", 1)[0][name.end() if name else 0 :].strip(" ()")
+        new = release_key(version)
+        for clause in (part.strip() for part in specifier.split(",")):
+            match = _CLAUSE_RE.fullmatch(clause)
+            if match is not None and not _COMPARE[match["op"]](new, release_key(match["version"])):
+                return clause
+        return None
 
 
 def _lists(pyproject: dict[str, Any]) -> Iterator[tuple[str, list[Any], str]]:
@@ -108,6 +133,18 @@ def pins(pyproject: dict[str, Any], package: str) -> list[Pin]:
     ]
 
 
+def depends(root: Path, package: str) -> bool:
+    """Whether root/pyproject.toml's dependencies or dependency groups name
+    package, so that its uv.lock must lock it."""
+    package = normalize_package_name(package)
+    for _, requirements in dependency_groups(config.read_pyproject(root / config.PYPROJECT)):
+        for requirement in requirements:
+            name = _NAME_RE.match(requirement) if isinstance(requirement, str) else None
+            if name is not None and normalize_package_name(name["name"]) == package:
+                return True
+    return False
+
+
 def stale(root: Path, package: str, version: str) -> list[Pin]:
     """The pins of package in root/pyproject.toml that aren't at version,
     raising RuntimeError if there are none at all, or one is newer than
@@ -131,6 +168,11 @@ def stale(root: Path, package: str, version: str) -> list[Pin]:
                 f"{path} {pin.where} has {pin.requirement!r}, newer than {version}, and bump never lowers a pin"
             )
         if old != new:
+            if (clause := pin.excludes(version)) is not None:
+                raise RuntimeError(
+                    f"{path} {pin.where} has {pin.requirement!r}, whose `{clause}` excludes {version}, "
+                    "so bump it by hand"
+                )
             result.append(pin)
     return result
 
@@ -140,10 +182,16 @@ def move(root: Path, package: str, version: str, moving: list[Pin]) -> None:
     nothing else, and raising RuntimeError, with the file unchanged, if it
     can't."""
     path = root / config.PYPROJECT
-    text = path.read_text(encoding="utf-8")
+    # newline="" keeps the file's own line endings.
+    with path.open(encoding="utf-8", newline="") as f:
+        text = f.read()
     before = tomllib.loads(text)
     for pin in moving:
         text, count = replace_dependency(text, pin.requirement, pin.moved(version))
+        if count == 0:
+            # A basic string with escapes in it, such as a marker's \" quotes.
+            escaped = config.toml_string(pin.requirement)[1:-1]
+            text, count = replace_dependency(text, escaped, config.toml_string(pin.moved(version))[1:-1])
         if count == 0:
             raise RuntimeError(f"Couldn't find {pin.requirement!r} in {path}, so bump it by hand")
     # A string elsewhere in the file that matched one of the requirements
@@ -158,26 +206,34 @@ def move(root: Path, package: str, version: str, moving: list[Pin]) -> None:
                 requirements[i] = found.moved(version)
     if tomllib.loads(text) != expected:
         raise RuntimeError(f"Moving the pins in {path} would change more than them, so bump it by hand")
-    path.write_text(text, encoding="utf-8")
+    with path.open("w", encoding="utf-8", newline="") as f:
+        f.write(text)
 
 
 def locked_versions(text: str, package: str) -> set[str]:
-    """The versions of package a uv.lock's text locks."""
+    """The versions of package a uv.lock's text locks, raising ValueError if
+    its [[package]] tables aren't tables."""
     package = normalize_package_name(package)
+    entries = tomllib.loads(text).get("package", [])
+    if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
+        raise ValueError("its package entries aren't [[package]] tables")
     return {
         str(entry["version"])
-        for entry in tomllib.loads(text).get("package", [])
+        for entry in entries
         if normalize_package_name(str(entry.get("name", ""))) == package and "version" in entry
     }
 
 
-def check_locked(text: str, package: str, version: str, where: str) -> None:
-    """Raise RuntimeError unless a uv.lock's text locks package at version,
-    if it locks it at all (a build requirement alone isn't locked)."""
+def check_locked(text: str, package: str, version: str, where: str, *, required: bool = False) -> None:
+    """Raise RuntimeError unless a uv.lock's text locks package at version.
+    Unless required, it may not lock package at all, as a build requirement
+    alone isn't locked."""
     try:
         versions = locked_versions(text, package)
-    except tomllib.TOMLDecodeError as e:
-        raise RuntimeError(f"{where} isn't valid TOML: {e}") from e
+    except (tomllib.TOMLDecodeError, ValueError) as e:
+        raise RuntimeError(f"{where} isn't a valid lock file: {e}") from e
+    if not versions and required:
+        raise RuntimeError(f"{where} doesn't lock {package}, which the project depends on")
     if versions and {release_key(found) for found in versions} != {release_key(version)}:
         raise RuntimeError(f"{where} locks {package} at {', '.join(sorted(versions))}, not {version}")
 
@@ -225,5 +281,5 @@ def lock(root: Path, package: str, version: str) -> bool:
         print(f"uv lock failed, so trying again in {LOCK_DELAY:g}s, as PyPI's index may lag", file=sys.stderr)
         time.sleep(LOCK_DELAY)
         attempt += 1
-    check_locked(path.read_text(encoding="utf-8"), package, version, str(path))
+    check_locked(path.read_text(encoding="utf-8"), package, version, str(path), required=depends(root, package))
     return path.read_bytes() != before

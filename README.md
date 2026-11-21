@@ -207,6 +207,7 @@ A downstream project needs no workflow of its own, but it must use `uv`.
 - The `bump` job runs the `downstream-bump` action once for each downstream project.
   The action checks out the default branch of the downstream project, runs `downstream bump`, and uploads `uv.lock` as an artifact.
   Re-locking runs the build backends of the downstream project, so this job has only a read-only `GITHUB_TOKEN`.
+  That token can check out only a public repository, so each downstream repository must be public.
 - The `push` job runs the `downstream-push` action once for each downstream project, in an environment that only the default branch can deploy to.
   The action checks out the downstream project with a token from that environment, and runs `downstream bump --pr --lock-file <file>`, which copies `uv.lock` from the artifact as data.
   The action fails if the default branch of the downstream project changed after the `bump` job.
@@ -216,7 +217,8 @@ A downstream project needs no workflow of its own, but it must use `uv`.
 - It takes the package name from `[project] name` in the `pyproject.toml` of the upstream project, unless you pass `--package`.
 - It changes the `==` pins of the package in `[build-system] requires`, and the `>=` minimums in the dependencies, optional dependencies and dependency groups.
   It changes nothing else in `pyproject.toml`.
-- It then re-locks `uv.lock` with the `uv` version that `[tool.uv] required-version` of the downstream project names, and upgrades only the package.
+- It then re-locks `uv.lock`, and upgrades only the package.
+  It uses the `uv` version that `[tool.uv] required-version` of the downstream project names, or the `uv` on the `PATH` if the project names none.
   PyPI can be a minute or two late to list a release, so the command tries the re-lock again for about two minutes.
 - Before it changes anything, it checks the provenance that PyPI has for each file of the release.
   Each file must name the upstream repository (`--upstream`, default `$GITHUB_REPOSITORY`) as its trusted publisher.
@@ -228,11 +230,13 @@ To set up the same workflow for another package:
 
 1. Publish the package to PyPI with trusted publishing and attestations.
 2. Copy `bump-downstream.yml`, and change `Publish` to the name of the workflow that publishes the package.
+   If the default branch of the package is not `main`, change `refs/heads/main` in the `if` of the `plan` job too.
 3. Replace each `uses: $/.github/actions/<action>` with `uses: sjktools/repoutils/.github/actions/<action>@<tag>`, and replace the sparse checkouts with a checkout of `pyproject.toml`.
 4. Set the `DOWNSTREAM_REPOS` variable.
 5. Create a `downstream` environment that only the default branch can deploy to, and store the `DOWNSTREAM_TOKEN` secret in it.
    The token needs the Contents `write` and Pull requests `write` permissions on each downstream repository.
    A fine-grained token has one resource owner, so downstream repositories of a second owner need a second token.
+   For each owner, use a copy of the workflow with its own variable, environment and token.
 6. In each downstream project, tell Dependabot to ignore the package, so that only the workflow bumps it.
 
 ### Running PR Fixes with a command

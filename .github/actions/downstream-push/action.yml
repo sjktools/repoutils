@@ -101,6 +101,10 @@ runs:
         lock=()
         if [ -f "$RUNNER_TEMP/downstream-bump/uv.lock" ]; then
           lock=(--lock-file "$RUNNER_TEMP/downstream-bump/uv.lock")
+        elif [ -f "$DIRECTORY/uv.lock" ]; then
+          # Re-locking here would run the downstream's build backends alongside the token.
+          echo "::error::The bump job's artifact has no uv.lock, but the downstream has one, so this job won't re-lock it."
+          exit 1
         fi
         python3 -m repoutils downstream bump --pr --repo "$REPOSITORY" --version "$VERSION" \
           --directory "$DIRECTORY" ${PACKAGE:+--package "$PACKAGE"} "${lock[@]}"

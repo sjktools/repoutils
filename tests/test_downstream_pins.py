@@ -124,7 +124,7 @@ def test_check_locked() -> None:
     downstream_pins.check_locked(lock_text("1.0", "other"), "rep-utils", "0.4", "uv.lock")
     with pytest.raises(RuntimeError, match=r"uv.lock locks rep-utils at 0.3.0, not 0.4"):
         downstream_pins.check_locked(lock_text("0.3.0"), "rep-utils", "0.4", "uv.lock")
-    with pytest.raises(RuntimeError, match="F isn't valid TOML"):
+    with pytest.raises(RuntimeError, match="F isn't a valid lock file"):
         downstream_pins.check_locked("[[package", "rep-utils", "0.4", "F")
 
 
@@ -203,3 +203,50 @@ def test_lock_unchanged_and_no_lock(locked: Path, monkeypatch: pytest.MonkeyPatc
     (locked / "uv.lock").unlink()
     assert not downstream_pins.lock(locked, "rep-utils", "0.4.0")
     assert not (locked / "uv.lock").exists()
+
+
+def test_pins_in_parentheses(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\ndependencies = ["rep-utils (>=0.3)"]\n')
+    moving = downstream_pins.stale(tmp_path, "rep-utils", "0.4")
+    assert moving == [Pin("project.dependencies", "rep-utils (>=0.3)", ">=", "0.3")]
+    downstream_pins.move(tmp_path, "rep-utils", "0.4", moving)
+    assert '"rep-utils (>=0.4)"' in (tmp_path / "pyproject.toml").read_text()
+
+
+@pytest.mark.parametrize(
+    ("requirement", "clause"),
+    [("rep-utils>=0.3, <0.4", "<0.4"), ("rep-utils (>=0.3,!=0.4)", "!=0.4")],
+)
+def test_stale_refuses_a_bound_the_version_crosses(tmp_path: Path, requirement: str, clause: str) -> None:
+    (tmp_path / "pyproject.toml").write_text(f'[project]\ndependencies = ["{requirement}"]\n')
+    with pytest.raises(RuntimeError, match=f"whose `{clause}` excludes 0.4, so bump it by hand"):
+        downstream_pins.stale(tmp_path, "rep-utils", "0.4")
+
+
+def test_stale_leaves_unreadable_clauses_to_uv(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\ndependencies = ["rep-utils>=0.3, <1, ~=0.3, !=0.3.*"]\n')
+    assert len(downstream_pins.stale(tmp_path, "rep-utils", "0.4")) == 1
+
+
+def test_move_keeps_crlf_and_escapes(tmp_path: Path) -> None:
+    text = '[project]\r\ndependencies = ["rep-utils>=0.3; python_version >= \\"3.12\\""]\r\n'
+    (tmp_path / "pyproject.toml").write_bytes(text.encode())
+    downstream_pins.move(tmp_path, "rep-utils", "0.4", downstream_pins.stale(tmp_path, "rep-utils", "0.4"))
+    assert (tmp_path / "pyproject.toml").read_bytes() == text.replace(">=0.3;", ">=0.4;").encode()
+
+
+def test_depends(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(PYPROJECT)
+    assert downstream_pins.depends(tmp_path, "Rep_Utils")
+    (tmp_path / "pyproject.toml").write_text(
+        '[build-system]\nrequires = ["rep-utils==0.3"]\n[project]\ndependencies = ["other", {x = 1}]\n'
+    )
+    assert not downstream_pins.depends(tmp_path, "rep-utils")
+
+
+def test_check_locked_required_and_malformed() -> None:
+    with pytest.raises(RuntimeError, match="uv.lock doesn't lock rep-utils, which the project depends on"):
+        downstream_pins.check_locked(lock_text("1.0", "other"), "rep-utils", "0.4", "uv.lock", required=True)
+    for text in ("package = 1\n", "package = [1]\n"):
+        with pytest.raises(RuntimeError, match="F isn't a valid lock file: its package entries aren't"):
+            downstream_pins.check_locked(text, "rep-utils", "0.4", "F")

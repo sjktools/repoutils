@@ -1,13 +1,14 @@
 name: Open a downstream bump pull request
 description: >-
-  Makes the bump job's changes to a downstream again, takes uv.lock from the
-  bump job's artifact as data, and opens the pull request, with `repoutils
-  downstream bump --pr`.
+  Makes the bump job's changes to a downstream again, takes uv.lock and
+  actions.lock from the bump job's artifact as data, and opens the pull
+  request, with `repoutils downstream bump --pr`.
 
 # The push job of a Bump downstream workflow (see the README), once for each
 # downstream, in an environment that only main can deploy to, which holds the
 # token. It runs only repoutils, from this action's own commit, with the
-# runner's python3, installing nothing, and runs no code from the downstream.
+# runner's python3, installing only gh-actions-lock, which verifies
+# actions.lock, and runs no code from the downstream.
 # It runs in the upstream's checkout, which gives the package's name, and
 # checks out the downstream inside it.
 inputs:
@@ -20,7 +21,8 @@ inputs:
   token:
     description: >-
       A token with Contents and Pull requests write on the downstream, which
-      pushes the branch and opens the pull request.
+      pushes the branch and opens the pull request. If the downstream uses
+      the upstream's actions, it also needs Workflows write.
     required: true
   package:
     description: The package to bump (default, the [project] name in the upstream's pyproject.toml).
@@ -85,10 +87,18 @@ runs:
           exit 1
         fi
 
+    # Run by path, as `uses: ./` would name the caller's repository.
+    - name: Install gh-actions-lock
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/../install-gh-actions-lock/install.sh"
+
+    # gh actions-lock --verify reads the actions' public repositories with the
+    # job's read-only GITHUB_TOKEN, rather than the token that can push.
     - name: Open the pull request
       shell: bash
       env:
         DIRECTORY: ${{ inputs.path }}
+        GH_TOKEN: ${{ github.token }}
         GITHUB_TOKEN: ${{ inputs.token }}
         PACKAGE: ${{ inputs.package }}
         REPOSITORY: ${{ inputs.repository }}
@@ -104,6 +114,13 @@ runs:
         elif [ -f "$DIRECTORY/uv.lock" ]; then
           # Re-locking here would run the downstream's build backends alongside the token.
           echo "::error::The bump job's artifact has no uv.lock, but the downstream has one, so this job won't re-lock it."
+          exit 1
+        fi
+        # bump --pr checks it with gh actions-lock --verify before it commits it.
+        if [ -f "$RUNNER_TEMP/downstream-bump/actions.lock" ]; then
+          lock+=(--actions-lock-file "$RUNNER_TEMP/downstream-bump/actions.lock")
+        elif [ -f "$DIRECTORY/.github/workflows/actions.lock" ]; then
+          echo "::error::The bump job's artifact has no actions.lock, but the downstream has one."
           exit 1
         fi
         python3 -m repoutils downstream bump --pr --repo "$REPOSITORY" --version "$VERSION" \

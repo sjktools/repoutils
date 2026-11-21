@@ -45,7 +45,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
 | `check-lock-platforms` | Fails if `uv.lock` contains wheels for platforms that the project does not allow. |
 | `dependabot-uv` | `show` prints the `uv` version from the newest successful Dependabot `uv` update run, `check` fails unless the minimum in `[tool.uv] required-version` is that version, and `bump` changes the project to that `uv` version (with `--pr`, in a new pull request, unless one for that version is already open). |
-| `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `bump` changes the pins of a downstream project to a release of this package and re-locks it. With `--pr`, it opens a pull request, unless one for that release or a newer one is already open, and closes or comments on open pull requests for earlier releases, unless one for a newer release is open. |
+| `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `bump` changes the pins of a downstream project to a release of this package and re-locks it, and moves its uses of the actions of this package to the tag of the release. With `--pr`, it opens a pull request, unless one for that release or a newer one is already open, and closes or comments on open pull requests for earlier releases, unless one for a newer release is open. |
 | `github-releases` | `check` fails if a project whose release assets this project pins has a newer release, and `bump` pins the assets of that release (with `--pr`, in a new pull request, unless one for that release is already open). |
 | `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment (posting nothing with `--update-only` when none exists) or hides it when you pass `--hide-previous`. |
 | `added-strings` | Lists the added lines in a pull request that match strings configured in `pyproject.toml` (such as `# noqa:`), or posts the list to the pull request. |
@@ -202,14 +202,15 @@ A downstream project needs no workflow of its own, but it must use `uv`.
   It also runs by hand, with the version as input.
   A `release: published` trigger does not work if a `GITHUB_TOKEN` creates the release, because GitHub starts no workflow for an event that a `GITHUB_TOKEN` causes.
 - The workflow has three jobs, and each job runs one composite action from this repository.
-  The actions run `repoutils` from their own commit with the `python3` of the runner, and install nothing but `uv`.
+  The actions run `repoutils` from their own commit with the `python3` of the runner, and install nothing but `uv` and the `gh-actions-lock` extension of `gh`.
 - The `plan` job runs the `downstream-plan` action, which runs `downstream list` and gives the repositories as a job matrix.
 - The `bump` job runs the `downstream-bump` action once for each downstream project.
-  The action checks out the default branch of the downstream project, runs `downstream bump`, and uploads `uv.lock` as an artifact.
+  The action checks out the default branch of the downstream project, runs `downstream bump`, and uploads `uv.lock` and `actions.lock` as an artifact.
   Re-locking runs the build backends of the downstream project, so this job has only a read-only `GITHUB_TOKEN`.
   That token can check out only a public repository, so each downstream repository must be public.
 - The `push` job runs the `downstream-push` action once for each downstream project, in an environment that only the default branch can deploy to.
-  The action checks out the downstream project with a token from that environment, and runs `downstream bump --pr --lock-file <file>`, which copies `uv.lock` from the artifact as data.
+  The action checks out the downstream project with a token from that environment, and runs `downstream bump --pr --lock-file <file> --actions-lock-file <file>`.
+  The command copies `uv.lock` and `actions.lock` from the artifact as data, and checks `actions.lock` with `gh actions-lock --verify`.
   The action fails if the default branch of the downstream project changed after the `bump` job.
 
 `downstream bump` runs in a checkout of the upstream project, and changes the downstream checkout that `--directory` names:
@@ -223,8 +224,15 @@ A downstream project needs no workflow of its own, but it must use `uv`.
 - Before it changes anything, it checks the provenance that PyPI has for each file of the release.
   Each file must name the upstream repository (`--upstream`, default `$GITHUB_REPOSITORY`) as its trusted publisher.
   The pull request skips any Dependabot cooldown of the downstream project, so this check replaces the delay of the cooldown.
-- It does nothing if every pin is already at the version, and fails if any pin is newer.
-- With `--pr`, it commits only `pyproject.toml` and `uv.lock`, to the branch `downstream/<package>-<version>`.
+- It moves each `uses:` that names the upstream repository, in `.github/workflows` and in local actions, to the tag `v<version>`.
+  For example, it moves `uses: owner/name/.github/actions/downstream-bump@v0.3.0` to `@v0.4.0`.
+  It changes nothing else in those files.
+  It fails if a `uses:` of the upstream repository has a ref that is not a tag of the form `vX.Y.Z`, or has a newer tag.
+- If it moved a `uses:`, it then regenerates `.github/workflows/actions.lock` with `gh actions-lock`, which also locks the actions that the actions of the upstream use.
+  With `--actions-lock-file <file>`, it copies the file over `actions.lock` instead, and checks it with `gh actions-lock --verify`.
+  Both need `gh` with the `gh-actions-lock` extension, and a token that can read the repositories of the actions.
+- It does nothing if every pin and every `uses:` of the upstream repository is already at the version, and fails if any pin is newer.
+- With `--pr`, it commits only `pyproject.toml`, `uv.lock`, the files with a `uses:` that it moved, and `actions.lock`, to the branch `downstream/<package>-<version>`.
   The body of the pull request starts with a hidden marker, `<!-- <comment-prefix>-downstream-<package> -->`.
 
 With `--pr`, `downstream bump` finds the open pull requests that earlier runs opened, by that marker and by their branch:
@@ -251,9 +259,11 @@ To set up the same workflow for another package:
 2. Copy `bump-downstream.yml`, and change `Publish` to the name of the workflow that publishes the package.
    If the default branch of the package is not `main`, change `refs/heads/main` in the `if` of the `plan` job too.
 3. Replace each `uses: $/.github/actions/<action>` with `uses: sjktools/repoutils/.github/actions/<action>@<tag>`, and replace the sparse checkouts with a checkout of `pyproject.toml`.
+   Use a release tag, such as `v0.4.0`, so that `downstream bump` can move it when repoutils releases.
 4. Set the `DOWNSTREAM_REPOS` variable.
 5. Create a `downstream` environment that only the default branch can deploy to, and store the `DOWNSTREAM_TOKEN` secret in it.
    The token needs the Contents `write` and Pull requests `write` permissions on each downstream repository.
+   It also needs the Workflows `write` permission on each downstream repository that uses the actions of the package, because the pull request then changes files in `.github/workflows`.
    A fine-grained token has one resource owner, so downstream repositories of a second owner need a second token.
    For each owner, use a copy of the workflow with its own variable, environment and token.
 6. In each downstream project, tell Dependabot to ignore the package, so that only the workflow bumps it.

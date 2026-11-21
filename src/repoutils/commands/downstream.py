@@ -5,7 +5,9 @@ request with the bump.
 `list` checks the repositories that the DOWNSTREAM_REPOS Actions variable
 names, and prints them as JSON for a job matrix. `bump` runs in the
 upstream's checkout, which gives the package's name, and changes the
-downstream checkout that `--directory` names. Before it changes anything, it
+downstream checkout that `--directory` names. It also moves the downstream's
+references to the upstream's GitHub Actions to the release's tag, and
+regenerates its `actions.lock`. Before it changes anything, it
 checks that PyPI's provenance for the release names the upstream's repository
 as its trusted publisher. Stdlib-only, like every repoutils module."""
 
@@ -18,8 +20,17 @@ import sys
 import urllib.error
 from pathlib import Path
 
-from repoutils import config, downstream_pins, downstream_prs, github, pull_request, pypi_provenance
+from repoutils import (
+    config,
+    downstream_actions,
+    downstream_pins,
+    downstream_prs,
+    github,
+    pull_request,
+    pypi_provenance,
+)
 from repoutils.docstrings import summary
+from repoutils.locked_actions import ACTIONS_LOCK
 
 # An owner is letters, digits and single hyphens, and a repository's name is
 # letters, digits, `.`, `_` and `-`.
@@ -69,14 +80,24 @@ def bump(
     repo: str = "",
     token: str = "",
     lock_file: Path | None = None,
+    actions_lock_file: Path | None = None,
     marker: str = "",
 ) -> int:
     """Move directory's pins of package to version, and re-lock its uv.lock,
-    or copy lock_file over it if given. With pr, commit that to a new branch
-    of repo, push it and open a pull request whose body starts with marker."""
+    or copy lock_file over it if given. Move its uses of upstream's actions to
+    the release's tag, and regenerate its actions.lock, or copy
+    actions_lock_file over it, and verify it, if given. With pr, commit that
+    to a new branch of repo, push it and open a pull request whose body
+    starts with marker."""
     moving = downstream_pins.stale(directory, package, version)
-    if not moving:
-        print(f"{directory / config.PYPROJECT} already pins {package} {version}, so there's nothing to bump")
+    using = downstream_actions.stale(directory, upstream, version)
+    if not moving and not using:
+        actions = (
+            f", and uses {upstream}'s actions at {downstream_actions.tag(version)}"
+            if downstream_actions.uses(directory, upstream)
+            else ""
+        )
+        print(f"{directory / config.PYPROJECT} already pins {package} {version}{actions}, so there's nothing to bump")
         return 0
     lockfile = directory / "uv.lock"
     new_lock = None
@@ -90,6 +111,12 @@ def bump(
             raise RuntimeError(f"{lock_file} isn't valid UTF-8") from e
         required = downstream_pins.depends(directory, package)
         downstream_pins.check_locked(lock_text, package, version, str(lock_file), required=required)
+    actions_lock = directory / ACTIONS_LOCK
+    new_actions_lock = None
+    if actions_lock_file is not None and using:
+        if not actions_lock.is_file():
+            raise RuntimeError(f"There's no {actions_lock} for {actions_lock_file} to replace")
+        new_actions_lock = actions_lock_file.read_bytes()
     files = pypi_provenance.check(package, version, upstream)
     print(f"PyPI's provenance names {upstream} as the publisher of {', '.join(files)}")
 
@@ -120,20 +147,34 @@ def bump(
 
     pyproject = directory / config.PYPROJECT
     texts = {pyproject: pyproject.read_bytes()}
-    if lockfile.is_file():
-        texts[lockfile] = lockfile.read_bytes()
+    for path in [lockfile, actions_lock, *{directory / use.file for use in using}]:
+        if path.is_file():
+            texts[path] = path.read_bytes()
     try:
         downstream_pins.move(directory, package, version, moving)
+        moved_files = downstream_actions.move(directory, version, using)
+        relocked_actions = False
+        if using:
+            # Before uv lock, so it runs before any of the downstream's code.
+            if new_actions_lock is None:
+                relocked_actions = downstream_actions.lock(directory)
+            else:
+                actions_lock.write_bytes(new_actions_lock)
+                relocked_actions = new_actions_lock != texts[actions_lock]
+                # It's data from a job that ran the downstream's code.
+                downstream_actions.verify(directory)
+        actions_names = moved_files + ([ACTIONS_LOCK.as_posix()] if relocked_actions else [])
         if new_lock is None:
-            moved = pyproject.read_bytes()
+            ours = {path: path.read_bytes() for path in [pyproject, *(directory / name for name in actions_names)]}
             relocked = downstream_pins.lock(directory, package, version)
-            # uv lock runs the downstream's build backends, which could edit it.
-            if pyproject.read_bytes() != moved:
-                raise RuntimeError(f"{pyproject} changed while uv lock ran, so the bump stops here")
+            # uv lock runs the downstream's build backends, which could edit them.
+            for path, text in ours.items():
+                if path.read_bytes() != text:
+                    raise RuntimeError(f"{path} changed while uv lock ran, so the bump stops here")
         else:
             lockfile.write_bytes(new_lock)
             relocked = new_lock != texts[lockfile]
-        names = [config.PYPROJECT] + (["uv.lock"] if relocked else [])
+        names = ([config.PYPROJECT] if moving else []) + (["uv.lock"] if relocked else []) + actions_names
         if pr:
             # prepare() saw a clean tree, so anything else changed came from this run.
             listed = pull_request.git(directory, "ls-files", "--modified", "--others", "--exclude-standard")
@@ -146,12 +187,17 @@ def bump(
         for path, text in texts.items():
             path.write_bytes(text)
         raise
-    old = ", ".join(sorted({pin.version for pin in moving}, key=downstream_pins.release_key))
+    olds = {pin.version for pin in moving} | {use.ref.removeprefix("v") for use in using}
+    old = ", ".join(sorted(olds, key=downstream_pins.release_key))
     print(f"Bumped {package} from {old} to {version} in {', '.join(names)}")
     if not pr:
         return 0
 
-    pins = "\n".join(f"- `{pin.where}`: `{pin.requirement}` to `{pin.moved(version)}`" for pin in moving)
+    changes = [f"- `{pin.where}`: `{pin.requirement}` to `{pin.moved(version)}`" for pin in moving]
+    new_tag = downstream_actions.tag(version)
+    # Each action once for each file, however many steps use it.
+    changes += dict.fromkeys(f"- `{use.file}`: `{use.action}@{use.ref}` to `@{new_tag}`" for use in using)
+    pins = "\n".join(changes)
     # The run this is part of, in a workflow of the upstream's.
     run_id = os.environ.get("GITHUB_RUN_ID")
     server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
@@ -272,11 +318,16 @@ def main(argv: list[str]) -> int:
         "the package's == pins in [build-system] requires and >= minimums in dependencies and dependency groups "
         "to the version, then re-lock uv.lock, upgrading only the package, with the uv the downstream's "
         "[tool.uv] required-version names. It retries the re-lock for a while, in case PyPI's index lags. "
-        "First it checks that PyPI's provenance names the upstream's repository as the trusted publisher of "
-        "each of the release's files. It does nothing if every pin is already at the version, and fails if "
-        "one is newer.",
+        "It also moves each uses: of an action from the upstream's repository, in the workflows and local "
+        "actions, to the tag v<version>, and regenerates .github/workflows/actions.lock with gh actions-lock, "
+        "if there is one. First it checks that PyPI's provenance names the upstream's repository as the "
+        "trusted publisher of each of the release's files. It does nothing if every pin and uses: is already at "
+        "the version, and fails if one is newer, or a uses: of the upstream's actions is at a ref that isn't a "
+        "release tag.",
         epilog="--pr uses $GITHUB_TOKEN, defaulting to `gh auth token`, which needs the Pull requests write "
-        "permission on the downstream, and pushes with Git's own credentials.",
+        "permission on the downstream, and pushes with Git's own credentials, which also need Workflows write "
+        "if the bump changes a workflow. Regenerating or verifying actions.lock needs gh, with the "
+        "github/gh-actions-lock extension, and a token that can read the actions' repositories.",
     )
     bump_parser.add_argument("--version", required=True, help="the release to bump to, such as 0.4.0")
     bump_parser.add_argument(
@@ -296,6 +347,13 @@ def main(argv: list[str]) -> int:
         type=Path,
         help="copy this file over uv.lock rather than re-lock it, so that bump runs no uv: for a job that holds "
         "a token that can push, given a uv.lock that a job without one re-locked by running bump",
+    )
+    bump_parser.add_argument(
+        "--actions-lock-file",
+        type=Path,
+        help="if the bump moves a uses:, copy this file over .github/workflows/actions.lock rather than "
+        "regenerate it, then check it with gh actions-lock --verify: for a job that holds a token that can push, "
+        "given an actions.lock that a job without one regenerated by running bump",
     )
     bump_parser.add_argument(
         "--pr",
@@ -332,6 +390,7 @@ def main(argv: list[str]) -> int:
             repo=args.repo or "",
             token=token,
             lock_file=args.lock_file,
+            actions_lock_file=args.actions_lock_file,
             marker=marker,
         )
     except subprocess.CalledProcessError as e:

@@ -16,14 +16,20 @@ name: Bump downstream
 #
 # - plan checks DOWNSTREAM_REPOS and gives the matrix.
 # - bump checks out each downstream's default branch, moves its pins and
-#   re-locks it with its own uv, which runs its build backends. It has only a
-#   read-only GITHUB_TOKEN, and hands uv.lock on as an artifact.
+#   re-locks it with its own uv, which runs its build backends. It moves the
+#   downstream's uses of this repository's actions to the release's tag, and
+#   regenerates its actions.lock with gh actions-lock. It has only a
+#   read-only GITHUB_TOKEN, and hands uv.lock and actions.lock on as an
+#   artifact.
 # - push makes the PR with DOWNSTREAM_TOKEN, which lives in the downstream
 #   environment that only main can deploy to. It runs only main's repoutils,
-#   with the runner's python3, installing nothing, and takes uv.lock from bump
-#   as data.
+#   with the runner's python3, installing only gh-actions-lock, and takes
+#   uv.lock and actions.lock from bump as data, checking actions.lock with
+#   gh actions-lock --verify.
 #
-# DOWNSTREAM_TOKEN needs Contents and Pull requests write on each downstream.
+# DOWNSTREAM_TOKEN needs Contents and Pull requests write on each downstream,
+# and Workflows write on each that uses this repository's actions, as the PR
+# then changes its workflows.
 # It's a token rather than the GITHUB_TOKEN, which can't write to another
 # repository.
 on:
@@ -97,6 +103,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             /.github/actions/downstream-bump/
+            /.github/actions/install-gh-actions-lock/
             /pyproject.toml
             /src/repoutils/
           sparse-checkout-cone-mode: false
@@ -129,6 +136,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             /.github/actions/downstream-push/
+            /.github/actions/install-gh-actions-lock/
             /pyproject.toml
             /src/repoutils/
           sparse-checkout-cone-mode: false

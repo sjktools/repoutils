@@ -1,15 +1,17 @@
 name: Bump a downstream
 description: >-
   Checks out a downstream repository's default branch, moves its pins of the
-  upstream's package to a release and re-locks it, with `repoutils downstream
-  bump`, and uploads what the push job needs as an artifact.
+  upstream's package to a release and re-locks it, moves its uses of the
+  upstream's actions to the release's tag and regenerates its actions.lock,
+  with `repoutils downstream bump`, and uploads what the push job needs as an
+  artifact.
 
 # The bump job of a Bump downstream workflow (see the README), once for each
 # downstream. Re-locking runs the downstream's build backends, so the job must
 # hold no token that can write, and this action takes none. It runs in the
 # upstream's checkout, which gives the package's name, and checks out the
 # downstream inside it. It runs repoutils from this action's own commit, with
-# the runner's python3, installing only uv.
+# the runner's python3, installing only uv and gh-actions-lock.
 inputs:
   repository:
     description: The downstream, as owner/name.
@@ -55,10 +57,18 @@ runs:
         version: "0.13.6"
         enable-cache: false
 
+    # Run by path, as `uses: ./` would name the caller's repository.
+    - name: Install gh-actions-lock
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/../install-gh-actions-lock/install.sh"
+
+    # gh actions-lock reads the actions' public repositories with the job's
+    # read-only GITHUB_TOKEN.
     - name: Bump the downstream
       shell: bash
       env:
         DIRECTORY: ${{ inputs.path }}
+        GH_TOKEN: ${{ github.token }}
         PACKAGE: ${{ inputs.package }}
         VERSION: ${{ inputs.version }}
         PYTHONPATH: ${{ github.action_path }}/../../../src
@@ -71,6 +81,9 @@ runs:
         git -C "$DIRECTORY" rev-parse HEAD > "$RUNNER_TEMP/downstream-bump/commit"
         if [ -f "$DIRECTORY/uv.lock" ]; then
           cp "$DIRECTORY/uv.lock" "$RUNNER_TEMP/downstream-bump/uv.lock"
+        fi
+        if [ -f "$DIRECTORY/.github/workflows/actions.lock" ]; then
+          cp "$DIRECTORY/.github/workflows/actions.lock" "$RUNNER_TEMP/downstream-bump/actions.lock"
         fi
 
     - name: Upload the bump

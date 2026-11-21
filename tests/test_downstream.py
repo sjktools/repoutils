@@ -179,6 +179,8 @@ class Fakes:
         self.pulls = pulls or []
         self.commits = commits or {}
         self.comments: dict[int, list[dict[str, Any]]] = {}
+        # Bodies that someone edited after the pull requests were listed.
+        self.bodies: dict[int, str] = {}
         # The requests that change something, in order.
         self.changes: list[tuple[str, str, Any]] = []
         monkeypatch.setattr(pypi_provenance, "check", self.check)
@@ -206,6 +208,9 @@ class Fakes:
                 return [p for p in self.pulls if p["head"]["ref"] == BRANCH]
             if path == "/pulls":
                 return _page(self.pulls, url)
+            if match := re.fullmatch(r"/pulls/(\d+)", path):
+                listed = next(p for p in self.pulls if p["number"] == int(match[1]))
+                return {**listed, "body": self.bodies.get(listed["number"], listed["body"])}
             if match := re.fullmatch(r"/pulls/(\d+)/commits", path):
                 return _page(self.commits[int(match[1])], url)
             match = re.fullmatch(r"/issues/(\d+)/comments", path)
@@ -601,10 +606,12 @@ def test_bump_pr_rerun_finishes_earlier_prs(
         [
             pull(3, OLD, sha=sha),
             pull(4, "downstream/pkg-0.3.6"),
-            pull(5, "downstream/pkg-0.4", body=f"{MARKER}\n\n{LINK_4}\n" if linked else MARKER),
+            pull(5, "downstream/pkg-0.4"),
         ],
         {3: [BUMP_COMMIT], 4: [commit("Fix")]},
     )
+    # Edited since it was listed, and linking keeps the edit.
+    fakes.bodies[5] = f"{MARKER}\n\n{LINK_4}\n" if linked else f"{MARKER}\n\nEdited."
     done = {"user": {"login": "bot"}, "body": "<!-- up-downstream-pkg-0.4.0 -->\nSuperseded by #5."}
     # A deleted account's comment has a null user.
     fakes.comments = {
@@ -618,7 +625,7 @@ def test_bump_pr_rerun_finishes_earlier_prs(
     assert "Left https://github.com/d/down/pull/4 open" in out
     # The comments are there already, but #5's body may not link #4 yet.
     closing = [("PATCH", "/pulls/3", {"state": "closed"})]
-    linking = [] if linked else [("PATCH", "/pulls/5", {"body": f"{MARKER}\n\n{LINK_4}"})]
+    linking = [] if linked else [("PATCH", "/pulls/5", {"body": f"{MARKER}\n\nEdited.\n\n{LINK_4}"})]
     assert fakes.changes == linking + closing
     assert remote_branches(upstream) == []
     assert (upstream / "down/pyproject.toml").read_text() == DOWNSTREAM

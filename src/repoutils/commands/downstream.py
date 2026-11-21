@@ -184,13 +184,14 @@ def _link_kept(
     """Add a paragraph to current's body for each pull request in kept that it
     doesn't link yet, as one may have gained other commits since the run that
     opened current. Returns 1 if that failed, after reporting it."""
-    if not (missing := [note for note in _left_open(package, kept) if note not in current.body]):
+    if not kept:
         return 0
-    body = current.body.rstrip() + "\n\n" + "\n\n".join(missing)
+    url = f"{github.API_URL}/repos/{repo}/pulls/{current.number}"
     try:
-        github.request(
-            "PATCH", f"{github.API_URL}/repos/{repo}/pulls/{current.number}", token, json_body={"body": body}
-        )
+        # Read again, as someone may have edited it since it was listed, and PATCH replaces it all.
+        body: str = github.request("GET", url, token).get("body") or ""
+        if missing := [note for note in _left_open(package, kept) if note not in body]:
+            github.request("PATCH", url, token, json_body={"body": body.rstrip() + "\n\n" + "\n\n".join(missing)})
     except urllib.error.HTTPError as e:
         with e:
             detail = e.read().decode(errors="replace")

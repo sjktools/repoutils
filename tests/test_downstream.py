@@ -1,8 +1,10 @@
 import email.message
 import io
 import json
+import re
 import subprocess
 import urllib.error
+import urllib.parse
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -13,6 +15,7 @@ from repoutils.commands import downstream
 
 API = f"{github.API_URL}/repos/d/down"
 BRANCH = "downstream/pkg-0.4.0"
+MARKER = "<!-- up-downstream-pkg -->"
 UPSTREAM = '[project]\nname = "pkg"\n\n[tool.repoutils]\ncomment-prefix = "up"\n'
 DOWNSTREAM = """\
 [build-system]
@@ -113,17 +116,80 @@ def upstream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
+def pull(
+    number: int, branch: str, *, body: str | None = MARKER, source: str | None = "d/down", sha: str = "a" * 40
+) -> dict[str, Any]:
+    """An open pull request as GitHub's API lists it."""
+    return {
+        "number": number,
+        "html_url": f"https://github.com/d/down/pull/{number}",
+        "body": body,
+        "head": {"ref": branch, "sha": sha, "repo": {"full_name": source} if source else None},
+        "base": {"ref": "main"},
+        "user": {"login": "bot"},
+    }
+
+
+def commit(
+    message: str,
+    *,
+    parents: int = 1,
+    committer: str | None = "bot",
+    git_committer: str = "bot",
+    committed: str = "2026-11-21T00:00:00Z",
+) -> dict[str, Any]:
+    """A commit as GitHub's API lists a pull request's, made by bot unless
+    git_committer says otherwise, and committer, its GitHub account."""
+    return {
+        "commit": {
+            "message": message,
+            "author": {"name": "bot", "email": "bot@example.com", "date": "2026-11-21T00:00:00Z"},
+            "committer": {"name": git_committer, "email": f"{git_committer}@example.com", "date": committed},
+        },
+        "parents": [{"sha": "p"}] * parents,
+        "committer": {"login": committer} if committer else None,
+    }
+
+
+BUMP_COMMIT = commit(f"Bump pkg to 0.3.5\n\nBumps pkg from 0.3.0 to 0.3.5.\n\n{downstream.TRAILER}")
+UPDATE_MERGE = commit(
+    "Merge branch 'main' into downstream/pkg-0.3.5", parents=2, committer="web-flow", git_committer="GitHub"
+)
+# The Update branch button's rebase makes GitHub the committer.
+REBASED = commit(BUMP_COMMIT["commit"]["message"], committer="web-flow", git_committer="GitHub")
+OLD = "downstream/pkg-0.3.5"
+
+
+def _page(items: list[Any], url: str) -> list[Any]:
+    page = int(urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["page"][0])
+    return items[(page - 1) * 100 : page * 100]
+
+
 class Fakes:
     """Stands in for PyPI's provenance, uv lock and GitHub's pull requests."""
 
-    def __init__(self, monkeypatch: pytest.MonkeyPatch, open_pulls: list[dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        pulls: list[dict[str, Any]] | None = None,
+        commits: dict[int, list[dict[str, Any]]] | None = None,
+    ) -> None:
         self.checked: list[tuple[str, str, str]] = []
         self.locked: list[tuple[Path, str, str]] = []
-        self.open_pulls = open_pulls or []
-        self.created: list[Any] = []
+        self.pulls = pulls or []
+        self.commits = commits or {}
+        self.comments: dict[int, list[dict[str, Any]]] = {}
+        # Bodies that someone edited after the pull requests were listed.
+        self.bodies: dict[int, str] = {}
+        # The requests that change something, in order.
+        self.changes: list[tuple[str, str, Any]] = []
         monkeypatch.setattr(pypi_provenance, "check", self.check)
         monkeypatch.setattr(downstream_pins, "lock", self.lock)
         monkeypatch.setattr(github, "request", self.request)
+
+    @property
+    def created(self) -> list[Any]:
+        return [body for method, url, body in self.changes if (method, url) == ("POST", "/pulls")]
 
     def check(self, package: str, version: str, repository: str) -> list[str]:
         self.checked.append((package, version, repository))
@@ -136,11 +202,24 @@ class Fakes:
 
     def request(self, method: str, url: str, token: str, *, json_body: object = None) -> Any:
         assert token == "tok"
-        if (method, url) == ("GET", f"{API}/pulls?state=open&head=d%3Adownstream%2Fpkg-0.4.0"):
-            return self.open_pulls
-        assert (method, url) == ("POST", f"{API}/pulls")
-        self.created.append(json_body)
-        return {"html_url": "https://github.com/d/down/pull/5"}
+        path = url.removeprefix(API).split("?")[0]
+        if method == "GET":
+            if url == f"{API}/pulls?state=open&head=d%3Adownstream%2Fpkg-0.4.0":
+                return [p for p in self.pulls if p["head"]["ref"] == BRANCH]
+            if path == "/pulls":
+                return _page(self.pulls, url)
+            if match := re.fullmatch(r"/pulls/(\d+)", path):
+                listed = next(p for p in self.pulls if p["number"] == int(match[1]))
+                return {**listed, "body": self.bodies.get(listed["number"], listed["body"])}
+            if match := re.fullmatch(r"/pulls/(\d+)/commits", path):
+                return _page(self.commits[int(match[1])], url)
+            match = re.fullmatch(r"/issues/(\d+)/comments", path)
+            assert match, url
+            return _page(self.comments.get(int(match[1]), []), url)
+        self.changes.append((method, path, json_body))
+        if (method, path) == ("POST", "/pulls"):
+            return {"html_url": "https://github.com/d/down/pull/5"}
+        return None
 
 
 def test_bump(upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -220,10 +299,12 @@ def test_bump_pr(upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest
     assert not git(down, "status", "--porcelain")
 
 
+# The second has lost its marker, so only its branch shows it's the same bump.
+@pytest.mark.parametrize("body", [MARKER, "edited"])
 def test_bump_pr_already_open(
-    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], body: str
 ) -> None:
-    Fakes(monkeypatch, [{"html_url": "https://github.com/d/down/pull/4"}])
+    Fakes(monkeypatch, [pull(4, BRANCH, body=body)])
     assert downstream.run(["bump", "--version", "0.4.0", "--directory", "down", "--pr", "--repo", "d/down"]) == 0
     assert capsys.readouterr().out.endswith(
         "Pull request https://github.com/d/down/pull/4 already bumps pkg to 0.4.0\n"
@@ -336,7 +417,7 @@ def test_bump_takes_package_and_asks_gh(
     (upstream / "pyproject.toml").unlink()
     monkeypatch.delenv("GITHUB_REPOSITORY")
     monkeypatch.delenv("GITHUB_TOKEN")
-    fakes = Fakes(monkeypatch, [{"html_url": "https://github.com/d/down/pull/4"}])
+    fakes = Fakes(monkeypatch, [pull(4, BRANCH)])
     asked: list[tuple[str, ...]] = []
 
     def gh_output(*args: str) -> str:
@@ -360,7 +441,7 @@ def test_bump_http_error(upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys
 
     monkeypatch.setattr(github, "request", request)
     assert downstream.run(["bump", "--version", "0.4.0", "--directory", "down", "--pr", "--repo", "d/down"]) == 1
-    assert capsys.readouterr().err == f"HTTP 403 from {API}/pulls?state=open&head=d%3Adownstream%2Fpkg-0.4.0:\ndenied\n"
+    assert capsys.readouterr().err == f"HTTP 403 from {API}/pulls?state=open&per_page=100&page=1:\ndenied\n"
 
 
 @pytest.mark.parametrize(("version", "error"), [("v1", "isn't a release version"), ("0.2", "never lowers a pin")])
@@ -386,3 +467,249 @@ def test_bump_provenance_failure_changes_nothing(
     assert capsys.readouterr().err == "bad provenance\n"
     assert fakes.locked == []
     assert not git(upstream / "down", "status", "--porcelain")
+
+
+def push_old(upstream: Path) -> str:
+    """Push an earlier bump's branch, OLD, to the downstream's origin, and return its commit."""
+    down = upstream / "down"
+    git(down, "push", "--quiet", "origin", f"main:refs/heads/{OLD}")
+    return git(down, "rev-parse", "main")
+
+
+def remote_branches(upstream: Path) -> list[str]:
+    return git(upstream / "down", "ls-remote", "--heads", "origin").split()[1::2]
+
+
+PR_ARGS = ["bump", "--version", "0.4.0", "--directory", "down", "--pr", "--repo", "d/down"]
+
+
+def test_bump_pr_supersedes_an_untouched_pr(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sha = push_old(upstream)
+    # An Update branch merge still counts as untouched.
+    fakes = Fakes(monkeypatch, [pull(3, OLD, sha=sha)], {3: [BUMP_COMMIT, UPDATE_MERGE, BUMP_COMMIT]})
+    assert downstream.run(PR_ARGS) == 0
+    assert capsys.readouterr().out.endswith(
+        "Opened https://github.com/d/down/pull/5\n"
+        "Closed https://github.com/d/down/pull/3, which #5 supersedes, and deleted its branch\n"
+    )
+    assert [(method, path) for method, path, _ in fakes.changes] == [
+        ("POST", "/pulls"),
+        ("PATCH", "/pulls/3"),
+        ("POST", "/issues/3/comments"),
+    ]
+    assert fakes.changes[1][2] == {"state": "closed"}
+    assert fakes.changes[2][2] == {"body": "<!-- up-downstream-pkg-0.4.0 -->\nSuperseded by #5."}
+    assert "stays open" not in fakes.created[0]["body"]
+    assert remote_branches(upstream) == [f"refs/heads/{BRANCH}"]
+
+
+@pytest.mark.parametrize(
+    "commits",
+    [
+        [BUMP_COMMIT, commit("Fix the tests")],
+        # Amended, or rebased, by a person, who becomes its committer, or rebased by Update branch.
+        [commit(BUMP_COMMIT["commit"]["message"], git_committer="simon")],
+        # Amended by the identity that made it.
+        [commit(BUMP_COMMIT["commit"]["message"], committed="2026-11-21T01:00:00Z")],
+        [REBASED],
+        # The trailer must be in the message's last paragraph.
+        [commit(f"Bump\n\n{downstream.TRAILER}\n\nmore")],
+        # A merge made by hand, or of another branch.
+        [BUMP_COMMIT, commit(UPDATE_MERGE["commit"]["message"], parents=2)],
+        [BUMP_COMMIT, commit("Merge branch 'other' into downstream/pkg-0.3.5", parents=2, committer="web-flow")],
+        [BUMP_COMMIT, commit(UPDATE_MERGE["commit"]["message"], parents=2, committer=None)],
+        # GitHub lists no more than 250 commits.
+        [BUMP_COMMIT] * 250,
+        [],
+    ],
+)
+def test_bump_pr_warns_on_a_pr_with_other_commits(
+    upstream: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    commits: list[dict[str, object]],
+) -> None:
+    push_old(upstream)
+    fakes = Fakes(monkeypatch, [pull(3, OLD)], {3: commits})
+    assert downstream.run(PR_ARGS) == 0
+    assert capsys.readouterr().out.endswith(
+        "Left https://github.com/d/down/pull/3 open, as it has other commits, and commented that #5 bumps 0.4.0\n"
+    )
+    assert [(method, path) for method, path, _ in fakes.changes] == [("POST", "/pulls"), ("POST", "/issues/3/comments")]
+    assert fakes.changes[1][2] == {
+        "body": "<!-- up-downstream-pkg-0.4.0 -->\n#5 bumps pkg to 0.4.0. "
+        "This pull request has commits that `repoutils downstream bump` didn't make, so it stays open, "
+        "but its changes probably need moving across to #5."
+    }
+    assert (
+        "\n\n#3 bumps pkg to 0.3.5, and stays open, as it has commits that `repoutils downstream bump` didn't make. "
+        "Its changes probably need moving across.\n\nOpened by "
+    ) in fakes.created[0]["body"]
+    assert f"refs/heads/{OLD}" in remote_branches(upstream)
+
+
+def test_bump_pr_pages_through_commits(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sha = push_old(upstream)
+    fakes = Fakes(monkeypatch, [pull(3, OLD, sha=sha)], {3: [BUMP_COMMIT] * 100 + [commit("Fix")]})
+    assert downstream.run(PR_ARGS) == 0
+    assert [path for _, path, _ in fakes.changes] == ["/pulls", "/issues/3/comments"]
+
+
+def test_bump_pr_ignores_other_prs(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sha = push_old(upstream)
+    others = [
+        pull(10, OLD, body="no marker"),
+        pull(11, OLD, body=None),
+        pull(12, OLD, source="fork/down"),
+        pull(13, OLD, source=None),
+        pull(14, "downstream/pkg-extra-0.3"),
+        pull(15, "other/pkg-0.3.5"),
+        # The one it closes.
+        pull(3, OLD, sha=sha),
+    ]
+    # They're on the second page.
+    fakes = Fakes(monkeypatch, [pull(n, f"x{n}", body="") for n in range(100)] + others, {3: [BUMP_COMMIT]})
+    assert downstream.run(PR_ARGS) == 0
+    assert [path for _, path, _ in fakes.changes] == ["/pulls", "/pulls/3", "/issues/3/comments"]
+
+
+@pytest.mark.parametrize("version", ["0.4.1", "0.5"])
+def test_bump_pr_leaves_a_newer_pr(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], version: str
+) -> None:
+    fakes = Fakes(monkeypatch, [pull(3, OLD), pull(6, f"downstream/pkg-{version}")], {3: [BUMP_COMMIT]})
+    assert downstream.run(PR_ARGS) == 0
+    assert capsys.readouterr().out.endswith(
+        f"Pull request https://github.com/d/down/pull/6 already bumps pkg to {version}, so there's nothing to do\n"
+    )
+    assert fakes.changes == []
+    assert (upstream / "down/pyproject.toml").read_text() == DOWNSTREAM
+
+
+LINK_4 = (
+    "#4 bumps pkg to 0.3.6, and stays open, as it has commits that `repoutils downstream bump` didn't make. "
+    "Its changes probably need moving across."
+)
+
+
+# Whether the run that opened #5 had already seen #4's other commits, and linked it.
+@pytest.mark.parametrize("linked", [False, True])
+def test_bump_pr_rerun_finishes_earlier_prs(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], linked: bool
+) -> None:
+    sha = push_old(upstream)
+    # The run that opened #5 commented on #3 and #4, then failed.
+    fakes = Fakes(
+        monkeypatch,
+        [
+            pull(3, OLD, sha=sha),
+            pull(4, "downstream/pkg-0.3.6"),
+            pull(5, "downstream/pkg-0.4"),
+        ],
+        {3: [BUMP_COMMIT], 4: [commit("Fix")]},
+    )
+    # Edited since it was listed, and linking keeps the edit.
+    fakes.bodies[5] = f"{MARKER}\n\n{LINK_4}\n" if linked else f"{MARKER}\n\nEdited."
+    done = {"user": {"login": "bot"}, "body": "<!-- up-downstream-pkg-0.4.0 -->\nSuperseded by #5."}
+    # A deleted account's comment has a null user.
+    fakes.comments = {
+        3: [{"user": None, "body": "hi"}, {"user": {"login": "someone"}, "body": done["body"]}],
+        4: [done],
+    }
+    assert downstream.run(PR_ARGS) == 0
+    out = capsys.readouterr().out
+    assert "Pull request https://github.com/d/down/pull/5 already bumps pkg to 0.4.0\n" in out
+    assert "Closed https://github.com/d/down/pull/3" in out
+    assert "Left https://github.com/d/down/pull/4 open" in out
+    # The comments are there already, but #5's body may not link #4 yet.
+    closing = [("PATCH", "/pulls/3", {"state": "closed"})]
+    linking = [] if linked else [("PATCH", "/pulls/5", {"body": f"{MARKER}\n\nEdited.\n\n{LINK_4}"})]
+    assert fakes.changes == linking + closing
+    assert remote_branches(upstream) == []
+    assert (upstream / "down/pyproject.toml").read_text() == DOWNSTREAM
+
+
+def test_bump_pr_keeps_a_branch_that_moved_on(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    push_old(upstream)
+    # Listed at another commit than the branch is at now, and a second one to show the next is still handled.
+    fakes = Fakes(monkeypatch, [pull(3, OLD), pull(4, "downstream/pkg-0.3.6")], {3: [BUMP_COMMIT], 4: [commit("Fix")]})
+    assert downstream.run(PR_ARGS) == 1
+    captured = capsys.readouterr()
+    assert (
+        f"Handling https://github.com/d/down/pull/3 failed: Deleting the branch {OLD} failed, so it's still open:\n"
+    ) in captured.err
+    assert "Left https://github.com/d/down/pull/4 open" in captured.out
+    # Left open, for a rerun to judge again.
+    assert [path for _, path, _ in fakes.changes] == ["/pulls", "/issues/4/comments"]
+    assert f"refs/heads/{OLD}" in remote_branches(upstream)
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (
+            urllib.error.HTTPError(f"{API}/issues/3/comments", 403, "no", email.message.Message(), io.BytesIO(b"no")),
+            f"HTTP 403 from {API}/issues/3/comments:\nno",
+        ),
+        (json.JSONDecodeError("Expecting value", "<", 0), "Expecting value: line 1 column 1 (char 0)"),
+    ],
+)
+def test_bump_pr_reports_a_failed_request_on_an_earlier_pr(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: Exception, message: str
+) -> None:
+    # The second is still handled.
+    fakes = Fakes(
+        monkeypatch, [pull(3, OLD), pull(4, "downstream/pkg-0.3.6")], {3: [commit("Fix")], 4: [commit("Fix")]}
+    )
+    request = fakes.request
+
+    def failing(method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        if url.endswith("/issues/3/comments"):
+            raise error
+        return request(method, url, token, json_body=json_body)
+
+    monkeypatch.setattr(github, "request", failing)
+    assert downstream.run(PR_ARGS) == 1
+    assert capsys.readouterr().err == f"Handling https://github.com/d/down/pull/3 failed: {message}\n"
+    assert [path for _, path, _ in fakes.changes] == ["/pulls", "/issues/4/comments"]
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (
+            urllib.error.HTTPError(f"{API}/pulls/5", 403, "no", email.message.Message(), io.BytesIO(b"no")),
+            "HTTP 403:\nno",
+        ),
+        (json.JSONDecodeError("Expecting value", "<", 0), "Expecting value: line 1 column 1 (char 0)"),
+        (RuntimeError("too many redirects"), "too many redirects"),
+    ],
+)
+def test_bump_pr_rerun_still_handles_earlier_prs_if_linking_fails(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: Exception, message: str
+) -> None:
+    sha = push_old(upstream)
+    fakes = Fakes(
+        monkeypatch,
+        [pull(3, OLD, sha=sha), pull(4, "downstream/pkg-0.3.6"), pull(5, BRANCH)],
+        {3: [BUMP_COMMIT], 4: [commit("Fix")]},
+    )
+    request = fakes.request
+
+    def failing(method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        if (method, url) == ("PATCH", f"{API}/pulls/5"):
+            raise error
+        return request(method, url, token, json_body=json_body)
+
+    monkeypatch.setattr(github, "request", failing)
+    assert downstream.run(PR_ARGS) == 1
+    captured = capsys.readouterr()
+    assert captured.err == (
+        f"Linking the pull requests it leaves open from https://github.com/d/down/pull/5 failed: {message}\n"
+    )
+    assert "Closed https://github.com/d/down/pull/3" in captured.out
+    assert "Left https://github.com/d/down/pull/4 open" in captured.out

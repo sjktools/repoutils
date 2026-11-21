@@ -98,8 +98,8 @@ def pr_head(repo: str, pr: int, token: str) -> str:
     return sha
 
 
-def marked_comments(repo: str, pr: int, author: str, marker: str, token: str) -> list[dict[str, Any]]:
-    """The comments author has posted on pr whose body starts with marker, oldest first."""
+def marked_comments(repo: str, pr: int, author: str | None, marker: str, token: str) -> list[dict[str, Any]]:
+    """The comments author (or, if None, anyone) has posted on pr whose body starts with marker, oldest first."""
     comments = []
     page = 1
     while True:
@@ -108,7 +108,12 @@ def marked_comments(repo: str, pr: int, author: str, marker: str, token: str) ->
             f"{API_URL}/repos/{repo}/issues/{pr}/comments?per_page=100&page={page}",
             token,
         )
-        comments += [c for c in batch if c["user"]["login"] == author and c["body"].startswith(marker)]
+        # A deleted account's comment has a null user.
+        comments += [
+            c
+            for c in batch
+            if c["body"].startswith(marker) and (author is None or (c["user"] or {}).get("login") == author)
+        ]
         if len(batch) < 100:
             return comments
         page += 1

@@ -18,15 +18,13 @@ import sys
 import urllib.error
 from pathlib import Path
 
-from repoutils import config, downstream_pins, github, pull_request, pypi_provenance
+from repoutils import config, downstream_pins, downstream_prs, github, pull_request, pypi_provenance
 from repoutils.docstrings import summary
 
 # An owner is letters, digits and single hyphens, and a repository's name is
 # letters, digits, `.`, `_` and `-`.
 _REPOSITORY_RE = re.compile(r"[A-Za-z0-9](?:-?[A-Za-z0-9])*/[A-Za-z0-9._-]+")
-# A commit trailer that marks the commits `bump --pr` makes, so that a later
-# bump can tell an untouched bump PR from one a person has added to.
-TRAILER = "Bumped-By: repoutils downstream bump"
+TRAILER = downstream_prs.TRAILER
 
 
 def repositories(text: str) -> list[str]:
@@ -59,10 +57,6 @@ def package_name(root: Path) -> str:
     if not isinstance(name, str) or not name:
         raise config.ConfigError(f"{path}: [project] name is missing, so pass --package")
     return name
-
-
-def branch_name(package: str, version: str) -> str:
-    return f"downstream/{package}-{version}"
 
 
 def bump(
@@ -99,8 +93,26 @@ def bump(
     files = pypi_provenance.check(package, version, upstream)
     print(f"PyPI's provenance names {upstream} as the publisher of {', '.join(files)}")
 
-    branch, base = branch_name(package, version), ""
+    branch, base = downstream_prs.branch_name(package, version), ""
+    key = downstream_pins.release_key(version)
+    earlier: list[downstream_prs.Bump] = []
+    kept: list[downstream_prs.Bump] = []
     if pr:
+        bumps = downstream_prs.open_bumps(repo, token, package, marker)
+        if newer := [b for b in bumps if downstream_pins.release_key(b.version) > key]:
+            newest = newer[0]
+            print(f"Pull request {newest.url} already bumps {package} to {newest.version}, so there's nothing to do")
+            return 0
+        earlier = [b for b in bumps if downstream_pins.release_key(b.version) < key]
+        # Judged before anything changes, so the new pull request's body can link the ones it leaves open.
+        kept = [b for b in earlier if not downstream_prs.untouched(repo, token, b)]
+        if same := [b for b in bumps if downstream_pins.release_key(b.version) == key]:
+            # A rerun, after an earlier run opened it, finishes with the earlier ones.
+            current = same[0]
+            print(f"Pull request {current.url} already bumps {package} to {version}")
+            linked = _link_kept(repo, token, current, package, kept)
+            return linked | _follow_up(directory, repo, token, earlier, kept, same[0].number, package, version, marker)
+        # One whose body has lost the marker.
         if existing := pull_request.open_pr(repo, branch, token):
             print(f"Pull request {existing} already bumps {package} to {version}")
             return 0
@@ -144,6 +156,7 @@ def bump(
     run_id = os.environ.get("GITHUB_RUN_ID")
     server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
     run = f" in {server}/{upstream}/actions/runs/{run_id}" if run_id else ""
+    left_open = "".join(f"{note}\n\n" for note in _left_open(package, kept))
     url = pull_request.submit(
         directory,
         repo,
@@ -152,16 +165,90 @@ def bump(
         base=base,
         paths=names,
         title=f"Bump {package} to {version}",
-        message=f"Bumps {package} from {old} to {version}.\n\n{TRAILER}",
+        message=f"Bumps {package} from {old} to {version}.\n\n{downstream_prs.TRAILER}",
         body=f"{marker}\n"
         f"Bumps [{package}](https://pypi.org/project/{package}/{version}/) from {old} to {version}, "
         f"which [{upstream}](https://github.com/{upstream}) released.\n\n"
         f"{pins}\n\n"
         f"PyPI's provenance names {upstream} as the trusted publisher of each of the release's files.\n\n"
+        f"{left_open}"
         f"Opened by `repoutils downstream bump --pr`{run}.",
     )
     print(f"Opened {url}")
+    return _follow_up(directory, repo, token, earlier, kept, int(url.rsplit("/", 1)[1]), package, version, marker)
+
+
+def _link_kept(
+    repo: str, token: str, current: downstream_prs.Bump, package: str, kept: list[downstream_prs.Bump]
+) -> int:
+    """Add a paragraph to current's body for each pull request in kept that it
+    doesn't link yet, as one may have gained other commits since the run that
+    opened current. Returns 1 if that failed, after reporting it."""
+    if not kept:
+        return 0
+    url = f"{github.API_URL}/repos/{repo}/pulls/{current.number}"
+    try:
+        # Read again, as someone may have edited it since it was listed, and PATCH replaces it all.
+        body: str = github.request("GET", url, token).get("body") or ""
+        if missing := [note for note in _left_open(package, kept) if note not in body]:
+            github.request("PATCH", url, token, json_body={"body": body.rstrip() + "\n\n" + "\n\n".join(missing)})
+    except urllib.error.HTTPError as e:
+        with e:
+            detail = e.read().decode(errors="replace")
+        print(
+            f"Linking the pull requests it leaves open from {current.url} failed: HTTP {e.code}:\n{detail}",
+            file=sys.stderr,
+        )
+        return 1
+    except (OSError, RuntimeError, ValueError) as e:
+        print(f"Linking the pull requests it leaves open from {current.url} failed: {e}", file=sys.stderr)
+        return 1
     return 0
+
+
+def _left_open(package: str, kept: list[downstream_prs.Bump]) -> list[str]:
+    """A paragraph for the new pull request's body on each earlier one in kept, which it leaves open."""
+    return [
+        f"#{b.number} bumps {package} to {b.version}, and stays open, as it has commits that "
+        "`repoutils downstream bump` didn't make. Its changes probably need moving across."
+        for b in kept
+    ]
+
+
+def _follow_up(
+    directory: Path,
+    repo: str,
+    token: str,
+    earlier: list[downstream_prs.Bump],
+    kept: list[downstream_prs.Bump],
+    number: int,
+    package: str,
+    version: str,
+    marker: str,
+) -> int:
+    """Close each earlier bump pull request that pull request number
+    supersedes, and comment on each in kept, which has commits that bump
+    didn't make, rather than close it. Goes on to the next one if one fails,
+    and returns 1 if any did."""
+    comment_marker = downstream_prs.comment_marker(marker, version)
+    failed = 0
+    for bump in earlier:
+        try:
+            if bump in kept:
+                downstream_prs.warn(repo, token, bump, comment_marker, number, package, version)
+                print(f"Left {bump.url} open, as it has other commits, and commented that #{number} bumps {version}")
+            else:
+                downstream_prs.supersede(directory, repo, token, bump, comment_marker, number)
+                print(f"Closed {bump.url}, which #{number} supersedes, and deleted its branch")
+        except urllib.error.HTTPError as e:
+            with e:
+                detail = e.read().decode(errors="replace")
+            print(f"Handling {bump.url} failed: HTTP {e.code} from {e.filename}:\n{detail}", file=sys.stderr)
+            failed = 1
+        except (OSError, RuntimeError, ValueError) as e:
+            print(f"Handling {bump.url} failed: {e}", file=sys.stderr)
+            failed = 1
+    return failed
 
 
 def main(argv: list[str]) -> int:
@@ -215,7 +302,11 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="commit the bump to a new branch, downstream/<package>-<version>, push it to the downstream "
         f"checkout's {pull_request.REMOTE} and open a pull request into its current branch; "
-        "if one from that branch is already open, change nothing",
+        "if an open pull request from an earlier bump is for a newer version, change nothing; "
+        "close one for an older version that has only the commits bump made, and delete its branch, "
+        "or comment on one that has other commits and link it from the new pull request; "
+        "if one for this version is open, open none, but handle the older ones, and link the ones it leaves open "
+        "from that pull request",
     )
     bump_parser.add_argument("--repo", help="the downstream's owner/name, which --pr needs")
     args = parser.parse_args(argv)

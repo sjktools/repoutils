@@ -113,7 +113,11 @@ def bump(
     try:
         downstream_pins.move(directory, package, version, moving)
         if new_lock is None:
+            moved = pyproject.read_bytes()
             relocked = downstream_pins.lock(directory, package, version)
+            # uv lock runs the downstream's build backends, which could edit it.
+            if pyproject.read_bytes() != moved:
+                raise RuntimeError(f"{pyproject} changed while uv lock ran, so the bump stops here")
         else:
             lockfile.write_bytes(new_lock)
             relocked = new_lock != texts[lockfile]

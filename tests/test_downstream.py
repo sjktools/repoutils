@@ -78,7 +78,17 @@ def upstream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("GITHUB_TOKEN", "tok")
     monkeypatch.setenv("GITHUB_REPOSITORY", "u/up")
     # Git variables, such as a hook's, that would point Git at another repository.
-    for name in ("GITHUB_RUN_ID", "GITHUB_SERVER_URL", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+    for name in (
+        "GITHUB_RUN_ID",
+        "GITHUB_SERVER_URL",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_PREFIX",
+    ):
         monkeypatch.delenv(name, raising=False)
     for name, value in {
         "GIT_AUTHOR_NAME": "a",
@@ -238,6 +248,22 @@ def test_bump_pr_refuses_other_changes(
     assert fakes.created == []
     # pyproject.toml and uv.lock are put back.
     assert git(upstream / "down", "status", "--porcelain") == "?? build.log"
+
+
+def test_bump_refuses_a_pyproject_the_lock_changed(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fakes = Fakes(monkeypatch)
+
+    def lock(root: Path, package: str, version: str) -> bool:
+        with (root / "pyproject.toml").open("a") as f:
+            f.write("# built\n")
+        return fakes.lock(root, package, version)
+
+    monkeypatch.setattr(downstream_pins, "lock", lock)
+    assert downstream.run(["bump", "--version", "0.4.0", "--directory", "down"]) == 1
+    assert capsys.readouterr().err == "down/pyproject.toml changed while uv lock ran, so the bump stops here\n"
+    assert not git(upstream / "down", "status", "--porcelain")
 
 
 def test_bump_puts_files_back_if_locking_fails(

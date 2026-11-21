@@ -1,7 +1,13 @@
 """Check that every workflow or local composite action step that installs uv
 or just pins the version the project requires: pyproject.toml's [tool.uv]
 required-version minimum and the justfile's minimum-version. A Dockerfile's
-ghcr.io/astral-sh/uv stage, if there is one, must use that uv too."""
+ghcr.io/astral-sh/uv stage, if there is one, must use that uv too.
+
+It also checks that the actions in .github/workflows/actions.lock from a
+package's GitHub repository are at the commit that uv.lock's version of that
+package was built from, as its wheel's build_info.json records. A package with
+no build_info.json only needs its actions' refs to be v<version>, with a
+warning."""
 
 import argparse
 import itertools
@@ -9,7 +15,7 @@ import re
 import sys
 from pathlib import Path
 
-from repoutils import config
+from repoutils import config, locked_actions
 from repoutils.docstrings import summary
 
 # (action, the `with:` input that pins its version)
@@ -210,8 +216,17 @@ def problems(root: Path) -> tuple[list[str], dict[tuple[str, str], int]]:
     return found, counts
 
 
-def main(root: Path = Path()) -> int:
+def main(root: Path = Path(), path: list[str] | None = None) -> int:
+    """Run the checks in root, looking up uv.lock's packages in path, or
+    else sys.path."""
     found, counts = problems(root)
+    try:
+        actions = locked_actions.check(root, path)
+    except locked_actions.LockError as e:
+        actions, found = locked_actions.Result(), [*found, str(e)]
+    for warning in actions.warnings:
+        print(warning, file=sys.stderr)
+    found += actions.problems
     for problem in found:
         print(problem, file=sys.stderr)
     if found:
@@ -220,6 +235,8 @@ def main(root: Path = Path()) -> int:
     uv, just = f"uv {want[UV]} in {counts[UV]} steps", f"just {want[JUST]} in {counts[JUST]} steps"
     dockerfile = f", and the Dockerfile uv {want[UV]}" if (root / "Dockerfile").is_file() else ""
     print(f"workflows and actions pin {uv} and {just}{dockerfile}")
+    for line in actions.matched:
+        print(line)
     return 0
 
 

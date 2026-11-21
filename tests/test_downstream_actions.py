@@ -26,6 +26,9 @@ jobs:
           EOF
         shell: bash
       - uses: u/upper/.github/actions/x@v0.1.0
+      - name: >-
+          A folded name, with uses: u/up@v0.1.0 in it
+        uses: u/up/.github/actions/z@v0.3.0
 """
 ACTION = "runs:\n  using: composite\n  steps:\n    - uses: u/up/.github/actions/y@v0.3.0\n"
 
@@ -45,6 +48,7 @@ def test_uses(root: Path) -> None:
         Use(".github/workflows/ci.yml", 3, "U/Up/.github/workflows/w.yml", "v0.3.0"),
         Use(".github/workflows/ci.yml", 8, "u/up/.github/actions/x", "v0.3.0"),
         Use(".github/workflows/ci.yml", 9, "u/up", "v0.3.5"),
+        Use(".github/workflows/ci.yml", 21, "u/up/.github/actions/z", "v0.3.0"),
     ]
 
 
@@ -85,6 +89,7 @@ def test_move(root: Path) -> None:
         WORKFLOW.replace("w.yml@v0.3.0", "w.yml@v0.4.0")
         .replace('x@v0.3.0"', 'x@v0.4.0"')
         .replace("'u/up@v0.3.5'", "'u/up@v0.4.0'")
+        .replace("z@v0.3.0", "z@v0.4.0")
     )
     assert path.read_bytes() == expected.replace("\n", "\r\n").encode()
     assert (root / ".github/actions/z/action.yml").read_text() == ACTION.replace("v0.3.0", "v0.4.0")

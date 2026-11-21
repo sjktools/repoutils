@@ -36,8 +36,10 @@ _SECTION_RE = re.compile(r"^(?P<name>\S[^:]*):")
 _ENTRY_RE = re.compile(r"^ {4}'(?P<key>[^']+)':\s*$")
 _COMMIT_RE = re.compile(r"^ {8}commit:\s*'(?P<commit>[^']*)'\s*$")
 # A key whose value is a block scalar, such as `run: |`, whose lines follow,
-# indented further than the key's line.
-_BLOCK_RE = re.compile(r"""^(?P<indent>\s*)(?:-\s+)?[^\s#'"][^#]*?:\s*[|>][-+0-9]*\s*(?:#.*)?$""")
+# indented further than the key itself, which is after any `- ` that starts a
+# sequence item. A sibling key, such as a step's `uses:`, is at the key's own
+# indent.
+_BLOCK_RE = re.compile(r"""^(?P<indent>\s*(?:-\s+)?)[^\s#'"][^#]*?:\s*[|>][-+0-9]*\s*(?:#.*)?$""")
 
 
 def tag(version: str) -> str:

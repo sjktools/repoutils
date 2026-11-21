@@ -16,8 +16,16 @@ inputs:
     description: The downstream, as owner/name.
     required: true
   version:
-    description: The upstream's release to bump to, such as 0.4.0.
+    description: >-
+      The upstream's release to bump to, such as 0.4.0, or a dev version on
+      TestPyPI, such as 0.4.1.dev123.
     required: true
+  commit:
+    description: >-
+      For a dev version, which has no tag, the commit its build came from,
+      which the downstream's uses of the upstream's actions move to.
+    required: false
+    default: ""
   token:
     description: >-
       A token with Contents and Pull requests write on the downstream, which
@@ -101,6 +109,7 @@ runs:
         DIRECTORY: ${{ inputs.path }}
         GH_TOKEN: ${{ github.token }}
         GITHUB_TOKEN: ${{ inputs.token }}
+        COMMIT: ${{ inputs.commit }}
         PACKAGE: ${{ inputs.package }}
         REPOSITORY: ${{ inputs.repository }}
         VERSION: ${{ inputs.version }}
@@ -125,4 +134,4 @@ runs:
           exit 1
         fi
         python3 -m repoutils downstream bump --pr --repo "$REPOSITORY" --version "$VERSION" \
-          --directory "$DIRECTORY" ${PACKAGE:+--package "$PACKAGE"} "${lock[@]}"
+          --directory "$DIRECTORY" ${PACKAGE:+--package "$PACKAGE"} ${COMMIT:+--commit "$COMMIT"} "${lock[@]}"

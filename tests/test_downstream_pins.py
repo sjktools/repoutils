@@ -35,12 +35,23 @@ def lock_text(version: str, name: str = "rep-utils") -> str:
 
 
 def test_release_key() -> None:
-    assert downstream_pins.release_key("1.0") == downstream_pins.release_key("1.0.0") == (1,)
-    assert downstream_pins.release_key("0.10.0") > downstream_pins.release_key("0.9.1")
-    assert downstream_pins.release_key("0") == (0,)
-    for version in ("v1", "1.0rc1", "1.*", ""):
+    key = downstream_pins.release_key
+    assert key("1.0") == key("1.0.0") == ((1,), 1, 0)
+    assert key("0.10.0") > key("0.9.1")
+    assert key("0") == ((0,), 1, 0)
+    # A dev version sorts before its release, and after the one before.
+    assert key("0.4.0") < key("0.4.1.dev2") < key("0.4.1.dev10") < key("0.4.1")
+    assert key("0.4.1.dev2") == key("0.4.1.0.dev2") == ((0, 4, 1), 0, 2)
+    for version in ("v1", "1.0rc1", "1.*", "", "1.0.dev", "1.0.post1", "1.0.dev1.post2"):
         with pytest.raises(ValueError, match="isn't a release version"):
-            downstream_pins.release_key(version)
+            key(version)
+
+
+def test_is_dev_and_index_url() -> None:
+    assert downstream_pins.is_dev("0.4.1.dev2")
+    assert not downstream_pins.is_dev("0.4.1")
+    assert downstream_pins.index_url("0.4.1.dev2") == "https://test.pypi.org"
+    assert downstream_pins.index_url("0.4.1") == "https://pypi.org"
 
 
 def test_pins() -> None:
@@ -250,3 +261,132 @@ def test_check_locked_required_and_malformed() -> None:
     for text in ("package = 1\n", "package = [1]\n"):
         with pytest.raises(RuntimeError, match="F isn't a valid lock file: its package entries aren't"):
             downstream_pins.check_locked(text, "rep-utils", "0.4", "F")
+
+
+@pytest.mark.parametrize(
+    ("requirement", "version", "clause"),
+    [
+        # PEP 440: <V excludes V's dev versions, unless V is one.
+        ("rep-utils>=0.3, <0.4.1", "0.4.1.dev5", "<0.4.1"),
+        ("rep-utils>=0.3, <0.4.1.dev6", "0.4.1.dev5", None),
+        ("rep-utils>=0.3, <0.4.1.dev5", "0.4.1.dev5", "<0.4.1.dev5"),
+        ("rep-utils>=0.3, <0.5", "0.4.1.dev5", None),
+        ("rep-utils>=0.3, <=0.4.1", "0.4.1.dev5", None),
+        ("rep-utils>=0.3, !=0.4.1.dev5", "0.4.1.dev5", "!=0.4.1.dev5"),
+        ("rep-utils>=0.3, <0.4", "0.4", "<0.4"),
+    ],
+)
+def test_excludes_dev_versions(requirement: str, version: str, clause: str | None) -> None:
+    assert Pin("x", requirement, ">=", "0.3").excludes(version) == clause
+
+
+def test_stale_and_move_to_a_dev_version(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\ndependencies = ["rep-utils>=0.4.0"]\n')
+    moving = downstream_pins.stale(tmp_path, "rep-utils", "0.4.1.dev5")
+    downstream_pins.move(tmp_path, "rep-utils", "0.4.1.dev5", moving)
+    assert (tmp_path / "pyproject.toml").read_text() == '[project]\ndependencies = ["rep-utils>=0.4.1.dev5"]\n'
+    assert downstream_pins.stale(tmp_path, "rep-utils", "0.4.1.dev5") == []
+    # The release is newer than its dev versions.
+    with pytest.raises(RuntimeError, match="newer than 0.4.1.dev4, and bump never lowers a pin"):
+        downstream_pins.stale(tmp_path, "rep-utils", "0.4.1.dev4")
+    assert [pin.version for pin in downstream_pins.stale(tmp_path, "rep-utils", "0.4.1")] == ["0.4.1.dev5"]
+
+
+def test_check_locked_a_dev_version() -> None:
+    downstream_pins.check_locked(lock_text("0.4.1.dev5"), "rep-utils", "0.4.1.dev5", "uv.lock")
+    with pytest.raises(RuntimeError, match="locks rep-utils at 0.4.1, not 0.4.1.dev5"):
+        downstream_pins.check_locked(lock_text("0.4.1"), "rep-utils", "0.4.1.dev5", "uv.lock")
+
+
+INDEX = '[[tool.uv.index]]\nname = "testpypi"\nurl = "https://test.pypi.org/simple/"\nexplicit = true\n'
+SOURCES = '[tool.uv.sources]\n"Rep.Utils" = { index = "testpypi" }\n'
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Neither is there.
+        ('[project]\nname = "down"\n', f'[project]\nname = "down"\n\n{INDEX}\n{SOURCES}'),
+        # No newline at the end of the file.
+        ('[project]\nname = "down"', f'[project]\nname = "down"\n\n{INDEX}\n{SOURCES}'),
+        ("", f"{INDEX}\n{SOURCES}"),
+        # Another source, under a header with a comment, and an index for TestPyPI by another name.
+        (
+            '[tool.uv.sources]  # ours\nother = { path = "x" }\n\n'
+            '[[tool.uv.index]]\nname = "test"\nurl = "https://test.pypi.org/simple"\nexplicit = true\n',
+            '[tool.uv.sources]  # ours\n"Rep.Utils" = { index = "test" }\nother = { path = "x" }\n\n'
+            '[[tool.uv.index]]\nname = "test"\nurl = "https://test.pypi.org/simple"\nexplicit = true\n',
+        ),
+        # Another index, which stays first.
+        (
+            '[[tool.uv.index]]\nname = "mine"\nurl = "https://example.com/simple/"\n',
+            f'[[tool.uv.index]]\nname = "mine"\nurl = "https://example.com/simple/"\n\n{INDEX}\n{SOURCES}',
+        ),
+    ],
+)
+def test_add_source(tmp_path: Path, text: str, expected: str) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text(text)
+    assert downstream_pins.needs_source(tmp_path, "Rep.Utils")
+    downstream_pins.add_source(tmp_path, "Rep.Utils")
+    assert path.read_text() == expected
+    assert not downstream_pins.needs_source(tmp_path, "rep-utils")
+
+
+def test_add_source_keeps_line_endings(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_bytes(b'[project]\r\nname = "down"\r\n')
+    downstream_pins.add_source(tmp_path, "rep-utils")
+    expected = f'[project]\nname = "down"\n\n{INDEX}\n{SOURCES.replace('"Rep.Utils"', "rep-utils")}'
+    assert path.read_bytes() == expected.replace("\n", "\r\n").encode()
+
+
+@pytest.mark.parametrize(
+    ("text", "error"),
+    [
+        ('[tool.uv.sources]\nrep_utils = { git = "https://x" }\n', "already has a source for rep-utils"),
+        (f'{INDEX}\n[tool.uv.sources]\nrep-utils = {{ index = "other" }}\n', "already has a source for rep-utils"),
+        ('[tool.uv.sources]\nrep-utils = { index = "testpypi" }\n', "already has a source for rep-utils"),
+        (INDEX.replace("explicit = true", "explicit = false"), "isn't `explicit = true`"),
+        (INDEX.replace("explicit = true\n", ""), "isn't `explicit = true`"),
+        (INDEX.replace("test.pypi.org", "example.com"), "named testpypi at 'https://example.com/simple/'"),
+        (INDEX.replace('name = "testpypi"\n', ""), "with no name"),
+        ("[tool]\nuv = 1\n", r"\[tool.uv\] isn't a table"),
+        ("tool = 1\n", r"\[tool.uv\] isn't a table"),
+        ("[tool.uv]\nindex = 1\n", "index isn't a list of tables"),
+        ("[tool.uv]\nindex = [1]\n", "index isn't a list of tables"),
+        ("[tool.uv]\nsources = 1\n", r"\[tool.uv.sources\] isn't a table"),
+    ],
+)
+def test_needs_source_refuses(tmp_path: Path, text: str, error: str) -> None:
+    (tmp_path / "pyproject.toml").write_text(text)
+    with pytest.raises(RuntimeError, match=error):
+        downstream_pins.needs_source(tmp_path, "rep-utils")
+
+
+@pytest.mark.parametrize(
+    ("text", "error"),
+    [
+        # An inline table, or dotted keys, rather than a [tool.uv.sources] header.
+        ('[tool.uv]\nsources = { other = { path = "x" } }\n', "doesn't have one"),
+        ('[tool.uv]\nsources.other = { path = "x" }\n', "doesn't have one"),
+        # A second header, in a string.
+        (
+            '[tool.uv.sources]\nother = { path = "x" }\n[tool.notes]\nx = """\n[tool.uv.sources]\n"""\n',
+            "doesn't have one",
+        ),
+        # Lines that would add to an inline array.
+        (
+            '[tool.uv]\nindex = [{ name = "mine", url = "https://example.com/simple/" }]\n',
+            "would change more than that",
+        ),
+        # A header that a multi-line string holds, and a source in a dotted table.
+        ('[tool.notes]\nx = """\n[tool.uv.sources]\n"""\n[tool.uv.sources.other]\npath = "x"\n', "would change more"),
+    ],
+)
+def test_add_source_refuses(tmp_path: Path, text: str, error: str) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text(text)
+    with pytest.raises(RuntimeError, match=error):
+        downstream_pins.add_source(tmp_path, "rep-utils")
+    assert path.read_text() == text

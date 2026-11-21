@@ -42,9 +42,11 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
 - `src/repoutils/locked_actions.py` is `check-pins`' check that the actions in `actions.lock` from a locked package's repository are at the commit in that package's `build_info.json`, kept apart from the command for length.
 - `src/repoutils/pull_request.py` commits a change to a new branch, pushes it and opens a PR, for `bump --pr` in `dependabot-uv`, `downstream` and `github-releases`.
 - `src/repoutils/downstream_pins.py` holds `downstream bump`'s changes to a downstream's pins and its re-lock, kept apart from the command for length.
+  It also adds a `[tool.uv.sources]` entry that takes a dev version (a test build) from TestPyPI.
   `src/repoutils/downstream_actions.py` moves a downstream's `uses:` of the upstream's actions to the release's tag, and regenerates its `actions.lock`.
+  It moves them to a dev version's commit instead, as a dev version has no tag.
   `src/repoutils/downstream_prs.py` finds the open PRs of earlier `downstream bump --pr` runs, and closes or comments on them once the new PR is open.
-  `src/repoutils/pypi_provenance.py` checks that PyPI's provenance for a release names the upstream's repository as its trusted publisher.
+  `src/repoutils/pypi_provenance.py` checks that PyPI's provenance for a release, or TestPyPI's for a dev version, names the upstream's repository as its trusted publisher.
 - `src/repoutils/release_pins.py` is the format of the pins file that `github-releases bump` writes, kept apart from the command for length.
 - `src/repoutils/workflows.py` reads the workflows in `.github/workflows` for the secrets and variables they use and each job's environment, without a YAML parser.
   `secrets check-workflows` and `variables check-workflows` use it.

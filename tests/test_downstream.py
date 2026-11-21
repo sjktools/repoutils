@@ -874,6 +874,26 @@ def test_bump_refuses_a_workflow_the_lock_changed(
     assert not git(down, "status", "--porcelain")
 
 
+def test_bump_refuses_an_actions_lock_the_lock_changed(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The actions are already at the release's tag, so only the pins move.
+    down = with_actions(upstream / "down", MOVED)
+    fakes = Fakes(monkeypatch)
+
+    def lock(root: Path, package: str, version: str) -> bool:
+        with (root / ACTIONS_LOCK).open("a") as f:
+            f.write("# built\n")
+        return fakes.lock(root, package, version)
+
+    monkeypatch.setattr(downstream_pins, "lock", lock)
+    assert downstream.run(["bump", "--version", "0.4.0", "--directory", "down"]) == 1
+    assert capsys.readouterr().err == (
+        "down/.github/workflows/actions.lock changed while uv lock ran, so the bump stops here\n"
+    )
+    assert not git(down, "status", "--porcelain")
+
+
 def test_bump_puts_files_back_if_verifying_fails(
     upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

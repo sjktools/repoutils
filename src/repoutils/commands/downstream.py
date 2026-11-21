@@ -173,7 +173,8 @@ def bump(
                 _unchanged(ours, "gh actions-lock --verify")
         actions_names = moved_files + ([ACTIONS_LOCK.as_posix()] if relocked_actions else [])
         if new_lock is None:
-            if relocked_actions:
+            # As regenerated, if it was, whether or not this bump moves an action.
+            if actions_lock.is_file():
                 ours[actions_lock] = actions_lock.read_bytes()
             relocked = downstream_pins.lock(directory, package, version)
             # uv lock runs the downstream's build backends, which could edit them.

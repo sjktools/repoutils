@@ -200,6 +200,15 @@ def test_waits_for_any_check(
     assert "Gave up after 100 seconds waiting for any check to start on https://github.com/d/down/pull/5" in err
 
 
+def test_waits_again_for_a_replaced_check_run(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A rerun of test replaced its run with another of the same name.
+    rerun = dict(run("test"), html_url="https://github.com/d/down/runs/test-2")
+    fake = FakeGitHub(monkeypatch, [PASSED, ([rerun, *PASSED[0][1:]], PASSED[1])])
+    assert finish("--interval", "5") == 0
+    assert fake.slept == [5, 5]
+    assert fake.reads["check-runs"] == 3
+
+
 def test_reads_the_checks_again_if_the_head_moves(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # The checks passed on the first head, but someone pushed before it closed.
     fake = FakeGitHub(monkeypatch, [PASSED], heads=["a" * 40, "a" * 40, "b" * 40])

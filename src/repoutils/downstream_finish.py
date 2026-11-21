@@ -143,13 +143,14 @@ def wait(
     if required:
         print(f"{bump.base}'s rulesets require {', '.join(r.context for r in required)}")
     # The head and checks of the last read that found every check finished.
-    settled: tuple[str, set[tuple[str, int | None]]] | None = None
+    settled: tuple[str, set[Check]] | None = None
     while True:
         # Its latest head, as someone may have pushed to it.
         sha: str = _pull(repo, token, bump)["head"]["sha"]
         found = checks(repo, token, sha)
         waiting = [r.context for r in missing(required, found)] + [c.name for c in found if c.state == "pending"]
-        done = (sha, {(c.name, c.app) for c in found}) if found and not waiting else None
+        # Each check's URL too, so that a check run replaced by another of the same name counts as a change.
+        done = (sha, set(found)) if found and not waiting else None
         # Read the head again, so that it closes only the commit whose checks it read.
         if done is not None and done == settled and _pull(repo, token, bump)["head"]["sha"] == sha:
             return sha, found

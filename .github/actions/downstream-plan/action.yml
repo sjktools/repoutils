@@ -1,0 +1,30 @@
+name: Plan downstream bumps
+description: >-
+  Checks the downstream repositories that a release's version bump goes to,
+  with `repoutils downstream list`, and gives them as JSON for a job matrix.
+
+# The plan job of a Bump downstream workflow (see the README). It runs
+# repoutils from this action's own commit, with the runner's python3,
+# installing nothing.
+inputs:
+  repositories:
+    description: The downstream repositories, as space-separated owner/name, such as vars.DOWNSTREAM_REPOS.
+    required: true
+outputs:
+  repositories:
+    description: The repositories, as a JSON list.
+    value: ${{ steps.list.outputs.repositories }}
+
+runs:
+  using: composite
+  steps:
+    - name: List the downstream repositories
+      id: list
+      shell: bash
+      env:
+        DOWNSTREAM_REPOS: ${{ inputs.repositories }}
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+        PYTHONSAFEPATH: "1"
+      run: |
+        repositories=$(python3 -m repoutils downstream list)
+        echo "repositories=$repositories" >> "$GITHUB_OUTPUT"

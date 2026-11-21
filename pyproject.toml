@@ -133,12 +133,16 @@ environments.release = ["GH_ACTIONS_TOKEN", "RELEASE_DEPLOY_KEY"]
 environments.autofix = ["AUTOFIX_TOKEN"]
 # bump-uv.yml opens its PR, which changes workflows, with this.
 environments.uv-bump = ["UV_BUMP_TOKEN"]
+# bump-downstream.yml opens its PRs in the downstream repositories with this.
+environments.downstream = ["DOWNSTREAM_TOKEN"]
 
 # The variables `repoutils variables` checks the repository has, names only.
 # SECRETS_EXPORT_KEY is the key export-secrets.yml encrypts to (and ci.yml's
-# secrets-export job checks), as USER/SHA256:fingerprint.
+# secrets-export job checks), as USER/SHA256:fingerprint. DOWNSTREAM_REPOS
+# lists the repositories bump-downstream.yml bumps, as space-separated
+# owner/name.
 [tool.repoutils.variables]
-actions = ["SECRETS_EXPORT_KEY"]
+actions = ["DOWNSTREAM_REPOS", "SECRETS_EXPORT_KEY"]
 
 # The deployment environments `repoutils environments` checks or creates.
 # Only main can deploy to release, which holds the secrets that can tag a
@@ -160,6 +164,14 @@ allowed-tags = []
 # Only main can deploy to uv-bump either, which holds UV_BUMP_TOKEN for
 # bump-uv.yml. It's apart from autofix, as UV_BUMP_TOKEN can change workflows.
 [tool.repoutils.environments.uv-bump]
+deployment-branches = "selected"
+allowed-branches = ["main"]
+allowed-tags = []
+
+# Only main can deploy to downstream either, which holds DOWNSTREAM_TOKEN for
+# bump-downstream.yml. It's apart from the others, as DOWNSTREAM_TOKEN can
+# write to other repositories.
+[tool.repoutils.environments.downstream]
 deployment-branches = "selected"
 allowed-branches = ["main"]
 allowed-tags = []

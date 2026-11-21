@@ -110,13 +110,8 @@ def bump(
             # A rerun, after an earlier run opened it, finishes with the earlier ones.
             current = same[0]
             print(f"Pull request {current.url} already bumps {package} to {version}")
-            # One may have gained other commits since the earlier run opened it.
-            if missing := [note for note in _left_open(package, kept) if note not in current.body]:
-                body = current.body.rstrip() + "\n\n" + "\n\n".join(missing)
-                github.request(
-                    "PATCH", f"{github.API_URL}/repos/{repo}/pulls/{current.number}", token, json_body={"body": body}
-                )
-            return _follow_up(directory, repo, token, earlier, kept, same[0].number, package, version, marker)
+            linked = _link_kept(repo, token, current, package, kept)
+            return linked | _follow_up(directory, repo, token, earlier, kept, same[0].number, package, version, marker)
         # One whose body has lost the marker.
         if existing := pull_request.open_pr(repo, branch, token):
             print(f"Pull request {existing} already bumps {package} to {version}")
@@ -181,6 +176,33 @@ def bump(
     )
     print(f"Opened {url}")
     return _follow_up(directory, repo, token, earlier, kept, int(url.rsplit("/", 1)[1]), package, version, marker)
+
+
+def _link_kept(
+    repo: str, token: str, current: downstream_prs.Bump, package: str, kept: list[downstream_prs.Bump]
+) -> int:
+    """Add a paragraph to current's body for each pull request in kept that it
+    doesn't link yet, as one may have gained other commits since the run that
+    opened current. Returns 1 if that failed, after reporting it."""
+    if not (missing := [note for note in _left_open(package, kept) if note not in current.body]):
+        return 0
+    body = current.body.rstrip() + "\n\n" + "\n\n".join(missing)
+    try:
+        github.request(
+            "PATCH", f"{github.API_URL}/repos/{repo}/pulls/{current.number}", token, json_body={"body": body}
+        )
+    except urllib.error.HTTPError as e:
+        with e:
+            detail = e.read().decode(errors="replace")
+        print(
+            f"Linking the pull requests it leaves open from {current.url} failed: HTTP {e.code}:\n{detail}",
+            file=sys.stderr,
+        )
+        return 1
+    except (OSError, ValueError) as e:
+        print(f"Linking the pull requests it leaves open from {current.url} failed: {e}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def _left_open(package: str, kept: list[downstream_prs.Bump]) -> list[str]:
@@ -279,9 +301,11 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="commit the bump to a new branch, downstream/<package>-<version>, push it to the downstream "
         f"checkout's {pull_request.REMOTE} and open a pull request into its current branch; "
-        "if an open pull request from an earlier bump is for this version or a newer one, change nothing; "
+        "if an open pull request from an earlier bump is for a newer version, change nothing; "
         "close one for an older version that has only the commits bump made, and delete its branch, "
-        "or comment on one that has other commits",
+        "or comment on one that has other commits and link it from the new pull request; "
+        "if one for this version is open, open none, but handle the older ones, and link the ones it leaves open "
+        "from that pull request",
     )
     bump_parser.add_argument("--repo", help="the downstream's owner/name, which --pr needs")
     args = parser.parse_args(argv)

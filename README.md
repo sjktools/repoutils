@@ -45,7 +45,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
 | `check-lock-platforms` | Fails if `uv.lock` contains wheels for platforms that the project does not allow. |
 | `dependabot-uv` | `show` prints the `uv` version from the newest successful Dependabot `uv` update run, `check` fails unless the minimum in `[tool.uv] required-version` is that version, and `bump` changes the project to that `uv` version (with `--pr`, in a new pull request, unless one for that version is already open). |
-| `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `bump` changes the pins of a downstream project to a release of this package and re-locks it (with `--pr`, in a new pull request, which closes or comments on open pull requests for earlier releases, unless one for that release or a newer one is already open). |
+| `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `bump` changes the pins of a downstream project to a release of this package and re-locks it. With `--pr`, it opens a pull request, unless one for that release or a newer one is already open, and closes or comments on open pull requests for earlier releases, unless one for a newer release is open. |
 | `github-releases` | `check` fails if a project whose release assets this project pins has a newer release, and `bump` pins the assets of that release (with `--pr`, in a new pull request, unless one for that release is already open). |
 | `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment (posting nothing with `--update-only` when none exists) or hides it when you pass `--hide-previous`. |
 | `added-strings` | Lists the added lines in a pull request that match strings configured in `pyproject.toml` (such as `# noqa:`), or posts the list to the pull request. |
@@ -231,10 +231,12 @@ With `--pr`, `downstream bump` finds the open pull requests that earlier runs op
 
 - If one of them is for a newer version, the command changes nothing.
 - If one of them is for the same version, the command opens no pull request, but handles each earlier pull request, as a run that failed part of the way through would have.
+  It also adds a link to each earlier pull request that it leaves open to the body of that pull request, if the body has no link to it yet.
 - Otherwise, the command opens the new pull request first, and then handles each earlier pull request.
 - An earlier pull request is untouched if `downstream bump` made each of its commits, apart from merges that the Update branch button of GitHub made.
   The command finds its own commits by their `Bumped-By: repoutils downstream bump` trailer.
-  A commit that a person amended or rebased keeps the trailer, but the person becomes its committer, so it counts as another commit.
+  A commit that someone amended or rebased keeps the trailer, but gets a new committer, so it counts as another commit.
+  This includes a rebase by the Update branch button, because an amended commit looks the same after that rebase.
   It reads the commits and not the changes, because a merge or a re-lock also changes `uv.lock`.
 - The command deletes the branch of an untouched pull request, closes the pull request, and comments "Superseded by #N".
   If the branch changed after the command read its commits, the command does not delete it, and leaves the pull request open.

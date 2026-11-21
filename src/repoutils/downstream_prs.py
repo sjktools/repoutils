@@ -89,16 +89,16 @@ def _identity(person: dict[str, Any]) -> tuple[str, str]:
 
 def _is_bump_commit(commit: dict[str, Any]) -> bool:
     """Whether commit is one that `downstream bump` made: TRAILER is a line
-    of its message's last paragraph, and it was committed by its author, or
-    by GitHub's Update branch button rebasing it. An amend or a rebase by a
-    person keeps the trailer, but makes them the committer."""
+    of its message's last paragraph, and it was committed by its author. An
+    amend or a rebase keeps the trailer, but makes someone else the
+    committer, so a rebased bump counts as another change, even one by
+    GitHub's Update branch button, which can't tell it from an amended one."""
     message: str = commit["commit"]["message"]
     git = commit["commit"]
-    committer = commit.get("committer") or {}
     return (
         len(commit["parents"]) == 1
         and TRAILER in message.strip().split("\n\n")[-1].splitlines()
-        and (_identity(git["committer"]) == _identity(git["author"]) or committer.get("login") == _WEB_FLOW)
+        and _identity(git["committer"]) == _identity(git["author"])
     )
 
 

@@ -477,8 +477,8 @@ def test_bump_pr_supersedes_an_untouched_pr(
     upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     sha = push_old(upstream)
-    # An Update branch merge, and a bump commit rebased by Update branch, still count as untouched.
-    fakes = Fakes(monkeypatch, [pull(3, OLD, sha=sha)], {3: [BUMP_COMMIT, UPDATE_MERGE, REBASED]})
+    # An Update branch merge still counts as untouched.
+    fakes = Fakes(monkeypatch, [pull(3, OLD, sha=sha)], {3: [BUMP_COMMIT, UPDATE_MERGE, BUMP_COMMIT]})
     assert downstream.run(PR_ARGS) == 0
     assert capsys.readouterr().out.endswith(
         "Opened https://github.com/d/down/pull/5\n"
@@ -499,8 +499,9 @@ def test_bump_pr_supersedes_an_untouched_pr(
     "commits",
     [
         [BUMP_COMMIT, commit("Fix the tests")],
-        # Amended, or rebased, by a person, who becomes its committer.
+        # Amended, or rebased, by a person, who becomes its committer, or rebased by Update branch.
         [commit(BUMP_COMMIT["commit"]["message"], git_committer="simon")],
+        [REBASED],
         # The trailer must be in the message's last paragraph.
         [commit(f"Bump\n\n{downstream.TRAILER}\n\nmore")],
         # A merge made by hand, or of another branch.
@@ -657,3 +658,39 @@ def test_bump_pr_reports_a_failed_request_on_an_earlier_pr(
     assert downstream.run(PR_ARGS) == 1
     assert capsys.readouterr().err == f"Handling https://github.com/d/down/pull/3 failed: {message}\n"
     assert [path for _, path, _ in fakes.changes] == ["/pulls", "/issues/4/comments"]
+
+
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (
+            urllib.error.HTTPError(f"{API}/pulls/5", 403, "no", email.message.Message(), io.BytesIO(b"no")),
+            "HTTP 403:\nno",
+        ),
+        (json.JSONDecodeError("Expecting value", "<", 0), "Expecting value: line 1 column 1 (char 0)"),
+    ],
+)
+def test_bump_pr_rerun_still_handles_earlier_prs_if_linking_fails(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: Exception, message: str
+) -> None:
+    sha = push_old(upstream)
+    fakes = Fakes(
+        monkeypatch,
+        [pull(3, OLD, sha=sha), pull(4, "downstream/pkg-0.3.6"), pull(5, BRANCH)],
+        {3: [BUMP_COMMIT], 4: [commit("Fix")]},
+    )
+    request = fakes.request
+
+    def failing(method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        if (method, url) == ("PATCH", f"{API}/pulls/5"):
+            raise error
+        return request(method, url, token, json_body=json_body)
+
+    monkeypatch.setattr(github, "request", failing)
+    assert downstream.run(PR_ARGS) == 1
+    captured = capsys.readouterr()
+    assert captured.err == (
+        f"Linking the pull requests it leaves open from https://github.com/d/down/pull/5 failed: {message}\n"
+    )
+    assert "Closed https://github.com/d/down/pull/3" in captured.out
+    assert "Left https://github.com/d/down/pull/4 open" in captured.out

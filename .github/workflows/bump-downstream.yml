@@ -61,7 +61,7 @@ on:
         description: "The release to bump to, such as 0.4.0, or a dev version on TestPyPI for a test run"
         required: true
       commit:
-        description: "For a dev version, the full hash of the commit its build came from"
+        description: "For a dev version, the full hash of the commit on main that its build came from"
         required: false
 
 concurrency:
@@ -120,11 +120,6 @@ jobs:
           TAG: ${{ github.event.workflow_run.head_branch }}
         run: |
           if [ "$EVENT" = workflow_dispatch ]; then
-            # A run on a tag named main would have main as its head branch too.
-            if ! git merge-base --is-ancestor "$SHA" HEAD; then
-              echo "::error::Publish ran on $SHA, which isn't on main."
-              exit 1
-            fi
             mkdir "$RUNNER_TEMP/published"
             git show "$SHA:pyproject.toml" > "$RUNNER_TEMP/published/pyproject.toml"
             # The same as publish-pypi.yml's Set dev version, so keep the two in step.
@@ -137,6 +132,13 @@ jobs:
           else
             version=${TAG#v}
             commit=
+          fi
+          # The downstream's CI runs the actions at the commit, so it must be
+          # reviewed code. A Publish run on a tag named main would have main
+          # as its head branch too.
+          if [ -n "$commit" ] && ! git merge-base --is-ancestor "$commit" HEAD; then
+            echo "::error::$commit isn't a commit on main."
+            exit 1
           fi
           test=false
           if [[ "$version" == *.dev* ]]; then

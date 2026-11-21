@@ -224,6 +224,7 @@ That run publishes a dev version of `main` to TestPyPI.
 - The workflow makes no test run for a Publish run on another branch.
   The test pull request comes from a branch of the downstream repository, so the CI of the downstream project would run the unreviewed code of that branch with the secrets of the downstream project.
 - To make a test run again, run the workflow by hand with the dev version and the commit that its build came from.
+  The workflow fails if that commit is not on `main`.
 
 `downstream finish --repo <owner/name> --version <dev version>` runs in a checkout of the upstream project, as `downstream bump` does:
 
@@ -233,6 +234,8 @@ That run publishes a dev version of `main` to TestPyPI.
   It also waits for at least one check to appear.
 - It then waits for every check run and commit status on the head commit of the pull request to finish.
   A check run passes if its conclusion is `success`, `neutral` or `skipped`, and a commit status passes if its state is `success`.
+  It decides only when two reads in a row find the same finished checks, because a workflow can add its check after the checks of another workflow finish.
+- A required check that names an app counts only as a check run from that app, because the API does not say which app posted a commit status.
 - If all the checks pass, it comments on the pull request, closes it without merging it, and deletes its branch.
 - If any check fails, it leaves the pull request open, lists the checks that failed, and exits with code `1`.
 - It fails if the checks do not finish within `--timeout` seconds (default `3600`).

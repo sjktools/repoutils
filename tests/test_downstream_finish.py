@@ -135,7 +135,8 @@ def test_closes_a_pull_request_whose_checks_pass(
         ],
     )
     assert finish("--interval", "5") == 0
-    assert fake.slept == [5, 5]
+    # And once more, to see that no other check appeared.
+    assert fake.slept == [5, 5, 5]
     comment = "All 4 checks passed, so `repoutils downstream finish` in https://github.com/u/up/actions/runs/9 "
     assert fake.changes == [
         ("POST", "/issues/5/comments", {"body": comment + "closes this test."}),
@@ -171,11 +172,22 @@ def test_waits_for_a_check_from_the_required_app(
     assert "waiting for test on https://github.com/d/down/pull/5, so it stays open" in capsys.readouterr().err
 
 
-def test_a_status_counts_for_a_required_app(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # The API doesn't say which app posted a status.
-    fake = FakeGitHub(monkeypatch, [([run("lint")], [status("test")])])
-    assert finish() == 0
-    assert len(fake.changes) == 3
+def test_a_status_counts_only_for_a_check_of_any_app(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The API doesn't say which app posted a status, so it isn't the required app's check.
+    fake = FakeGitHub(monkeypatch, [([], [status("test"), status("lint")])])
+    assert finish("--timeout", "60") == 1
+    assert fake.changes == []
+    assert "waiting for test on" in capsys.readouterr().err
+
+
+def test_waits_for_a_check_that_appears_late(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Every check had finished, but another workflow then added one.
+    late = (PASSED[0] + [run("e2e", status="queued")], PASSED[1])
+    fake = FakeGitHub(monkeypatch, [PASSED, late, (PASSED[0] + [run("e2e", conclusion="failure")], PASSED[1])])
+    assert finish() == 1
+    assert fake.changes == []
 
 
 def test_waits_for_any_check(
@@ -190,10 +202,10 @@ def test_waits_for_any_check(
 
 def test_reads_the_checks_again_if_the_head_moves(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # The checks passed on the first head, but someone pushed before it closed.
-    fake = FakeGitHub(monkeypatch, [PASSED], heads=["a" * 40, "b" * 40])
+    fake = FakeGitHub(monkeypatch, [PASSED], heads=["a" * 40, "a" * 40, "b" * 40])
     assert finish() == 0
-    assert fake.reads["check-runs"] == 2
-    assert fake.reads["pull"] == 4
+    assert fake.reads["check-runs"] == 4
+    assert fake.reads["pull"] == 6
 
 
 def test_finds_only_the_versions_test_pull_request(

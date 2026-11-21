@@ -201,7 +201,11 @@ Its plan job works out that version with the same `uv version` command as Publis
 A test run moves each `uses:` of repoutils' actions to the commit that Publish ran on, and opens draft test PRs.
 It makes no test run for a Publish run on another branch, as the downstream's CI would run that branch's unreviewed code with the downstream's secrets.
 Its `finish` job runs the `downstream-finish` action, in the `downstream` environment, once for each downstream.
-The action runs `repoutils downstream finish`, which waits for the test PR's checks, then closes it and deletes its branch if they all pass, or leaves it open and fails.
+The action runs `repoutils downstream finish`, which waits for the test PR's checks, then:
+
+- closes the PR and deletes its branch if they all pass.
+- leaves the PR open and fails if any fails.
+
 So a test run succeeds only if it closed every test PR.
 
 `claude.yml` and `claude-code-review.yml` run Claude Code when a comment starts with `@claude` (with the `CLAUDE_CODE_OAUTH_TOKEN` secret).

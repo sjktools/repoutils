@@ -449,7 +449,8 @@ def main(argv: list[str]) -> int:
         "finish. If they all pass, close it without merging it, and delete its branch. If any fails, leave it "
         "open, and exit 1. Fails if there's no such pull request, or the checks take over --timeout seconds.",
         epilog="It uses $GITHUB_TOKEN, defaulting to `gh auth token`, which needs Contents and Pull requests write "
-        "on the downstream.",
+        "on the downstream. It reads the rules and checks with the same token, which any token can read on a public "
+        "downstream; on a private one, it also needs Commit statuses read, and read access to its checks.",
     )
     finish_parser.add_argument("--repo", required=True, help="the downstream's owner/name")
     finish_parser.add_argument("--version", required=True, help="the dev version that the bump was to")

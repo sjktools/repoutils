@@ -93,11 +93,9 @@ def checks(repo: str, token: str, sha: str) -> list[Check]:
 
 def missing(required: list[Required], found: list[Check]) -> list[Required]:
     """The checks in required that nothing in found is. A required check that
-    names an app is a check run from that app, or a commit status, as the API
-    doesn't say which app posted a status."""
-    return [
-        r for r in required if not any(c.name == r.context and (r.app is None or c.app in (None, r.app)) for c in found)
-    ]
+    names an app is only a check run from that app, as the API doesn't say
+    which app posted a commit status."""
+    return [r for r in required if not any(c.name == r.context and r.app in (None, c.app) for c in found)]
 
 
 def find(repo: str, token: str, package: str, version: str, marker: str) -> downstream_prs.Bump:
@@ -135,22 +133,27 @@ def wait(
 ) -> tuple[str, list[Check]]:
     """The head commit of bump's pull request, and its checks, once the
     checks that the rulesets require on its base branch are there, at least
-    one check is, every check has finished, and the head hasn't moved on
-    since they were read. Raises TimeoutError if that takes over timeout
+    one check is, and every check has finished, on two reads in a row that
+    find the same checks, as a workflow can add its check after another's
+    finished. Raises TimeoutError if that takes over timeout
     seconds."""
     deadline = monotonic() + timeout
     required = required_checks(repo, token, bump.base)
     print(f"Waiting for the checks on {bump.url}")
     if required:
         print(f"{bump.base}'s rulesets require {', '.join(r.context for r in required)}")
+    # The head and checks of the last read that found every check finished.
+    settled: tuple[str, set[tuple[str, int | None]]] | None = None
     while True:
         # Its latest head, as someone may have pushed to it.
         sha: str = _pull(repo, token, bump)["head"]["sha"]
         found = checks(repo, token, sha)
         waiting = [r.context for r in missing(required, found)] + [c.name for c in found if c.state == "pending"]
+        done = (sha, {(c.name, c.app) for c in found}) if found and not waiting else None
         # Read the head again, so that it closes only the commit whose checks it read.
-        if found and not waiting and _pull(repo, token, bump)["head"]["sha"] == sha:
+        if done is not None and done == settled and _pull(repo, token, bump)["head"]["sha"] == sha:
             return sha, found
+        settled = done
         left = deadline - monotonic()
         if left <= 0:
             what = ", ".join(waiting) if waiting else "any check to start"

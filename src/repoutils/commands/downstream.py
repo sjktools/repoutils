@@ -210,7 +210,7 @@ def _follow_up(
                 detail = e.read().decode(errors="replace")
             print(f"Handling {bump.url} failed: HTTP {e.code} from {e.filename}:\n{detail}", file=sys.stderr)
             failed = 1
-        except (OSError, RuntimeError) as e:
+        except (OSError, RuntimeError, ValueError) as e:
             print(f"Handling {bump.url} failed: {e}", file=sys.stderr)
             failed = 1
     return failed

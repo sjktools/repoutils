@@ -130,16 +130,28 @@ def pull(
     }
 
 
-def commit(message: str, *, parents: int = 1, committer: str | None = "bot") -> dict[str, Any]:
+def commit(
+    message: str, *, parents: int = 1, committer: str | None = "bot", git_committer: str = "bot"
+) -> dict[str, Any]:
+    """A commit as GitHub's API lists a pull request's, made by bot unless
+    git_committer says otherwise, and committer, its GitHub account."""
     return {
-        "commit": {"message": message},
+        "commit": {
+            "message": message,
+            "author": {"name": "bot", "email": "bot@example.com"},
+            "committer": {"name": git_committer, "email": f"{git_committer}@example.com"},
+        },
         "parents": [{"sha": "p"}] * parents,
         "committer": {"login": committer} if committer else None,
     }
 
 
 BUMP_COMMIT = commit(f"Bump pkg to 0.3.5\n\nBumps pkg from 0.3.0 to 0.3.5.\n\n{downstream.TRAILER}")
-UPDATE_MERGE = commit("Merge branch 'main' into downstream/pkg-0.3.5", parents=2, committer="web-flow")
+UPDATE_MERGE = commit(
+    "Merge branch 'main' into downstream/pkg-0.3.5", parents=2, committer="web-flow", git_committer="GitHub"
+)
+# The Update branch button's rebase makes GitHub the committer.
+REBASED = commit(BUMP_COMMIT["commit"]["message"], committer="web-flow", git_committer="GitHub")
 OLD = "downstream/pkg-0.3.5"
 
 
@@ -466,7 +478,7 @@ def test_bump_pr_supersedes_an_untouched_pr(
 ) -> None:
     sha = push_old(upstream)
     # An Update branch merge, and a bump commit rebased by Update branch, still count as untouched.
-    fakes = Fakes(monkeypatch, [pull(3, OLD, sha=sha)], {3: [BUMP_COMMIT, UPDATE_MERGE, BUMP_COMMIT]})
+    fakes = Fakes(monkeypatch, [pull(3, OLD, sha=sha)], {3: [BUMP_COMMIT, UPDATE_MERGE, REBASED]})
     assert downstream.run(PR_ARGS) == 0
     assert capsys.readouterr().out.endswith(
         "Opened https://github.com/d/down/pull/5\n"
@@ -474,11 +486,11 @@ def test_bump_pr_supersedes_an_untouched_pr(
     )
     assert [(method, path) for method, path, _ in fakes.changes] == [
         ("POST", "/pulls"),
-        ("POST", "/issues/3/comments"),
         ("PATCH", "/pulls/3"),
+        ("POST", "/issues/3/comments"),
     ]
-    assert fakes.changes[1][2] == {"body": "<!-- up-downstream-pkg-0.4.0 -->\nSuperseded by #5."}
-    assert fakes.changes[2][2] == {"state": "closed"}
+    assert fakes.changes[1][2] == {"state": "closed"}
+    assert fakes.changes[2][2] == {"body": "<!-- up-downstream-pkg-0.4.0 -->\nSuperseded by #5."}
     assert "stays open" not in fakes.created[0]["body"]
     assert remote_branches(upstream) == [f"refs/heads/{BRANCH}"]
 
@@ -487,6 +499,8 @@ def test_bump_pr_supersedes_an_untouched_pr(
     "commits",
     [
         [BUMP_COMMIT, commit("Fix the tests")],
+        # Amended, or rebased, by a person, who becomes its committer.
+        [commit(BUMP_COMMIT["commit"]["message"], git_committer="simon")],
         # The trailer must be in the message's last paragraph.
         [commit(f"Bump\n\n{downstream.TRAILER}\n\nmore")],
         # A merge made by hand, or of another branch.
@@ -531,6 +545,7 @@ def test_bump_pr_pages_through_commits(upstream: Path, monkeypatch: pytest.Monke
 
 
 def test_bump_pr_ignores_other_prs(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sha = push_old(upstream)
     others = [
         pull(10, OLD, body="no marker"),
         pull(11, OLD, body=None),
@@ -538,11 +553,13 @@ def test_bump_pr_ignores_other_prs(upstream: Path, monkeypatch: pytest.MonkeyPat
         pull(13, OLD, source=None),
         pull(14, "downstream/pkg-extra-0.3"),
         pull(15, "other/pkg-0.3.5"),
+        # The one it closes.
+        pull(3, OLD, sha=sha),
     ]
     # They're on the second page.
-    fakes = Fakes(monkeypatch, [pull(n, f"x{n}", body="") for n in range(100)] + others)
+    fakes = Fakes(monkeypatch, [pull(n, f"x{n}", body="") for n in range(100)] + others, {3: [BUMP_COMMIT]})
     assert downstream.run(PR_ARGS) == 0
-    assert [path for _, path, _ in fakes.changes] == ["/pulls"]
+    assert [path for _, path, _ in fakes.changes] == ["/pulls", "/pulls/3", "/issues/3/comments"]
 
 
 @pytest.mark.parametrize("version", ["0.4.1", "0.5"])
@@ -589,29 +606,40 @@ def test_bump_pr_keeps_a_branch_that_moved_on(
     fakes = Fakes(monkeypatch, [pull(3, OLD), pull(4, "downstream/pkg-0.3.6")], {3: [BUMP_COMMIT], 4: [commit("Fix")]})
     assert downstream.run(PR_ARGS) == 1
     captured = capsys.readouterr()
-    assert "Handling https://github.com/d/down/pull/3 failed: Closed https://github.com/d/down/pull/3, but " in (
-        captured.err
-    )
-    assert f"deleting its branch {OLD} failed:\n" in captured.err
+    assert (
+        f"Handling https://github.com/d/down/pull/3 failed: Deleting the branch {OLD} failed, so it's still open:\n"
+    ) in captured.err
     assert "Left https://github.com/d/down/pull/4 open" in captured.out
-    assert ("PATCH", "/pulls/3", {"state": "closed"}) in fakes.changes
+    # Left open, for a rerun to judge again.
+    assert [path for _, path, _ in fakes.changes] == ["/pulls", "/issues/4/comments"]
     assert f"refs/heads/{OLD}" in remote_branches(upstream)
 
 
+@pytest.mark.parametrize(
+    ("error", "message"),
+    [
+        (
+            urllib.error.HTTPError(f"{API}/issues/3/comments", 403, "no", email.message.Message(), io.BytesIO(b"no")),
+            f"HTTP 403 from {API}/issues/3/comments:\nno",
+        ),
+        (json.JSONDecodeError("Expecting value", "<", 0), "Expecting value: line 1 column 1 (char 0)"),
+    ],
+)
 def test_bump_pr_reports_a_failed_request_on_an_earlier_pr(
-    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: Exception, message: str
 ) -> None:
-    fakes = Fakes(monkeypatch, [pull(3, OLD)], {3: [commit("Fix")]})
+    # The second is still handled.
+    fakes = Fakes(
+        monkeypatch, [pull(3, OLD), pull(4, "downstream/pkg-0.3.6")], {3: [commit("Fix")], 4: [commit("Fix")]}
+    )
     request = fakes.request
 
     def failing(method: str, url: str, token: str, *, json_body: object = None) -> Any:
         if url.endswith("/issues/3/comments"):
-            raise urllib.error.HTTPError(url, 403, "no", email.message.Message(), io.BytesIO(b"denied"))
+            raise error
         return request(method, url, token, json_body=json_body)
 
     monkeypatch.setattr(github, "request", failing)
     assert downstream.run(PR_ARGS) == 1
-    assert capsys.readouterr().err == (
-        f"Handling https://github.com/d/down/pull/3 failed: HTTP 403 from {API}/issues/3/comments:\ndenied\n"
-    )
-    assert fakes.created
+    assert capsys.readouterr().err == f"Handling https://github.com/d/down/pull/3 failed: {message}\n"
+    assert [path for _, path, _ in fakes.changes] == ["/pulls", "/issues/4/comments"]

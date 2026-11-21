@@ -35,7 +35,6 @@ class Bump:
     base: str
     # The commit at the head of its branch when it was listed.
     head: str
-    author: str
     version: str
 
 
@@ -73,7 +72,6 @@ def open_bumps(repo: str, token: str, package: str, marker: str) -> list[Bump]:
                     branch=ref,
                     base=pull["base"]["ref"],
                     head=head["sha"],
-                    author=pull["user"]["login"],
                     version=version,
                 )
             )
@@ -82,10 +80,23 @@ def open_bumps(repo: str, token: str, package: str, marker: str) -> list[Bump]:
         page += 1
 
 
+def _identity(person: dict[str, Any]) -> tuple[str, str]:
+    return person["name"], person["email"]
+
+
 def _is_bump_commit(commit: dict[str, Any]) -> bool:
-    """Whether commit is one that `downstream bump` made: TRAILER is a line of its message's last paragraph."""
+    """Whether commit is one that `downstream bump` made: TRAILER is a line
+    of its message's last paragraph, and it was committed by its author, or
+    by GitHub's Update branch button rebasing it. An amend or a rebase by a
+    person keeps the trailer, but makes them the committer."""
     message: str = commit["commit"]["message"]
-    return len(commit["parents"]) == 1 and TRAILER in message.strip().split("\n\n")[-1].splitlines()
+    git = commit["commit"]
+    committer = commit.get("committer") or {}
+    return (
+        len(commit["parents"]) == 1
+        and TRAILER in message.strip().split("\n\n")[-1].splitlines()
+        and (_identity(git["committer"]) == _identity(git["author"]) or committer.get("login") == _WEB_FLOW)
+    )
 
 
 def _is_update_merge(commit: dict[str, Any], bump: Bump) -> bool:
@@ -126,25 +137,30 @@ def comment_marker(marker: str, version: str) -> str:
 
 
 def _comment(repo: str, token: str, bump: Bump, marker: str, body: str) -> None:
-    """Post body, which starts with marker, on bump's pull request, unless its author already has."""
-    if not github.marked_comments(repo, bump.number, bump.author, marker, token):
+    """Post body, which starts with marker, on bump's pull request, unless a
+    comment there already starts with marker. Anyone's comment counts, as
+    the token that posted an earlier one may not be this one."""
+    if not github.marked_comments(repo, bump.number, None, marker, token):
         github.request(
             "POST", f"{github.API_URL}/repos/{repo}/issues/{bump.number}/comments", token, json_body={"body": body}
         )
 
 
 def supersede(directory: Path, repo: str, token: str, bump: Bump, marker: str, number: int) -> None:
-    """Comment on bump's pull request that pull request number supersedes it,
-    close it, and delete its branch from the remote of the downstream's
-    checkout in directory, unless the branch has moved on from bump.head."""
-    _comment(repo, token, bump, marker, f"{marker}\nSuperseded by #{number}.")
-    github.request("PATCH", f"{github.API_URL}/repos/{repo}/pulls/{bump.number}", token, json_body={"state": "closed"})
+    """Delete bump's branch from the remote of the downstream's checkout in
+    directory, unless the branch has moved on from bump.head, then close its
+    pull request, and comment that pull request number supersedes it. If the
+    branch has moved on, the pull request stays open, for a rerun to judge
+    again."""
     # The lease fails the push if someone pushed to the branch after it was judged untouched.
     lease = f"--force-with-lease=refs/heads/{bump.branch}:{bump.head}"
     try:
         pull_request.git(directory, "push", lease, pull_request.REMOTE, f":refs/heads/{bump.branch}")
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Closed {bump.url}, but deleting its branch {bump.branch} failed:\n{e.stderr}") from e
+        raise RuntimeError(f"Deleting the branch {bump.branch} failed, so it's still open:\n{e.stderr}") from e
+    # Deleting the branch closes the pull request too, but not at once.
+    github.request("PATCH", f"{github.API_URL}/repos/{repo}/pulls/{bump.number}", token, json_body={"state": "closed"})
+    _comment(repo, token, bump, marker, f"{marker}\nSuperseded by #{number}.")
 
 
 def warn(repo: str, token: str, bump: Bump, marker: str, number: int, package: str, version: str) -> None:

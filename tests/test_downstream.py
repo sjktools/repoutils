@@ -10,7 +10,7 @@ from typing import Any, NoReturn
 
 import pytest
 
-from repoutils import downstream_pins, github, pypi_provenance
+from repoutils import downstream_actions, downstream_pins, github, pypi_provenance
 from repoutils.commands import downstream
 
 API = f"{github.API_URL}/repos/d/down"
@@ -27,6 +27,32 @@ name = "down"
 [dependency-groups]
 pkg = ["pkg>=0.3.0"]
 """
+
+
+ACTIONS_LOCK = Path(".github/workflows/actions.lock")
+ACTIONS_LOCK_TEXT = (
+    "workflows:\n    '.github/workflows/ci.yml':\n        - 'actions/checkout@v7.0.1'\n"
+    "        - 'u/up/.github/actions/a@v0.3.0'\n        - 'u/up/.github/actions/b@v0.3.0'\n"
+)
+WORKFLOW = """\
+jobs:
+  bump:
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: u/up/.github/actions/a@v0.3.0
+      - uses: u/up/.github/actions/a@v0.3.0
+      - uses: u/up/.github/actions/b@v0.3.0
+"""
+
+
+def with_actions(root: Path, workflow: str = WORKFLOW) -> Path:
+    """Commit a workflow that uses the upstream's actions, and an actions.lock, to the downstream root."""
+    (root / ".github/workflows").mkdir(parents=True)
+    (root / ".github/workflows/ci.yml").write_text(workflow)
+    (root / ACTIONS_LOCK).write_text(ACTIONS_LOCK_TEXT)
+    git(root, "add", "--all")
+    git(root, "commit", "--quiet", "--message", "actions")
+    return root
 
 
 def lock_text(version: str) -> str:
@@ -166,7 +192,7 @@ def _page(items: list[Any], url: str) -> list[Any]:
 
 
 class Fakes:
-    """Stands in for PyPI's provenance, uv lock and GitHub's pull requests."""
+    """Stands in for PyPI's provenance, uv lock, gh actions-lock and GitHub's pull requests."""
 
     def __init__(
         self,
@@ -176,6 +202,9 @@ class Fakes:
     ) -> None:
         self.checked: list[tuple[str, str, str]] = []
         self.locked: list[tuple[Path, str, str]] = []
+        # The roots gh actions-lock ran in, and the roots it verified.
+        self.actions_locked: list[Path] = []
+        self.verified: list[Path] = []
         self.pulls = pulls or []
         self.commits = commits or {}
         self.comments: dict[int, list[dict[str, Any]]] = {}
@@ -185,6 +214,8 @@ class Fakes:
         self.changes: list[tuple[str, str, Any]] = []
         monkeypatch.setattr(pypi_provenance, "check", self.check)
         monkeypatch.setattr(downstream_pins, "lock", self.lock)
+        monkeypatch.setattr(downstream_actions, "lock", self.actions_lock)
+        monkeypatch.setattr(downstream_actions, "verify", self.verify)
         monkeypatch.setattr(github, "request", self.request)
 
     @property
@@ -199,6 +230,14 @@ class Fakes:
         self.locked.append((root, package, version))
         (root / "uv.lock").write_text(lock_text(version))
         return True
+
+    def actions_lock(self, root: Path) -> bool:
+        self.actions_locked.append(root)
+        (root / ACTIONS_LOCK).write_text(ACTIONS_LOCK_TEXT.replace("v0.3.0", "v0.4.0"))
+        return True
+
+    def verify(self, root: Path) -> None:
+        self.verified.append(root)
 
     def request(self, method: str, url: str, token: str, *, json_body: object = None) -> Any:
         assert token == "tok"
@@ -713,3 +752,221 @@ def test_bump_pr_rerun_still_handles_earlier_prs_if_linking_fails(
     )
     assert "Closed https://github.com/d/down/pull/3" in captured.out
     assert "Left https://github.com/d/down/pull/4 open" in captured.out
+
+
+MOVED = WORKFLOW.replace("@v0.3.0", "@v0.4.0")
+
+
+def test_bump_moves_the_upstreams_actions(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    down = with_actions(upstream / "down")
+    fakes = Fakes(monkeypatch)
+    assert downstream.run(["bump", "--version", "0.4.0", "--directory", "down"]) == 0
+    assert capsys.readouterr().out.endswith(
+        "Bumped pkg from 0.3.0 to 0.4.0 in pyproject.toml, uv.lock, .github/workflows/ci.yml, "
+        ".github/workflows/actions.lock\n"
+    )
+    assert (down / ".github/workflows/ci.yml").read_text() == MOVED
+    assert fakes.actions_locked == [Path("down")]
+    assert fakes.verified == []
+
+
+def test_bump_only_the_actions(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (upstream / "down/pyproject.toml").write_text(DOWNSTREAM.replace("0.3.0", "0.4.0"))
+    (upstream / "down/uv.lock").write_text(lock_text("0.4.0"))
+    down = with_actions(upstream / "down", WORKFLOW.replace("a@v0.3.0", "a@v0.4.0"))
+    fakes = Fakes(monkeypatch)
+    (upstream / "new.lock").write_text(lock_text("0.4.0"))
+    (upstream / "actions.lock").write_text("regenerated\n")
+    args = ["bump", "--version", "0.4.0", "--directory", "down", "--pr", "--repo", "d/down"]
+    args += ["--lock-file", "new.lock", "--actions-lock-file", "actions.lock"]
+    assert downstream.run(args) == 0
+    assert capsys.readouterr().out.endswith(
+        "Bumped pkg's actions from v0.3.0 to v0.4.0 in .github/workflows/ci.yml, .github/workflows/actions.lock\n"
+        "Opened https://github.com/d/down/pull/5\n"
+    )
+    assert fakes.actions_locked == []
+    assert fakes.verified == [Path("down")]
+    assert fakes.created[0]["body"].startswith(
+        "<!-- up-downstream-pkg -->\n"
+        "Bumps the actions of [pkg](https://pypi.org/project/pkg/0.4.0/) from v0.3.0 to v0.4.0, "
+        "which [u/up](https://github.com/u/up) released.\n\n"
+        "- `.github/workflows/ci.yml`: `u/up/.github/actions/b@v0.3.0` to `@v0.4.0`\n\n"
+    )
+    assert git(down, "log", "-1", "--format=%B", f"origin/{BRANCH}").startswith(
+        "Bump pkg to 0.4.0\n\nBumps pkg's actions from v0.3.0 to v0.4.0.\n\n"
+    )
+    assert git(down, "diff", "--name-only", "main", f"origin/{BRANCH}").splitlines() == [
+        ".github/workflows/actions.lock",
+        ".github/workflows/ci.yml",
+    ]
+    assert git(down, "show", f"origin/{BRANCH}:.github/workflows/actions.lock") == "regenerated"
+    assert git(down, "show", f"origin/{BRANCH}:.github/workflows/ci.yml") + "\n" == MOVED
+
+
+def test_bump_pr_takes_the_actions_lock(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    down = with_actions(upstream / "down")
+    fakes = Fakes(monkeypatch)
+    (upstream / "new.lock").write_text(lock_text("0.4.0"))
+    (upstream / "actions.lock").write_text("regenerated\n")
+    args = ["bump", "--version", "0.4.0", "--directory", "down", "--pr", "--repo", "d/down"]
+    args += ["--lock-file", "new.lock", "--actions-lock-file", "actions.lock"]
+    assert downstream.run(args) == 0
+    body = fakes.created[0]["body"]
+    # Each action once, though two steps use a.
+    assert (
+        "- `dependency-groups.pkg`: `pkg>=0.3.0` to `pkg>=0.4.0`\n"
+        "- `.github/workflows/ci.yml`: `u/up/.github/actions/a@v0.3.0` to `@v0.4.0`\n"
+        "- `.github/workflows/ci.yml`: `u/up/.github/actions/b@v0.3.0` to `@v0.4.0`\n\n"
+    ) in body
+    assert git(down, "diff", "--name-only", "main", f"origin/{BRANCH}").splitlines() == [
+        ".github/workflows/actions.lock",
+        ".github/workflows/ci.yml",
+        "pyproject.toml",
+        "uv.lock",
+    ]
+
+
+def test_bump_nothing_to_do_with_actions(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (upstream / "down/pyproject.toml").write_text(DOWNSTREAM.replace("0.3.0", "0.4.0"))
+    with_actions(upstream / "down", MOVED)
+    fakes = Fakes(monkeypatch)
+    assert downstream.run(["bump", "--version", "0.4.0", "--directory", "down"]) == 0
+    assert capsys.readouterr().out == (
+        "down/pyproject.toml already pins pkg 0.4.0, and uses u/up's actions at v0.4.0, so there's nothing to bump\n"
+    )
+    assert fakes.checked == []
+
+
+def test_bump_refuses_an_actions_lock_file_without_an_actions_lock(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    down = with_actions(upstream / "down")
+    (down / ACTIONS_LOCK).unlink()
+    Fakes(monkeypatch)
+    (upstream / "actions.lock").write_text("regenerated\n")
+    args = ["bump", "--version", "0.4.0", "--directory", "down", "--actions-lock-file", "actions.lock"]
+    assert downstream.run(args) == 1
+    assert capsys.readouterr().err == "There's no down/.github/workflows/actions.lock for actions.lock to replace\n"
+
+
+def test_bump_refuses_a_workflow_the_lock_changed(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    down = with_actions(upstream / "down")
+    fakes = Fakes(monkeypatch)
+
+    def lock(root: Path, package: str, version: str) -> bool:
+        with (root / ".github/workflows/ci.yml").open("a") as f:
+            f.write("# built\n")
+        return fakes.lock(root, package, version)
+
+    monkeypatch.setattr(downstream_pins, "lock", lock)
+    assert downstream.run(["bump", "--version", "0.4.0", "--directory", "down"]) == 1
+    assert capsys.readouterr().err == (
+        "down/.github/workflows/ci.yml changed while uv lock ran, so the bump stops here\n"
+    )
+    assert not git(down, "status", "--porcelain")
+
+
+def test_bump_refuses_an_actions_lock_the_lock_changed(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The actions are already at the release's tag, so only the pins move.
+    down = with_actions(upstream / "down", MOVED)
+    fakes = Fakes(monkeypatch)
+
+    def lock(root: Path, package: str, version: str) -> bool:
+        with (root / ACTIONS_LOCK).open("a") as f:
+            f.write("# built\n")
+        return fakes.lock(root, package, version)
+
+    monkeypatch.setattr(downstream_pins, "lock", lock)
+    assert downstream.run(["bump", "--version", "0.4.0", "--directory", "down"]) == 1
+    assert capsys.readouterr().err == (
+        "down/.github/workflows/actions.lock changed while uv lock ran, so the bump stops here\n"
+    )
+    assert not git(down, "status", "--porcelain")
+
+
+def test_bump_puts_files_back_if_verifying_fails(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    down = with_actions(upstream / "down")
+    Fakes(monkeypatch)
+
+    def verify(root: Path) -> NoReturn:
+        raise subprocess.CalledProcessError(1, ["gh", "actions-lock", "--verify"], stderr="stale\n")
+
+    monkeypatch.setattr(downstream_actions, "verify", verify)
+    (upstream / "actions.lock").write_text("tampered\n")
+    args = ["bump", "--version", "0.4.0", "--directory", "down", "--actions-lock-file", "actions.lock"]
+    assert downstream.run(args) == 1
+    assert capsys.readouterr().err == "gh actions-lock --verify failed:\nstale\n\n"
+    assert not git(down, "status", "--porcelain")
+
+
+def test_bump_refuses_an_action_at_a_branch(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with_actions(upstream / "down", WORKFLOW.replace("b@v0.3.0", "b@main"))
+    fakes = Fakes(monkeypatch)
+    assert downstream.run(["bump", "--version", "0.4.0", "--directory", "down"]) == 1
+    assert "ci.yml:7 uses u/up/.github/actions/b@main, which bump can't move" in capsys.readouterr().err
+    assert fakes.checked == []
+
+
+def test_bump_refuses_an_actions_lock_file_that_moves_another_action(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    down = with_actions(upstream / "down")
+    (down / ACTIONS_LOCK).write_text("dependencies:\n    'v/w@main':\n        commit: 'sha1-new'\n")
+    git(down, "commit", "--quiet", "--all", "--message", "lock")
+    fakes = Fakes(monkeypatch)
+    (upstream / "actions.lock").write_text("dependencies:\n    'v/w@main':\n        commit: 'sha1-old'\n")
+    args = ["bump", "--version", "0.4.0", "--directory", "down", "--actions-lock-file", "actions.lock"]
+    assert downstream.run(args) == 1
+    assert "actions.lock locks v/w@main at another commit than .github/workflows/actions.lock does" in (
+        capsys.readouterr().err
+    )
+    assert fakes.verified == []
+    assert not git(down, "status", "--porcelain")
+
+
+@pytest.mark.parametrize("given", [True, False])
+# The workflow that bump moves, and one it doesn't.
+@pytest.mark.parametrize("edited", ["ci.yml", "other.yml"])
+def test_bump_refuses_a_workflow_gh_actions_lock_changed(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], given: bool, edited: str
+) -> None:
+    down = with_actions(upstream / "down")
+    (down / ".github/workflows/other.yml").write_text("jobs: {}\n")
+    git(down, "add", "--all")
+    git(down, "commit", "--quiet", "--message", "other")
+    fakes = Fakes(monkeypatch)
+
+    def edit(root: Path) -> None:
+        with (root / ".github/workflows" / edited).open("a") as f:
+            f.write("# edited\n")
+
+    def actions_lock(root: Path) -> bool:
+        edit(root)
+        return fakes.actions_lock(root)
+
+    monkeypatch.setattr(downstream_actions, "lock", actions_lock)
+    monkeypatch.setattr(downstream_actions, "verify", edit)
+    (upstream / "actions.lock").write_text(ACTIONS_LOCK_TEXT)
+    args = ["bump", "--version", "0.4.0", "--directory", "down"]
+    args += ["--actions-lock-file", "actions.lock"] if given else []
+    assert downstream.run(args) == 1
+    command = "gh actions-lock --verify" if given else "gh actions-lock"
+    assert (
+        capsys.readouterr().err
+        == f"down/.github/workflows/{edited} changed while {command} ran, so the bump stops here\n"
+    )
+    assert not git(down, "status", "--porcelain")

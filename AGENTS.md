@@ -42,6 +42,7 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
 - `src/repoutils/locked_actions.py` is `check-pins`' check that the actions in `actions.lock` from a locked package's repository are at the commit in that package's `build_info.json`, kept apart from the command for length.
 - `src/repoutils/pull_request.py` commits a change to a new branch, pushes it and opens a PR, for `bump --pr` in `dependabot-uv`, `downstream` and `github-releases`.
 - `src/repoutils/downstream_pins.py` holds `downstream bump`'s changes to a downstream's pins and its re-lock, kept apart from the command for length.
+  `src/repoutils/downstream_actions.py` moves a downstream's `uses:` of the upstream's actions to the release's tag, and regenerates its `actions.lock`.
   `src/repoutils/downstream_prs.py` finds the open PRs of earlier `downstream bump --pr` runs, and closes or comments on them once the new PR is open.
   `src/repoutils/pypi_provenance.py` checks that PyPI's provenance for a release names the upstream's repository as its trusted publisher.
 - `src/repoutils/release_pins.py` is the format of the pins file that `github-releases bump` writes, kept apart from the command for length.
@@ -119,6 +120,7 @@ Every `setup-uv` step sets `version` to the minimum in `pyproject.toml`'s `[tool
 After changing any `uses:`, regenerate it with `just fix` or `just actions-lock`, which run `gh actions-lock` (the [github/gh-actions-lock](https://github.com/github/gh-actions-lock) extension), and never edit it by hand.
 `just actions-lock-check`, part of `just check`, verifies it.
 CI's `check-and-build` job and `fix.yml` install the extension with the `.github/actions/install-gh-actions-lock` action, which pins its release by version and SHA-256.
+That pin lives in the action's `install.sh`, which the `downstream-bump` and `downstream-push` actions run by path.
 
 ## CI and releases
 
@@ -181,9 +183,14 @@ It needs Contents and Pull requests write, and Workflows write, as the PR change
 It opens a PR in each repository that the `DOWNSTREAM_REPOS` variable names, with `repoutils downstream bump --pr`.
 Each of its three jobs runs one composite action in `.github/actions/`: `downstream-plan`, `downstream-bump` or `downstream-push`.
 The actions find repoutils' source relative to `${{ github.action_path }}`, so other projects can use them too.
+For the same reason, they run other files of this repository by that path, and never with `uses: ./`, which names the caller's repository.
 As in Bump uv, the `bump` job re-locks with no token that can write.
-The `push` job opens the PR with the `DOWNSTREAM_TOKEN` secret, and takes `uv.lock` from the `bump` job as data.
+It also moves each `uses:` of repoutils' actions to the release's tag, and regenerates `actions.lock` with `gh actions-lock`.
+The `push` job opens the PR with the `DOWNSTREAM_TOKEN` secret, and takes `uv.lock` and `actions.lock` from the `bump` job as data.
+It moves the `uses:` again itself.
+Before it commits `actions.lock`, it checks the file with `gh actions-lock --verify`, and checks that no other action's commit changed.
 That secret lives in the main-only `downstream` environment, and needs Contents and Pull requests write on each downstream.
+It also needs Workflows write on each downstream where the PR changes a file in `.github/workflows`, such as a workflow or `actions.lock` that uses repoutils' actions.
 
 `claude.yml` and `claude-code-review.yml` run Claude Code when a comment starts with `@claude` (with the `CLAUDE_CODE_OAUTH_TOKEN` secret).
 Their `route` jobs run `repoutils claude-route` from a sparse checkout of `src/repoutils/` with the runner's `python3`, installing nothing.

@@ -153,7 +153,7 @@ def check_kept(old: bytes, new: bytes, where: str) -> None:
     another commit than old for an action that both lock. Each action's key
     names its ref, so the upstream's moved actions are new keys, and only an
     action whose ref didn't change can fail this, such as one at a branch
-    moved back to an older commit, which `gh actions-lock --verify` allows."""
+    moved back to an older commit, which `gh actions-lock --verify` may allow."""
     try:
         before, after = locked_commits(old.decode()), locked_commits(new.decode())
     except UnicodeDecodeError as e:

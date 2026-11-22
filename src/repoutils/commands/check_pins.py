@@ -1,7 +1,11 @@
 """Check that every workflow or local composite action step that installs uv
 or just pins the version the project requires: pyproject.toml's [tool.uv]
-required-version minimum and the justfile's minimum-version. A Dockerfile's
-ghcr.io/astral-sh/uv stage, if there is one, must use that uv too.
+required-version minimum and the justfile's minimum-version. That covers a
+step that uses repoutils' prepare-publish action, which installs both, and a
+local composite action's input that a step's version comes from, through its
+default and any step that uses the action and sets the input. A
+Dockerfile's ghcr.io/astral-sh/uv stage, if there is one, must use that uv
+too.
 
 It also checks that the actions in .github/workflows/actions.lock from a
 package's GitHub repository are at the commit that uv.lock's version of that
@@ -14,6 +18,7 @@ import itertools
 import re
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 from repoutils import config, locked_actions
 from repoutils.docstrings import summary
@@ -22,11 +27,25 @@ from repoutils.docstrings import summary
 UV = ("astral-sh/setup-uv", "version")
 JUST = ("extractions/setup-just", "just-version")
 
+# repoutils' own action that installs uv and just, at the versions its inputs give.
+PREPARE_PUBLISH = "sjktools/repoutils/.github/actions/prepare-publish"
+# Every step that pins uv's or just's version, by the action it uses and that
+# action's input. A step that uses PREPARE_PUBLISH without the input installs
+# repoutils' own pin, which only matches the project's by chance.
+PINS: dict[tuple[str, str], list[tuple[str, str]]] = {
+    UV: [UV, (PREPARE_PUBLISH, "uv-version")],
+    JUST: [JUST, (PREPARE_PUBLISH, "just-version")],
+}
+
 _STEP_RE = re.compile(r"^(?P<indent>\s*)- ")
 # A step's own `- ` marker, which YAML lets have more than one space.
 _ITEM_RE = re.compile(r"^\s*-\s+")
 _USES_RE = re.compile(r"^uses:\s*[\"']?(?P<action>[^@\s\"']+)@")
+# A local action, by its path in the repository, which takes no @ref.
+_LOCAL_USES_RE = re.compile(r"^uses:\s*[\"']?[.$]/(?P<path>[^@\s\"']+?)/?[\"']?\s*(?:#.*)?$")
 _WITH_RE = re.compile(r"^with:\s*(?:#.*)?$")
+# A value that's all of one of a composite action's inputs.
+_INPUT_REF_RE = re.compile(r"^\$\{\{\s*inputs\.(?P<name>[\w-]+)\s*\}\}$")
 _JUST_MIN_RE = re.compile(r"^set minimum-version := '(?P<version>[^']+)'$", re.MULTILINE)
 # The tag, without any @sha256: digest.
 # A FROM line's flags (e.g. --platform=$BUILDPLATFORM) come before the image.
@@ -62,16 +81,12 @@ def step_spans(lines: list[str]) -> list[slice]:
     return result
 
 
-def inputs(step: list[str]) -> list[str]:
-    """The lines of a step's `with:` mapping that start one of its keys, so
-    that a key in another of the step's mappings (`env:`), or a line of a
-    multi-line value (`sparse-checkout: |`), isn't taken for an input."""
-    return [step[i] for i in input_indexes(step)]
-
-
 def input_indexes(step: list[str]) -> list[int]:
-    """Where each of inputs()' lines sits in the step."""
-    numbered = [(n, line) for n, line in enumerate(step) if line.strip() and not line.strip().startswith("#")]
+    """Where each line of a step's `with:` mapping that starts one of its keys
+    sits in the step, so that a key in another of the step's mappings
+    (`env:`), or a line of a multi-line value (`sparse-checkout: |`), isn't
+    taken for an input."""
+    numbered = _code(step)
     lines = [line for _, line in numbered]
     for i, (indent, key) in enumerate(_keys(lines)):
         if _WITH_RE.match(key):
@@ -94,11 +109,14 @@ def _keys(lines: list[str]) -> list[tuple[int, str]]:
 
 
 def _uses(step: list[str]) -> str | None:
-    """The action a step uses, or None if it runs a script instead."""
-    lines = [line for line in step if line.strip() and not line.strip().startswith("#")]
+    """The action a step uses, or None if it runs a script instead. A local
+    action is `./` and its path, whether the step gives it with `./` or `$/`."""
+    lines = [line for _, line in _code(step)]
     for _, key in _keys(lines):
         if match := _USES_RE.match(key):
             return match["action"]
+        if match := _LOCAL_USES_RE.match(key):
+            return "./" + match["path"]
     return None
 
 
@@ -120,36 +138,89 @@ def _value_group(match: re.Match[str]) -> str:
     return next(name for name in ("double", "single", "plain") if match[name] is not None)
 
 
+class Pin(NamedTuple):
+    """A step's pin of an input: its value, and where that sits, as the line
+    of the file and the span in that line. Where the step takes the value from
+    one of its composite action's inputs, source is that input's name, and the
+    line is the input's `default:`."""
+
+    value: str
+    line: int
+    span: tuple[int, int]
+    source: str | None = None
+
+
+def _pin(lines: list[str], n: int, pattern: re.Pattern[str], source: str | None = None) -> Pin | None:
+    """The pin on line n, if pattern matches it."""
+    if (m := pattern.match(lines[n])) is None:
+        return None
+    return Pin(m[_value_group(m)], n, m.span(_value_group(m)), source)
+
+
+def _code(lines: list[str]) -> list[tuple[int, str]]:
+    """Each of lines with its index, less blanks and comments."""
+    return [(n, line) for n, line in enumerate(lines) if line.strip() and not line.strip().startswith("#")]
+
+
+def _member(mapping: list[tuple[int, str]], key: str) -> list[tuple[int, str]]:
+    """The lines of key's value in a block mapping, whose keys sit at its first
+    line's indent (blanks and comments already dropped), or [] if it has no
+    such key."""
+    if not mapping:
+        return []
+    depth = _depth(mapping[0][1])
+    key_re = re.compile(rf"^{re.escape(key)}:\s*(?:#.*)?$")
+    for i, (_, line) in enumerate(mapping):
+        if _depth(line) == depth and key_re.match(line.strip()):
+            return list(itertools.takewhile(lambda body: _depth(body[1]) > depth, mapping[i + 1 :]))
+    return []
+
+
+def _default(lines: list[str], name: str) -> Pin | None:
+    """Where the `default:` of input name sits in a composite action's
+    top-level `inputs:` mapping, or None if it has none. A workflow has no
+    top-level `inputs:`, so it never has one."""
+    spec = _member(_member(_code(lines), "inputs"), name)
+    depth = _depth(spec[0][1]) if spec else 0
+    default_re = _key_re("default")
+    return next((pin for n, line in spec if _depth(line) == depth and (pin := _pin(lines, n, default_re, name))), None)
+
+
+def pin_lines(text: str, action: str, key: str) -> list[Pin | None]:
+    """Where input key's value sits in each step of a workflow or action that
+    uses action, or None where that step doesn't set it. Where the value is
+    `${{ inputs.NAME }}` and the file gives NAME a default, it's that default."""
+    key_re = _key_re(key)
+    lines = text.splitlines()
+    found: list[Pin | None] = []
+    for span in step_spans(lines):
+        if _uses(lines[span]) != action:
+            continue
+        pin = next((pin for i in input_indexes(lines[span]) if (pin := _pin(lines, span.start + i, key_re))), None)
+        if pin is not None and (ref := _INPUT_REF_RE.match(pin.value)):
+            pin = _default(lines, ref["name"]) or pin
+        found.append(pin)
+    return found
+
+
 def pins(text: str, action: str, key: str) -> list[str | None]:
     """The value of input key in each step of a workflow that uses action, or
-    None where that step doesn't set it."""
-    key_re = _key_re(key)
-    found: list[str | None] = []
-    for step in steps(text):
-        if _uses(step) == action:
-            values = [m[_value_group(m)] for line in inputs(step) if (m := key_re.match(line))]
-            found.append(values[0] if values else None)
-    return found
+    None where that step doesn't set it, as pin_lines() finds it."""
+    return [None if pin is None else pin.value for pin in pin_lines(text, action, key)]
 
 
 def set_pins(text: str, action: str, key: str, old: str, new: str) -> tuple[str, int]:
     """text with input key set to new, keeping its quotes and any comment, in
-    each step that uses action where key is old, and how many steps changed."""
-    key_re = _key_re(key)
-    bare, lines = text.splitlines(), text.splitlines(keepends=True)
+    each step that uses action where key is old, and how many lines changed.
+    Where the step takes key from an input's default, the default changes,
+    once however many steps take it."""
+    lines = text.splitlines(keepends=True)
     changed = 0
-    for span in step_spans(bare):
-        if _uses(bare[span]) != action:
-            continue
-        for i in input_indexes(bare[span]):
-            if m := key_re.match(bare[span.start + i]):
-                if m[_value_group(m)] == old:
-                    # The line's ending follows bare's text, so spans in it hold in lines too.
-                    start, end = m.span(_value_group(m))
-                    line = lines[span.start + i]
-                    lines[span.start + i] = line[:start] + new + line[end:]
-                    changed += 1
-                break
+    for pin in {pin for pin in pin_lines(text, action, key) if pin is not None and pin.value == old}:
+        # The line's ending follows splitlines()' text, so the span holds here too.
+        start, end = pin.span
+        lines[pin.line] = lines[pin.line][:start] + new + lines[pin.line][end:]
+        changed += 1
     return "".join(lines), changed
 
 
@@ -195,22 +266,57 @@ def dockerfile_problems(root: Path, uv: str) -> list[str]:
     return [f"Dockerfile: FROM ghcr.io/astral-sh/uv:{tag}, not {uv}" for tag in tags if tag != uv]
 
 
+def local_inputs(root: Path, files: dict[Path, str], tool: tuple[str, str]) -> list[tuple[str, str]]:
+    """Each local action in files whose pin of tool takes its default from one
+    of the action's inputs, as `./<path>` and the input. A step that uses the
+    action and sets the input pins tool with it instead of the default. That
+    holds through wrappers too: an action whose step passes its own input on
+    to such an action's input is one of them."""
+    found: dict[tuple[str, str], None] = {}
+    pins = list(PINS[tool])
+    while pins:
+        new = [
+            ("./" + path.parent.relative_to(root).as_posix(), pin.source)
+            for path, text in files.items()
+            for action, key in pins
+            for pin in pin_lines(text, action, key)
+            if pin is not None and pin.source
+        ]
+        # Each pair is looked for once, so a cycle of actions ends.
+        pins = [pair for pair in dict.fromkeys(new) if pair not in found]
+        found.update(dict.fromkeys(pins))
+    return list(found)
+
+
 def problems(root: Path) -> tuple[list[str], dict[tuple[str, str], int]]:
     """Each pin that's missing or differs from the minimum, and how many steps
-    use each action. No step using one is a problem too, as it more likely
-    means steps() or _USES_RE no longer recognize them than that CI stopped
-    installing uv or just."""
+    pin uv's and just's versions, keyed by UV and JUST. No step pinning one is
+    a problem too, as it more likely means steps() or _USES_RE no longer
+    recognize them than that CI stopped installing uv or just."""
     want = minimums(root)
     found: list[str] = []
     counts = dict.fromkeys(want, 0)
-    for path in workflow_files(root):
-        text = path.read_text()
-        for (action, key), version in want.items():
-            for pin in pins(text, action, key):
-                counts[action, key] += 1
-                if pin != version:
-                    setting = f"{key}: {pin}" if pin else f"no {key}"
-                    found.append(f"{path.relative_to(root).as_posix()}: a {action} step has {setting}, not {version}")
+    files = {path: path.read_text() for path in workflow_files(root)}
+    overrides = {tool: local_inputs(root, files, tool) for tool in want}
+    for path, text in files.items():
+        where = path.relative_to(root).as_posix()
+        for tool, version in want.items():
+            for action, key in PINS[tool]:
+                for pin in pin_lines(text, action, key):
+                    counts[tool] += 1
+                    if pin is not None and pin.value == version:
+                        continue
+                    if pin is None:
+                        setting = f"no {key}"
+                    elif pin.source:
+                        setting = f"{key} from input {pin.source}, whose default is {pin.value}"
+                    else:
+                        setting = f"{key}: {pin.value}"
+                    found.append(f"{where}: a {action} step has {setting}, not {version}")
+            for action, key in overrides[tool]:
+                for pin in pin_lines(text, action, key):
+                    if pin is not None and pin.value != version:
+                        found.append(f"{where}: a {action} step has {key}: {pin.value}, not {version}")
     found += [f"no workflow or action has a {action} step" for (action, _), count in counts.items() if not count]
     found += dockerfile_problems(root, want[UV])
     return found, counts

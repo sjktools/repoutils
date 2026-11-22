@@ -205,9 +205,9 @@ def test_waits_for_any_check(
 
 def test_waits_again_for_a_replaced_check_run(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # A rerun of test replaced its run with another of the same name.
-    # Its URL can be null, so the ID tells the two apart.
-    rerun = dict(run("test", run_id=3), html_url=None)
-    fake = FakeGitHub(monkeypatch, [PASSED, ([rerun, *PASSED[0][1:]], PASSED[1])])
+    # Both URLs are null, which GitHub allows, so only the IDs tell the two apart.
+    first, rerun = (dict(run("test", run_id=n), html_url=None) for n in (1, 3))
+    fake = FakeGitHub(monkeypatch, [([first, *PASSED[0][1:]], PASSED[1]), ([rerun, *PASSED[0][1:]], PASSED[1])])
     assert finish("--interval", "5") == 0
     assert fake.slept == [5, 5]
     assert fake.reads["check-runs"] == 3

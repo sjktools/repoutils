@@ -154,6 +154,9 @@ def load_listed(section: str, keys: Iterable[str], noun: str, root: Path = Path(
     environments: dict[str, list[str]] = {}
     seen: set[str] = set()
     for environment in by_environment:
+        if not environment:
+            # GitHub has no such environment, and "" means none to a workflow's environment key.
+            raise config.ConfigError(f"{where} has an environment with an empty name")
         if environment.lower() in seen:
             raise config.ConfigError(
                 f"{where} {config.toml_key(environment)} is listed twice (environment names ignore case)"

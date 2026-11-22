@@ -526,3 +526,14 @@ def test_environments_fails_on_a_bad_table(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "environments must be a table" in captured.err
+
+
+def test_an_empty_environment_name_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('[tool.repoutils.secrets]\nenvironments."" = ["A"]\n')
+    monkeypatch.chdir(tmp_path)
+    assert secrets.main(["environments", "--with-repository"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "[tool.repoutils.secrets.environments] has an environment with an empty name\n"

@@ -1088,12 +1088,12 @@ This check keeps `[tool.repoutils.secrets]` synchronized with `.github/workflows
 A workflow job can access an environment secret only when the job specifies that environment in `environment:`.
 Therefore, `check-workflows` also fails when a job references an environment-only secret without specifying one of the environments that hold that secret.
 When a job sets `environment:` to an expression, `check-workflows` cannot determine the environment name statically and skips environment secret checks for that job.
+The command ignores `GITHUB_TOKEN` (which GitHub provides automatically) and ignores text inside YAML comments.
 
 `repoutils secrets environments` also requires no GitHub token.
 It prints the environments in `[tool.repoutils.secrets]` as a JSON array, such as `["release", "autofix"]`, for a workflow matrix that runs `inspect` once for each environment.
 With `--with-repository`, the array starts with `""`, which stands for a job that deploys to no environment and inspects the repository secrets.
 The `inspect-secrets.yml` workflow of this repository passes that array to its matrix with `fromJSON`, so the jobs always match `pyproject.toml`.
-The command ignores `GITHUB_TOKEN` (which GitHub provides automatically) and ignores text inside YAML comments.
 
 `repoutils secrets inspect` runs inside a GitHub Actions workflow and reports metadata about each secret without printing secret values.
 Use `inspect` to identify which token or key a secret contains and to detect tokens that will expire soon.

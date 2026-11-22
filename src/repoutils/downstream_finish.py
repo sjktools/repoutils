@@ -5,10 +5,14 @@ kept apart from the command for length.
 It first waits for the checks that the downstream's rulesets require on the
 pull request's base branch to appear, as a check registers some time after
 the pull request opens, and then for every check run and commit status on
-its head to finish. Stdlib-only, like every repoutils module."""
+its head to finish. If only GitHub Actions jobs failed, it re-runs them
+once (or --retries times), as a downstream's CI can fail for a moment's
+reason, such as a TestPyPI server that doesn't yet list the dev version.
+Stdlib-only, like every repoutils module."""
 
 import os
 import sys
+import urllib.error
 import urllib.parse
 from dataclasses import dataclass
 from time import monotonic, sleep
@@ -19,6 +23,8 @@ from repoutils import downstream_pins, downstream_prs, github
 # The check run conclusions that GitHub counts as passing a required check.
 _PASSING = {"success", "neutral", "skipped"}
 _PER_PAGE = 100
+# The ID of the GitHub Actions app, whose check run for a job has the job's ID.
+ACTIONS_APP = 15368
 
 
 @dataclass(frozen=True)
@@ -133,26 +139,25 @@ def wait(
     bump: downstream_prs.Bump,
     *,
     interval: float,
-    timeout: float,
+    deadline: float,
+    required: list[Required],
+    replaced: frozenset[int] = frozenset(),
 ) -> tuple[str, list[Check]]:
     """The head commit of bump's pull request, and its checks, once the
-    checks that the rulesets require on its base branch are there, at least
-    one check is, and every check has finished, on two reads in a row that
-    find the same checks, as a workflow can add its check after another's
-    finished. Raises TimeoutError if that takes over timeout
-    seconds."""
-    deadline = monotonic() + timeout
-    required = required_checks(repo, token, bump.base)
-    print(f"Waiting for the checks on {bump.url}")
-    if required:
-        print(f"{bump.base}'s rulesets require {', '.join(r.context for r in required)}")
+    checks in required are there, at least one check is, and every check
+    has finished, on two reads in a row that find the same checks, as a
+    workflow can add its check after another's finished. A check whose ID is
+    in replaced counts as unfinished, as it's one that a re-run will replace.
+    Raises TimeoutError, saying what it waited for, if that takes until
+    after deadline (from monotonic())."""
     # The head and checks of the last read that found every check finished.
     settled: tuple[str, set[Check]] | None = None
     while True:
         # Its latest head, as someone may have pushed to it.
         sha: str = _pull(repo, token, bump)["head"]["sha"]
         found = checks(repo, token, sha)
-        waiting = [r.context for r in missing(required, found)] + [c.name for c in found if c.state == "pending"]
+        waiting = [r.context for r in missing(required, found)]
+        waiting += [c.name for c in found if c.state == "pending" or c.id in replaced]
         # Whole checks, IDs included, so that a check run replaced by another of the same name counts as a change.
         done = (sha, set(found)) if found and not waiting else None
         # Read the head again, so that it closes only the commit whose checks it read.
@@ -162,7 +167,7 @@ def wait(
         left = deadline - monotonic()
         if left <= 0:
             what = ", ".join(waiting) if waiting else "any check to start"
-            raise TimeoutError(f"Gave up after {timeout:g} seconds waiting for {what} on {bump.url}, so it stays open")
+            raise TimeoutError(f"waiting for {what} on {bump.url}, so it stays open")
         sleep(min(interval, left))
 
 
@@ -183,12 +188,53 @@ def close(repo: str, token: str, bump: downstream_prs.Bump, count: int) -> None:
     github.request("DELETE", f"{api}/git/refs/heads/{urllib.parse.quote(bump.branch, safe='/')}", token)
 
 
-def finish(repo: str, token: str, bump: downstream_prs.Bump, *, interval: float, timeout: float) -> int:
+def rerun(repo: str, token: str, failed: list[Check]) -> bool:
+    """Re-run the failed jobs of the workflow runs whose jobs are the check
+    runs in failed, and return True. Re-run nothing and return False if a
+    check in failed isn't a GitHub Actions job, as it couldn't pass then, or
+    print a warning and return False if GitHub refuses a re-run."""
+    if any(c.app != ACTIONS_APP for c in failed):
+        return False
+    api = f"{github.API_URL}/repos/{repo}/actions"
+    try:
+        runs = {github.request("GET", f"{api}/jobs/{c.id}", token)["run_id"]: None for c in failed}
+        for run_id in runs:
+            github.request("POST", f"{api}/runs/{run_id}/rerun-failed-jobs", token)
+            print(f"Re-ran the failed jobs of https://github.com/{repo}/actions/runs/{run_id}")
+    except urllib.error.HTTPError as e:
+        print(
+            f"warning: couldn't re-run the failed jobs, which needs Actions write on {repo}: {e}",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def finish(
+    repo: str, token: str, bump: downstream_prs.Bump, *, interval: float, timeout: float, retries: int = 1
+) -> int:
     """Wait for the checks on bump's pull request, then close it and delete
-    its branch if they all passed, and return 0. If any failed, leave it
-    open, and return 1."""
-    sha, found = wait(repo, token, bump, interval=interval, timeout=timeout)
-    if failed := [c for c in found if c.state == "failed"]:
+    its branch if they all passed, and return 0. If only GitHub Actions jobs
+    failed, re-run them and wait again, up to retries times. If any still
+    failed, leave it open, and return 1."""
+    deadline = monotonic() + timeout
+    required = required_checks(repo, token, bump.base)
+    print(f"Waiting for the checks on {bump.url}")
+    if required:
+        print(f"{bump.base}'s rulesets require {', '.join(r.context for r in required)}")
+    try:
+        sha, found = wait(repo, token, bump, interval=interval, deadline=deadline, required=required)
+        failed = [c for c in found if c.state == "failed"]
+        while failed and retries > 0 and rerun(repo, token, failed):
+            retries -= 1
+            replaced = frozenset(c.id for c in failed)
+            sha, found = wait(
+                repo, token, bump, interval=interval, deadline=deadline, required=required, replaced=replaced
+            )
+            failed = [c for c in found if c.state == "failed"]
+    except TimeoutError as e:
+        raise TimeoutError(f"Gave up after {timeout:g} seconds {e}") from None
+    if failed:
         print(f"Left {bump.url} open, as these checks failed on {sha}:", file=sys.stderr)
         for check in failed:
             print(f"- {check.name}: {check.detail}" + (f" {check.url}" if check.url else ""), file=sys.stderr)

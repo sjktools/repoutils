@@ -50,10 +50,13 @@ COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 # current directory nor PYTHONPATH can put another copy of the package first.
 # It prints the installed version and each build_info.json the distribution
 # has (or only the one that argv[2] names), outside its .dist-info, and the
-# commands it installs: its console scripts and the files it puts in bin/.
+# commands it installs: its console scripts and the files it puts in the
+# environment's scripts directory (bin/, or Scripts\\ on Windows).
 PROBE = """
-import json, sys
+import json, sys, sysconfig
 from importlib.metadata import distribution
+from pathlib import Path
+scripts = Path(sysconfig.get_path("scripts")).resolve()
 dist = distribution(sys.argv[1])
 found = {}
 commands = {entry.name for entry in dist.entry_points if entry.group == "console_scripts"}
@@ -62,7 +65,7 @@ for file in dist.files or ():
     wanted = path == sys.argv[2] if len(sys.argv) > 2 else file.name == "build_info.json"
     if wanted and ".dist-info/" not in path:
         found[path] = file.read_text()
-    if file.parent.name in ("bin", "Scripts"):
+    if Path(file.locate()).resolve().parent == scripts:
         commands.add(file.name.removesuffix(".exe"))
 print(json.dumps({"version": dist.version, "files": found, "commands": sorted(commands)}))
 """

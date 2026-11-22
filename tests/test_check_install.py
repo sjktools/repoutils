@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import venv
 from collections.abc import Callable
 from pathlib import Path
 
@@ -364,36 +365,37 @@ def test_default_runner_drops_pythonpath(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_probe_reads_an_installed_distribution(tmp_path: Path) -> None:
-    # PROBE itself, against a distribution put by hand in a directory on the path.
-    # It's three levels below tmp_path, as installed scripts are below site-packages,
-    # and importlib.metadata leaves out the files that RECORD lists but don't exist.
-    site = tmp_path / "lib" / "python" / "site-packages"
-    site.mkdir(parents=True)
-    for script in ("bin/my-script", "Scripts/win-script.exe"):
-        (tmp_path / script).parent.mkdir()
-        (tmp_path / script).write_text("")
+    # PROBE itself, against a distribution put by hand in a virtual environment.
+    venv.create(tmp_path / "venv", with_pip=False)
+    python = tmp_path / "venv" / ("Scripts" if sys.platform == "win32" else "bin") / "python"
+    where = "import sysconfig; print(sysconfig.get_path('purelib')); print(sysconfig.get_path('scripts'))"
+    site_path, scripts_path = subprocess.run(
+        [python, "-I", "-c", where], capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    site, scripts = Path(site_path), Path(scripts_path)
+    (scripts / "my-script").write_text("")
     package = site / "my_pkg"
-    package.mkdir()
+    (package / "bin").mkdir(parents=True)
+    (package / "bin" / "data-not-a-command").write_text("")
     (package / "build_info.json").write_text(json.dumps({"commit": COMMIT, "dirty": False}))
     (package / "other.json").write_text("{}")
     info = site / "my_pkg-1.2.0.dist-info"
     info.mkdir()
     (info / "METADATA").write_text("Metadata-Version: 2.1\nName: my-pkg\nVersion: 1.2.0\n")
     (info / "build_info.json").write_text("{}")
-    record = ["my_pkg/build_info.json,,", "my_pkg/other.json,,", "my_pkg-1.2.0.dist-info/build_info.json,,"]
-    record += ["../../../bin/my-script,,", "../../../Scripts/win-script.exe,,"]
-    (info / "RECORD").write_text("\n".join(record) + "\n")
+    record = ["my_pkg/build_info.json", "my_pkg/other.json", "my_pkg/bin/data-not-a-command"]
+    record += ["my_pkg-1.2.0.dist-info/build_info.json", os.path.relpath(scripts / "my-script", site)]
+    (info / "RECORD").write_text("".join(f"{path},,\n" for path in record))
     (info / "entry_points.txt").write_text("[console_scripts]\nmy-pkg = my_pkg:main\n[other]\nx = y\n")
-    env = {**os.environ, "PYTHONPATH": str(site)}
 
     def run(*args: str) -> check_install.Installed | None:
-        command = [sys.executable, "-c", check_install.PROBE, *args]
-        out = subprocess.run(command, env=env, capture_output=True, text=True, check=True).stdout
+        command = [str(python), "-I", "-c", check_install.PROBE, *args]
+        out = subprocess.run(command, capture_output=True, text=True, check=True).stdout
         return check_install.read_probe("my-pkg", "here", out)[0]
 
-    commands = ("my-pkg", "my-script", "win-script")
-    assert run("my-pkg") == check_install.Installed("1.2.0", COMMIT, False, commands)
-    assert run("my-pkg", "my_pkg/build_info.json") == check_install.Installed("1.2.0", COMMIT, False, commands)
+    installed = check_install.Installed("1.2.0", COMMIT, False, ("my-pkg", "my-script"))
+    assert run("my-pkg") == installed
+    assert run("my-pkg", "my_pkg/build_info.json") == installed
     assert run("my-pkg", "my_pkg/other.json") is None
 
 

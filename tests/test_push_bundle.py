@@ -26,8 +26,13 @@ class DeniedPathsTests(TestCase):
         self.assertEqual(denied, [".github/workflows/ci.yml"])
 
     def test_the_root_covers_every_path(self) -> None:
-        for root in (".", "/", "", "./"):
+        for root in (".", "/", "./"):
             self.assertEqual(denied_paths(["a", "b/c"], ["b"], [root]), ["a"], root)
+
+    def test_refuses_an_empty_rule(self) -> None:
+        for allow, deny in (([""], []), ([], [""])):
+            with self.assertRaises(push_bundle.Refused):
+                denied_paths(["a"], allow, deny)
 
     def test_paths_are_normalized(self) -> None:
         self.assertEqual(denied_paths(["src/a", "b"], [], ["./src/"]), ["src/a"])

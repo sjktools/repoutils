@@ -82,6 +82,9 @@ def _under(path: str, prefixes: Sequence[str]) -> bool:
 
 
 def _normalize(path: str) -> str:
+    # An empty rule is most likely an unset variable, so it means nothing.
+    if not path:
+        raise Refused("a path rule is empty; give . for the whole repository")
     path = posixpath.normpath(path.strip("/") or ".")
     return "" if path == "." else path
 

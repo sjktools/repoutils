@@ -41,7 +41,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `check-pins` | Fails unless every `setup-uv` and `setup-just` workflow step pins the versions required by `pyproject.toml` and the justfile, and the actions that the project uses from the repository of a locked package that is installed come from the commit of that package, or only from the tag of its version if the package does not record its commit (see [Checking actions against a locked package](#checking-actions-against-a-locked-package)). |
 | `check-checkout-credentials` | Fails on any `actions/checkout` step that does not set `persist-credentials`. |
 | `autofix` | Starts the PR Fixes workflow on a pull request, waits for the workflow that pushes its fixes, and prints the new head commit of the branch. |
-| `push-bundle` | Fetches the head of a Git bundle, checks that it adds commits to a start commit and that it changes only the paths you allow, and pushes it to a branch with a lease on the start commit (see [Pushing a Git bundle](#pushing-a-git-bundle)). |
+| `push-bundle` | Fetches the head of a Git bundle, checks that it adds commits to a start commit and, optionally, that it changes only the paths you allow, and pushes it to a branch with a lease on the start commit (see [Pushing a Git bundle](#pushing-a-git-bundle)). |
 | `claude-route` | Reads a comment from standard input and prints `review`, `other` or `none` to route between the Claude workflows. |
 | `requirements-min-versions` | Checks or updates the `>=` minimum versions in `pyproject.toml` to match the versions in `uv.lock`. |
 | `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
@@ -77,6 +77,7 @@ These commands require a GitHub token:
 - `downstream bump --pr`
 
 These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when `$GITHUB_TOKEN` is not set.
+`push-bundle` also needs a token, and reads it from `$GITHUB_TOKEN` only.
 `wait-for-base-coverage` sends `$GITHUB_TOKEN` when it is set, and does not run `gh auth token`.
 Of the `secrets` and `variables` subcommands, only `check`, `dump`, `secrets inspect-remote` and `secrets export-remote` use the token.
 `dependabot-uv bump --version <version>` uses the token only with `--pr`.
@@ -393,6 +394,7 @@ The command reads the token from `$GITHUB_TOKEN`, and gives it to Git in an HTTP
 It pushes with `--force-with-lease` on `--start`, so the push fails if the branch moved.
 It runs no Git hooks.
 Push with a token other than a `GITHUB_TOKEN` if the push must start workflow runs.
+The token needs the Contents `write` permission, and also the Workflows `write` permission if the bundle changes a file in `.github/workflows`, such as `actions.lock`.
 
 ## Configuration
 

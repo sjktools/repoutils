@@ -25,6 +25,7 @@ the branch has moved, and with no hooks.
 import argparse
 import base64
 import os
+import posixpath
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -43,7 +44,13 @@ class Refused(Exception):
 def _run_git(*args: str, env: dict[str, str] | None = None, ok: tuple[int, ...] = (0,)) -> tuple[int, str]:
     """Git's exit code, which must be one of `ok`, and its output."""
     result = subprocess.run(
-        ["git", *args], env=git_env() if env is None else env, stdout=subprocess.PIPE, text=True, check=False
+        ["git", *args],
+        env=git_env() if env is None else env,
+        stdout=subprocess.PIPE,
+        text=True,
+        # A path needn't be UTF-8; this keeps its bytes, which the path rules compare.
+        errors="surrogateescape",
+        check=False,
     )
     if result.returncode not in ok:
         raise Refused(f"`git {' '.join(args)}` exited with code {result.returncode}")
@@ -70,13 +77,19 @@ def _is_ancestor(ancestor: str, commit: str) -> bool:
 
 
 def _under(path: str, prefixes: Sequence[str]) -> bool:
-    return any(path == prefix or path.startswith(prefix + "/") for prefix in prefixes)
+    # A prefix of "" (from "." or "/") is the whole repository.
+    return any(not prefix or path == prefix or path.startswith(prefix + "/") for prefix in prefixes)
+
+
+def _normalize(path: str) -> str:
+    path = posixpath.normpath(path.strip("/") or ".")
+    return "" if path == "." else path
 
 
 def denied_paths(changed: Sequence[str], allow_paths: Sequence[str], deny_paths: Sequence[str]) -> list[str]:
     """The paths in `changed` that the --allow-path and --deny-path rules refuse."""
-    allow = [path.strip("/") for path in allow_paths]
-    deny = [path.strip("/") for path in deny_paths]
+    allow = [_normalize(path) for path in allow_paths]
+    deny = [_normalize(path) for path in deny_paths]
     if not deny and not allow:
         return []
     return [path for path in changed if (not deny or _under(path, deny)) and not _under(path, allow)]

@@ -605,7 +605,9 @@ jobs:
   # the PR head, and push-bundle fetches the bundled commit onto it, checks it
   # and pushes it. dependabot-fix ran the bumped dependency's build code, so
   # push-bundle takes only what it is meant to change: one commit on the PR
-  # head, touching nothing but pyproject.toml and uv.lock.
+  # head, touching nothing but pyproject.toml and uv.lock. The push-bundle
+  # action comes from the same commit as this workflow, like the bash it
+  # replaces, so it trusts the branch no more than the workflow did.
   dependabot-push:
     needs: dependabot-fix
     if: needs.dependabot-fix.outputs.head

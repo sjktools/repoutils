@@ -164,8 +164,8 @@ The commenter's author association must be `OWNER` or `MEMBER`, so outside colla
 `/testpypi` publishes a dev build of the PR's branch to TestPyPI only.
 `/autofix` runs `just fix` on the PR's branch and pushes the result (with the `AUTOFIX_TOKEN` secret).
 It dispatches `fix.yml` on the PR's branch, which runs `just fix` with no secrets and uploads its commits as a Git bundle.
-Then `fix-push.yml`, which always runs from `main`, checks the bundle and pushes it.
-The bundle may hold only a clean merge of the PR's base and one commit, which changes nothing in `.github/workflows` but `actions.lock`.
+Then `fix-push.yml` checks that the bundle only adds commits to the branch, and pushes them from `main`, where it always runs.
+The bundle may hold only a clean merge of the PR's base and one commit that changes nothing in `.github/workflows` but `actions.lock`.
 `autofix-comment.yml` waits for the fix run and dispatches `fix-push.yml` itself, as a run dispatched with a `GITHUB_TOKEN` starts no `workflow_run` workflow.
 A `workflow_run` trigger covers a fix run that a person starts by hand.
 `autofix-comment.yml` passes the PR's number to `fix.yml`, which puts it in the run's name, as GitHub's API gives a run's name but not its inputs, and `fix-push.yml` reads it from there.

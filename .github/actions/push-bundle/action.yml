@@ -99,7 +99,11 @@ runs:
       run: |
         args=()
         [ -n "$EXPECTED_HEAD" ] && args+=(--expected-head "$EXPECTED_HEAD")
-        [ "$SINGLE_COMMIT" = true ] && args+=(--single-commit)
+        case "$SINGLE_COMMIT" in
+          true) args+=(--single-commit) ;;
+          false) ;;
+          *) echo "::error::single-commit must be true or false, not $SINGLE_COMMIT."; exit 1 ;;
+        esac
         [ -n "$CLEAN_MERGE_OF" ] && args+=(--clean-merge-of "$CLEAN_MERGE_OF")
         while IFS= read -r path; do
           [ -n "$path" ] && args+=(--allow-path "$path")

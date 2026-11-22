@@ -25,6 +25,13 @@ class DeniedPathsTests(TestCase):
         denied = denied_paths(changed, [".github/workflows/actions.lock"], [".github/workflows/"])
         self.assertEqual(denied, [".github/workflows/ci.yml"])
 
+    def test_the_root_covers_every_path(self) -> None:
+        for root in (".", "/", "", "./"):
+            self.assertEqual(denied_paths(["a", "b/c"], ["b"], [root]), ["a"], root)
+
+    def test_paths_are_normalized(self) -> None:
+        self.assertEqual(denied_paths(["src/a", "b"], [], ["./src/"]), ["src/a"])
+
     def test_a_directory_covers_only_paths_under_it(self) -> None:
         self.assertEqual(denied_paths(["src", "src/a", "srcs/a"], [], ["src"]), ["src", "src/a"])
 
@@ -180,6 +187,13 @@ class PushBundleTests(TestCase):
             self.assertEqual(self.push(allow_paths=["pyproject.toml", "uv.lock"]), 1)
         self.assertIn("src/a.py", "".join(c.args[0] for c in stderr.write.call_args_list))
         self.assertEqual(self.branch_head(), self.start)
+
+    def test_a_path_that_isnt_utf_8(self) -> None:
+        (self.maker / os.fsdecode(b"caf\xe9.txt")).write_text("x\n")
+        self.commit_and_bundle()
+        with mock.patch("sys.stderr") as stderr:
+            self.assertEqual(self.push(allow_paths=["a.txt"]), 1)
+        self.assertIn(os.fsdecode(b"caf\xe9.txt"), "".join(c.args[0] for c in stderr.write.call_args_list))
 
     def test_a_file_moved_out_of_a_denied_path_is_denied(self) -> None:
         self.git(self.maker, "mv", "a.txt", "b.txt")

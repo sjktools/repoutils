@@ -119,8 +119,10 @@ def find(repo: str, token: str, package: str, version: str, marker: str) -> down
     bump that had nothing to do, or a merged pull request, leaves none.
     Raises RuntimeError if a dev version has no such test pull request,
     which a test run always opens."""
+    key = downstream_pins.release_key(version)
+    # As bump does, so that 0.4 finds the pull request of 0.4.0.
     for bump in downstream_prs.open_bumps(repo, token, package, version, marker):
-        if bump.version == version:
+        if downstream_pins.release_key(bump.version) == key:
             return bump
     if not downstream_pins.is_dev(version):
         return None

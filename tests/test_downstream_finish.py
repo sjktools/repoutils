@@ -400,6 +400,12 @@ def test_leaves_a_releases_pull_request_open_if_its_checks_pass(
     )
 
 
+def test_finds_a_releases_pull_request_by_its_release(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeGitHub(monkeypatch, [PASSED], pulls=[pull(5, "downstream/pkg-0.4", RELEASE_MARKER)])
+    assert finish_release() == 0
+    assert fake.reads["pull"] > 0
+
+
 def test_reruns_a_releases_failed_jobs(
     upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

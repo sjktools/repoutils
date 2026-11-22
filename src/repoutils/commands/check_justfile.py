@@ -13,10 +13,16 @@ always come from the current directory's ``pyproject.toml``, even with
 - if ``fix`` reaches a recipe that fixes something, such as ``fmt``,
   ``check`` reaches the recipe that checks it, such as ``fmt-check``.
 - a ``repoutils`` variable exists, whatever its value.
+- an ``eager`` assignment runs ``repoutils git-config-setup`` with ``shell()``,
+  so every recipe run sets up the repository's local Git config.
+- ``.git-blame-ignore-revs`` exists next to the justfile, as
+  ``git-config-setup`` points ``git blame`` at it and the
+  ``blame-ignore-revs-check`` recipe checks it.
 
 It never compares a recipe's body or doc comment with the standard one, as a
 project may have a reason to change them. For each missing recipe, it prints
-the standard text, ready to paste.
+the standard text, ready to paste, and the same for a missing eager
+assignment.
 
 Which recipes are standard depends on the features in ``[tool.repoutils]
 features``: ``pypi-publication`` adds ``build``, ``check-attestations``,
@@ -24,6 +30,9 @@ features``: ``pypi-publication`` adds ``build``, ``check-attestations``,
 ``smoke``).
 ``[tool.repoutils.justfile]`` lists the standard recipes (``omit``) and
 dependencies (``omit-dependencies``) the project leaves out on purpose.
+Omitting ``blame-ignore-revs-check`` also skips the checks of the eager
+assignment and of ``.git-blame-ignore-revs``, as ``git-config-setup`` only
+points ``git blame`` at that file.
 
 With ``--exit-zero``, it reports what breaks the standard but exits 0. It
 still exits 1 if it can't run ``just`` or read its output, or if a setting is
@@ -32,6 +41,7 @@ bad.
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -40,7 +50,16 @@ from typing import Any
 
 from repoutils import config
 from repoutils.docstrings import summary
-from repoutils.justfile_standard import BASE, BY_NAME, FIX_CHECK_PAIRS, RECIPES, VARIABLE, Recipe
+from repoutils.justfile_standard import (
+    BASE,
+    BY_NAME,
+    FIX_CHECK_PAIRS,
+    IGNORE_REVS,
+    RECIPES,
+    SETUP,
+    VARIABLE,
+    Recipe,
+)
 
 WHERE = "[tool.repoutils.justfile]"
 
@@ -50,12 +69,16 @@ class Justfile:
     """What the command reads from ``just --dump``: each recipe's dependencies, the aliases and the variables.
 
     A module's recipes are under their path, such as ``tools::list``, with
-    their dependencies given by path too.
+    their dependencies given by path too. eager is the value of each
+    ``eager`` assignment, as an expression in the dump's JSON, and path is
+    the justfile's own path.
     """
 
     recipes: dict[str, tuple[str, ...]]
     aliases: dict[str, str]
     variables: frozenset[str]
+    eager: tuple[Any, ...] = ()
+    path: Path = Path("justfile")
 
     def resolve(self, name: str) -> frozenset[str]:
         """The recipes that name may be, as a recipe or an alias, which is none if it's neither.
@@ -94,6 +117,37 @@ class Justfile:
         """Whether running name runs dependency, as name itself (if name is an alias) or before or after it."""
         runs = self._resolve(name, definite) | self.reached(name, definite)
         return bool(self._resolve(dependency, definite) & runs)
+
+
+# The rest of a string that follows the repoutils variable to run git-config-setup,
+# and a string that runs it all by itself.
+_SETUP_ARGS_RE = re.compile(r"\s+git-config-setup(\s|$)")
+_SETUP_COMMAND_RE = re.compile(r"\brepoutils\s+git-config-setup(\s|$)")
+
+
+def _parts(expression: Any) -> list[Any]:
+    """The expressions that expression concatenates, in order, or just expression if it's no concatenation."""
+    if isinstance(expression, list) and len(expression) == 3 and expression[0] == "concatenate":
+        return [*_parts(expression[1]), *_parts(expression[2])]
+    return [expression]
+
+
+def runs_setup(value: Any) -> bool:
+    """Whether an assignment's value, as the dump gives it, runs ``repoutils git-config-setup`` with ``shell()``.
+
+    It matches loosely: the command may be the ``repoutils`` variable followed
+    by a string that starts with `` git-config-setup``, or a string of its own,
+    such as ``'uv run repoutils git-config-setup'``, and options may follow.
+    """
+    if not (isinstance(value, list) and len(value) >= 3 and value[:2] == ["call", "shell"]):
+        return False
+    parts = _parts(value[2])
+    if any(isinstance(part, str) and _SETUP_COMMAND_RE.search(part) for part in parts):
+        return True
+    return any(
+        first == ["variable", VARIABLE] and isinstance(second, str) and _SETUP_ARGS_RE.match(second)
+        for first, second in zip(parts, parts[1:], strict=False)
+    )
 
 
 def _table(dump: dict[str, Any], key: str, default: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -138,7 +192,16 @@ def parse_dump(text: str) -> Justfile:
         if not isinstance(target, str):
             raise ValueError(f"alias {name!r} has no target")
         aliases[name] = target
-    return Justfile(recipes, aliases, frozenset(_table(dump, "assignments")))
+    assignments = _table(dump, "assignments")
+    eager = tuple(
+        assignment.get("value")
+        for assignment in assignments.values()
+        if isinstance(assignment, dict) and assignment.get("eager") is True
+    )
+    source = dump.get("source")
+    if not isinstance(source, str):
+        raise ValueError("'source' isn't a string")
+    return Justfile(recipes, aliases, frozenset(assignments), eager, Path(source))
 
 
 def read_justfile(just: str, path: str | None = None) -> Justfile:
@@ -254,6 +317,25 @@ def problems(justfile: Justfile, settings: Settings) -> tuple[list[str], list[Re
     return found, missing
 
 
+def setup_problems(justfile: Justfile, settings: Settings) -> tuple[list[str], bool]:
+    """What in the justfile's Git setup breaks the standard, and whether it lacks the eager assignment.
+
+    Both checks are skipped if the project omits ``blame-ignore-revs-check``.
+    """
+    if "blame-ignore-revs-check" in settings.omit:
+        return [], False
+    found: list[str] = []
+    no_setup = not any(runs_setup(value) for value in justfile.eager)
+    if no_setup:
+        found.append(f"There's no `eager` assignment that runs `{VARIABLE} git-config-setup`.")
+    if not (justfile.path.parent / IGNORE_REVS).is_file():
+        found.append(
+            f"There's no `{IGNORE_REVS}` next to the justfile: create an empty one,"
+            " which `check-blame-ignore-revs` accepts."
+        )
+    return found, no_setup
+
+
 def main(just: str = "just", exit_zero: bool = False, justfile_path: str | None = None) -> int:
     settings = Settings.from_config()
     try:
@@ -262,8 +344,10 @@ def main(just: str = "just", exit_zero: bool = False, justfile_path: str | None 
         print(f"repoutils check-justfile: {error}", file=sys.stderr)
         return 1
     found, missing = problems(justfile, settings)
+    more, no_setup = setup_problems(justfile, settings)
+    found += more
     if not found:
-        print("The justfile has the standard recipes and dependencies.")
+        print("The justfile has the standard recipes, dependencies and Git setup.")
         return 0
     print("The justfile breaks the standard:")
     for problem in found:
@@ -272,6 +356,8 @@ def main(just: str = "just", exit_zero: bool = False, justfile_path: str | None 
         print("\nThe standard text of the missing recipes, to paste into the justfile:")
         for recipe in missing:
             print(f"\n{settings.text(recipe)}", end="")
+    if no_setup:
+        print(f"\nThe standard eager assignment, to paste into the justfile:\n\n{SETUP}", end="")
     print(
         f"\nList a standard recipe the project leaves out on purpose in {WHERE} omit,"
         " and a standard dependency in omit-dependencies."

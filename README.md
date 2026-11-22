@@ -780,21 +780,47 @@ The command fails in these cases:
 - `fix` runs a recipe that fixes something, but `check` does not run the recipe that checks the same thing.
   The pairs are `fmt` and `fmt-check`, `just-fmt` and `just-fmt-check`, `lint-fix` and `lint`, `actions-lock` and `actions-lock-check`, and `requirements-fix` and `requirements-check`.
 - The justfile has no `repoutils` variable.
+- No `eager` assignment in the justfile runs `repoutils git-config-setup` with `shell()`.
+- The directory of the justfile has no `.git-blame-ignore-revs` file.
+  Create an empty one, which `repoutils check-blame-ignore-revs` accepts.
 
 The command does not compare the body or the doc comment of a recipe with the standard recipe, because a project can have a reason to change them.
 It does not check the value of the `repoutils` variable either, because projects run `repoutils` in different ways.
 For each missing recipe, the command prints the standard text of the recipe, with the `default-branch` of the project, so that you can paste it into the justfile.
+The command also prints the standard `eager` assignment when the justfile has none that runs `repoutils git-config-setup`.
+The command matches that assignment loosely, because projects run `repoutils` in different ways.
+The command accepts the `repoutils` variable followed by a string that starts with ` git-config-setup`, or a single string that runs `repoutils git-config-setup`.
+The command accepts an assignment of any name, though the standard name is `_`.
 
 The `pypi-publication` feature in the `features` setting of `[tool.repoutils]` adds the standard recipes `build`, `check-attestations`, `smoke` and `check-release`, and makes `ci` depend on `build` and `smoke`.
 
 An unknown feature name is an error, so a typo does not turn a feature off.
 List a standard recipe that the project leaves out on purpose in `omit`, and a standard dependency that it leaves out in `omit-dependencies`.
 An omitted recipe or dependency does not excuse a missing pair, so if `fix` runs `fmt`, `check` must run `fmt-check`, even when `fmt-check` is in `omit`.
+When `omit` lists `blame-ignore-revs-check`, the command does not check the `eager` assignment or `.git-blame-ignore-revs`, because `git-config-setup` only sets up `git blame` to read that file.
 Pass `--exit-zero` to print the same output and exit with code `0`.
 The command exits with code `1` even with `--exit-zero` when it cannot run `just` or read the output of `just`, or when a setting is not valid.
 
 A new release of `repoutils` can add a standard recipe.
 The `just check` of a project then fails until you add the recipe, or list it in `omit`.
+
+The standard `blame-ignore-revs-check` recipe, which `check` runs, needs the full Git history to check that each commit is an ancestor of the target.
+Its target is the `BLAME_IGNORE_REVS_TARGET` environment variable, or `HEAD` when that variable is not set, because `check` cannot pass the recipe an argument.
+On a pull request, set the target to the base branch, because a commit from the pull request is not on the base branch after a squash merge.
+The CI job that runs `just check` needs these settings:
+
+```yaml
+      - uses: actions/checkout@...
+        with:
+          persist-credentials: false
+          # Full history, for `just check`'s blame-ignore-revs-check.
+          fetch-depth: 0
+      ...
+      - name: Run checks
+        env:
+          BLAME_IGNORE_REVS_TARGET: ${{ github.base_ref && format('origin/{0}', github.base_ref) || 'HEAD' }}
+        run: just check
+```
 
 ### Added strings
 

@@ -57,9 +57,11 @@ class PushBundleTests(TestCase):
         self.git(self.root, "clone", "-q", str(self.remote), str(self.checkout))
         os.chdir(self.checkout)
 
-    def git(self, directory: Path, *args: str, check: bool = True) -> str:
+    def git(self, directory: Path, *args: str, check: bool = True, input: str | None = None) -> str:
         git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", *args]
-        result = subprocess.run(git, cwd=directory, check=check, capture_output=True, text=True, env=git_env())
+        result = subprocess.run(
+            git, cwd=directory, input=input, check=check, capture_output=True, text=True, env=git_env()
+        )
         return result.stdout.strip()
 
     def write(self, path: str, content: str) -> None:
@@ -189,8 +191,12 @@ class PushBundleTests(TestCase):
         self.assertEqual(self.branch_head(), self.start)
 
     def test_a_path_that_isnt_utf_8(self) -> None:
-        (self.maker / os.fsdecode(b"caf\xe9.txt")).write_text("x\n")
-        self.commit_and_bundle()
+        # Into the index only, as macOS refuses such a file name.
+        blob = self.git(self.maker, "hash-object", "-w", "--stdin", input="x\n")
+        info = f"100644 {blob}\t".encode() + b"caf\xe9.txt\n"
+        subprocess.run(["git", "update-index", "--index-info"], cwd=self.maker, input=info, check=True, env=git_env())
+        self.git(self.maker, "commit", "-qm", "not UTF-8")
+        self.make_bundle()
         with mock.patch("sys.stderr") as stderr:
             self.assertEqual(self.push(allow_paths=["a.txt"]), 1)
         self.assertIn(os.fsdecode(b"caf\xe9.txt"), "".join(c.args[0] for c in stderr.write.call_args_list))

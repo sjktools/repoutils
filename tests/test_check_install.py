@@ -377,3 +377,9 @@ def test_probe_reads_an_installed_distribution(tmp_path: Path) -> None:
     assert run("my-pkg") == check_install.Installed("1.2.0", COMMIT, False)
     assert run("my-pkg", "my_pkg/build_info.json") == check_install.Installed("1.2.0", COMMIT, False)
     assert run("my-pkg", "my_pkg/other.json") is None
+
+
+def test_stale_wheel_of_another_version_is_not_taken(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (project / "dist" / WHEEL).unlink()
+    assert check_install.main(Path("dist"), runner=FakeRunner()) == 1
+    assert "expected one wheel matching dist/my_pkg-1.2.0-*.whl, found none" in capsys.readouterr().err

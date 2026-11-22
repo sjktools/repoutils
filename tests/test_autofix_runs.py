@@ -9,13 +9,14 @@ API = github.API_URL
 REPO = f"{API}/repos/o/r"
 RUN = f"{REPO}/actions/runs/7"
 FIX_WORKFLOW = f"{REPO}/actions/workflows/fix.yml"
-PUSH_RUNS = f"{REPO}/actions/workflows/fix-push.yml/runs?per_page=100&page=1"
+PUSH_RUNS = f"{REPO}/actions/workflows/fix-push.yml/runs?per_page=100&created=%3E%3D2026-11-22T06%3A00%3A00Z&page=1"
 ARTIFACTS = f"{RUN}/artifacts?per_page=100&page=1"
 OPEN_PRS = f"{REPO}/pulls?state=open&head=o%3Afeature&per_page=100&page=1"
 
 
 def _run(**overrides: Any) -> dict[str, Any]:
     run: dict[str, Any] = {
+        "id": 7,
         "workflow_id": 11,
         "repository": {"id": 1, "full_name": "o/r"},
         "head_repository": {"id": 1, "full_name": "o/r"},
@@ -26,6 +27,7 @@ def _run(**overrides: Any) -> dict[str, Any]:
         "html_url": "https://github.com/o/r/actions/runs/7",
         "head_branch": "feature",
         "display_title": "PR Fixes #5",
+        "created_at": "2026-11-22T06:00:00Z",
     }
     run.update(overrides)
     return run

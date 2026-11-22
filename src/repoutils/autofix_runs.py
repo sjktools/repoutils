@@ -112,9 +112,11 @@ def _check_branch_name(branch: str) -> None:
         raise ValueError(f"{branch} isn't a valid branch name.")
 
 
-def _already_pushed(repo: str, push_workflow: str, fix_run_id: int, this_run: str | None, token: str) -> int | None:
-    """Another push run for fix_run_id whose push job succeeded, if there is one."""
-    for run in push_runs(repo, push_workflow, fix_run_id, token):
+def _already_pushed(
+    repo: str, push_workflow: str, fix_run: dict[str, Any], this_run: str | None, token: str
+) -> int | None:
+    """Another push run for fix_run whose push job succeeded, if there is one."""
+    for run in push_runs(repo, push_workflow, int(fix_run["id"]), token, fix_run.get("created_at")):
         if str(run["id"]) == this_run:
             continue
         jobs = github.request(
@@ -193,7 +195,7 @@ def resolve(
     if head_sha != start_sha:
         # Another push run for this fix run may have pushed its fixes already.
         # That's not a failure, and the other run reports it.
-        other = _already_pushed(repo, push_workflow, run_id, this_run, token)
+        other = _already_pushed(repo, push_workflow, run, this_run, token)
         if other is None:
             raise ValueError(
                 f"Branch {branch} is at {head_sha}, not {start_sha}, where PR Fixes started; "

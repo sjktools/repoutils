@@ -349,7 +349,7 @@ The two workflows check the fix run and its pull request with two subcommands, w
 
 - `repoutils autofix check-branch` is the first step of `fix.yml`.
   It fails unless the run is on a branch other than the default branch, at `--head-sha` if given.
-  It then finds the pull request, and prints its base branch as `base_branch`.
+  It then finds the pull request, with `--pr-number` if given, and prints its base branch as `base_branch`.
 - `repoutils autofix resolve --run-id <run ID>` is the `resolve` job of `fix-push.yml`.
   It fails unless the run is a finished `workflow_dispatch` run of `fix.yml` on a branch of the repository other than the default branch.
   It finds the pull request, even if the run failed, so that the `report` job can comment on it.
@@ -364,7 +364,7 @@ Without a number, the branch must have exactly one open pull request from the sa
 
 A project that uses these actions must keep these names:
 
-- The workflow files are `fix.yml` and `fix-push.yml`.
+- The workflow files are `fix.yml` and `fix-push.yml`, and their workflow names are `PR Fixes` and `PR Fixes Push`.
 - The run name of `fix.yml` is `PR Fixes #<number>`, or `PR Fixes` without a number.
 - The run name of `fix-push.yml` is `PR Fixes Push for run <fix run ID>`, and its job that pushes the fixes is `push`.
 - The artifact that holds the bundle is `fixes`.

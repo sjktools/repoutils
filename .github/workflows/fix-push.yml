@@ -235,9 +235,9 @@ jobs:
   # them. fix.yml merges the base branch and then commits what `just fix`
   # changed, so the bundle may hold only a clean merge of the base and one
   # commit, and that commit may change nothing in .github/workflows but
-  # actions.lock. AUTOFIX_TOKEN needs Contents write, and Workflows write if
-  # GitHub requires it for actions.lock: it has pushed an actions.lock change
-  # before, so it has whatever that needs.
+  # actions.lock. AUTOFIX_TOKEN has Contents write, and Workflows write for
+  # actions.lock, so this check is what keeps a bundle from changing the
+  # workflows themselves.
   push:
     needs: resolve
     if: needs.resolve.outputs.fixes == 'true'

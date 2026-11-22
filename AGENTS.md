@@ -174,6 +174,8 @@ If either run fails, or either can't start, the PR gets one comment saying so, w
 The fix runs on the branch rather than on `main` because code in a run can write to the Actions cache of the run's branch.
 On `main`, that would reach the jobs that publish, tag or bump a release, which use no cache either, as a second line of defence.
 `AUTOFIX_TOKEN` lives in the `autofix` environment, which only `main` can deploy to, as with `release`.
+It needs Workflows write as well as Contents write, as a fix may change `actions.lock`.
+So only `fix-push.yml`'s path rule keeps a bundle from changing the workflows themselves.
 `repoutils autofix <PR>` starts a fix run as the comment does, for a client that can't post the comment, such as Claude Code on the web, whose comments get a footer.
 It finds the push run that GitHub starts by `fix-push.yml`'s run name, which names the fix run, so keep the command and the workflow in step.
 If the fix run was started by `github-actions[bot]`, or no push run appears within two minutes, the command starts `fix-push.yml` on `main` itself.

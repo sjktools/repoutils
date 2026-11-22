@@ -18,6 +18,14 @@ description: >-
 # doesn't, and hides the earlier ones as outdated. A fix run started with a
 # GITHUB_TOKEN starts no workflow_run workflow, so `repoutils autofix` starts
 # fix-push.yml itself.
+#
+# With relock true, if GitHub refuses to start PR Fixes because actions.lock
+# doesn't list every action fix.yml uses, it reports nothing and sets the relock
+# output. A later job then runs the autofix-relock action, and a job after that
+# runs this action again with relocked-run, which has fix-push.yml push the
+# relock's commit before starting PR Fixes again. The workflow must then be
+# autofix-comment.yml, with the run-name "Comment on #<number>", and the job
+# that runs autofix-relock named relock.
 inputs:
   pr:
     description: The pull request's number.
@@ -32,6 +40,25 @@ inputs:
     description: Minutes to wait for the fixes to be pushed.
     required: false
     default: "40"
+  relock:
+    description: >-
+      Set to true to set the relock output, and report nothing, if GitHub
+      refuses to start PR Fixes because actions.lock is incomplete.
+    required: false
+    default: "false"
+  relocked-run:
+    description: >-
+      The ID of this workflow's run, whose relock job relocked actions.lock
+      after the relock output was set: push the relock's commit first.
+    required: false
+    default: ""
+outputs:
+  relock:
+    description: true if a later job should relock actions.lock (with relock true only).
+    value: ${{ steps.autofix.outputs.relock }}
+  head-sha:
+    description: The commit to relock, when relock is true.
+    value: ${{ steps.autofix.outputs.head_sha }}
 
 runs:
   using: composite
@@ -57,11 +84,24 @@ runs:
         PR: ${{ inputs.pr }}
         COMMENT_ID: ${{ inputs.comment-id }}
         TIMEOUT: ${{ inputs.timeout }}
+        RELOCK: ${{ inputs.relock }}
+        RELOCKED_RUN: ${{ inputs.relocked-run }}
         PYTHONPATH: ${{ github.action_path }}/../../../src
         PYTHONSAFEPATH: "1"
       run: |
+        if [ "$RELOCK" != true ] && [ "$RELOCK" != false ]; then
+          echo "::error::relock must be true or false, not $RELOCK."
+          exit 1
+        fi
+        args=()
+        # A relocked run never relocks again.
+        if [ -n "$RELOCKED_RUN" ]; then
+          args+=(--relocked "$RELOCKED_RUN")
+        elif [ "$RELOCK" = true ]; then
+          args+=(--relock "$GITHUB_OUTPUT")
+        fi
         python3 -m repoutils autofix "$PR" --comment-id "$COMMENT_ID" --timeout "$TIMEOUT" \
-          --report "$RUNNER_TEMP/autofix-report.md"
+          --report "$RUNNER_TEMP/autofix-report.md" "${args[@]}"
 
     # `repoutils autofix` writes the report only if PR Fixes Push didn't
     # comment on the pull request itself. If GitHub refused to start a run,

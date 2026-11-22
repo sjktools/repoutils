@@ -92,21 +92,9 @@ check-release version index="https://pypi.org/simple/":
     {{ repoutils }} check-install --version "$1" --index "$2" --version-line
 
 # Lint with ruff, failing on any warning too, as ruff only warns about such
-# things as an invalid noqa directive. --no-cache, as ruff gives those only for
-# files it reparses. uv's --quiet keeps uv's own warnings out of the check.
+# things as an invalid noqa directive (see `repoutils ruff-check --help`)
 lint:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    stderr="$(mktemp)"
-    trap 'rm -f "$stderr"' EXIT
-    status=0
-    uv run --quiet --group dev ruff check --no-cache . 2>"$stderr" || status=$?
-    cat "$stderr" >&2
-    if grep -q '^warning:' "$stderr"; then
-        echo 'ruff gave a warning (see above)' >&2
-        exit 1
-    fi
-    exit "$status"
+    uv run --group dev repoutils ruff-check .
 
 # Lint with ruff, applying its autofixes
 lint-fix:

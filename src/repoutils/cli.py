@@ -35,6 +35,7 @@ GROUPS: dict[str, list[Command]] = {
         Command("check-screenshots-dir", "check_screenshots_dir", "Check only .gitignore is tracked in screenshots/"),
         Command("git-config-setup", "git_config_setup", "Set the repo's local Git config (blame.ignoreRevsFile)"),
         Command("long-files", "long_files", "List files over the line limit, or post that to a PR"),
+        Command("ruff-check", "ruff_check", "Run ruff check without its cache, failing on any warning it gives"),
     ],
     "GitHub Actions workflows": [
         Command("check-pins", "check_pins", "Check workflows pin the project's uv, just and locked packages' actions"),

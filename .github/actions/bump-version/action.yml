@@ -21,7 +21,7 @@ inputs:
       check.
     required: true
   auto-merge:
-    description: Turn on auto-merge for the pull request, with this merge method, merge, squash or rebase (default, none).
+    description: Turn on auto-merge for the pull request with this merge method, merge, squash or rebase. Empty (the default) leaves auto-merge off.
     required: false
     default: ""
 

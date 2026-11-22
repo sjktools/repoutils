@@ -503,7 +503,7 @@ It installs nothing, so no cache runs alongside the token.
 - With `--pr`, it fails, and changes nothing, unless the checkout is on the default branch of the repository.
 - It commits the change to a new branch, `release-version-<version>`, pushes the branch, and opens a pull request into the default branch.
   If a pull request from that branch is already open, it changes nothing.
-- With `--auto-merge <method>`, or the `auto-merge` input of the action, it then turns on auto-merge for the pull request, with that merge method.
+- When it opens a pull request, `--auto-merge <method>`, or the `auto-merge` input of the action, turns on auto-merge with that merge method.
 
 A pull request that a `GITHUB_TOKEN` opens starts no workflow run, so the token is another token, with the Contents `write` and Pull requests `write` permissions.
 Keep it in an environment that only the default branch can deploy to.

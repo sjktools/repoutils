@@ -154,8 +154,8 @@ Both push jobs use the `push-bundle` action, which checks the bundle and pushes 
 Releases are cut from `main`.
 The Bump Version workflow, run from `main`, opens a PR bumping `version` in `pyproject.toml` (with the `GH_ACTIONS_TOKEN` secret).
 Once it merges, the `release` job in `ci.yml` runs `repoutils release-tag` through the `release-tag` action.
-It pushes the tag `v<version>` over SSH with the `RELEASE_DEPLOY_KEY` deploy key, which triggers the Publish workflow.
-It then creates the GitHub release with the job's own `GITHUB_TOKEN`.
+`repoutils release-tag push` pushes the tag `v<version>` over SSH with the `RELEASE_DEPLOY_KEY` deploy key, which triggers the Publish workflow.
+`repoutils release-tag release` then creates the GitHub release with the job's own `GITHUB_TOKEN`.
 `publish-pypi.yml` builds once, publishes to TestPyPI and checks the release installs from there.
 Only then, once a maintainer approves the `pypi` environment deployment, does it publish the same files to PyPI, and check they install from PyPI.
 It publishes with PEP 740 attestations, through trusted publishing (no API token).

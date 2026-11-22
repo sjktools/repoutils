@@ -83,12 +83,14 @@ def _start_agent(env: dict[str, str]) -> dict[str, str]:
 
 
 def ssh_command(known_hosts: Path) -> str:
-    """The GIT_SSH_COMMAND that trusts only the Ed25519 host key in known_hosts."""
+    """The GIT_SSH_COMMAND that trusts only the Ed25519 host key in known_hosts, and none in the system's file."""
     return shlex.join(
         [
             "ssh",
             "-o",
             f"UserKnownHostsFile={known_hosts}",
+            "-o",
+            "GlobalKnownHostsFile=/dev/null",
             "-o",
             "StrictHostKeyChecking=yes",
             "-o",

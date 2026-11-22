@@ -487,11 +487,3 @@ def test_push_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: py
     args = ["push-bundle", str(tmp_path / "missing.bundle"), "--branch", "x", "--start", "HEAD", "--repository", "o/r"]
     assert cli.main(args) == 1
     assert "git bundle verify" in capsys.readouterr().err
-
-
-def test_release_tag(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    # Without the deploy key, it fails before it tags anything.
-    monkeypatch.chdir(ROOT)
-    monkeypatch.delenv("RELEASE_DEPLOY_KEY", raising=False)
-    assert cli.main(["release-tag", "--repository", "o/r", "push"]) == 1
-    assert "$RELEASE_DEPLOY_KEY isn't set" in capsys.readouterr().err

@@ -65,6 +65,8 @@ def test_ssh_command_trusts_only_the_ed25519_key(tmp_path: Path) -> None:
         "-o",
         f"UserKnownHostsFile={tmp_path / 'known hosts'}",
         "-o",
+        "GlobalKnownHostsFile=/dev/null",
+        "-o",
         "StrictHostKeyChecking=yes",
         "-o",
         "HostKeyAlgorithms=ssh-ed25519",
@@ -124,9 +126,11 @@ def test_push_goes_over_ssh_with_the_key_in_an_agent(
         "git -c core.hooksPath=/dev/null push git@github.com:o/r.git refs/tags/v1.2.3 failed" in capsys.readouterr().err
     )
     lines = record.read_text().splitlines()
-    assert lines[:7] == [
+    assert lines[:9] == [
         "-o",
         lines[1],
+        "-o",
+        "GlobalKnownHostsFile=/dev/null",
         "-o",
         "StrictHostKeyChecking=yes",
         "-o",

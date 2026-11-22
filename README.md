@@ -43,6 +43,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `autofix` | Starts the PR Fixes workflow on a pull request, waits for the workflow that pushes its fixes, and prints the new head commit of the branch. `autofix resolve` and `autofix check-branch` make the checks of the two workflows (see [Running PR Fixes with a command](#running-pr-fixes-with-a-command)). |
 | `testpypi` | Starts the Publish workflow on the branch of a pull request, which publishes a dev version of the branch to TestPyPI, and prints the link to the run (see [Starting a TestPyPI release with a command](#starting-a-testpypi-release-with-a-command)). |
 | `push-bundle` | Fetches the head of a Git bundle, checks that it adds commits to a start commit and, optionally, that it changes only the paths you allow, and pushes it to a branch with a lease on the start commit (see [Pushing a Git bundle](#pushing-a-git-bundle)). |
+| `bump-version` | Bumps `[project] version` in `pyproject.toml` by one patch, minor or major level, and the entry of the project in `uv.lock` to match, without running `uv`. With `--pr`, it opens a pull request into the default branch, unless one for that version is already open (see [Bumping the version](#bumping-the-version)). |
 | `release-tag` | `push` tags the checked-out commit `v<version>`, with the version from `pyproject.toml`, and pushes the tag over SSH with a deploy key, unless the tag exists. `release` creates the GitHub release for the tag, unless it exists (see [Tagging a release](#tagging-a-release)). |
 | `claude-route` | Reads a comment from standard input and prints `review`, `other` or `none` to route between the Claude workflows. |
 | `requirements-min-versions` | Checks or updates the `>=` minimum versions in `pyproject.toml` to match the versions in `uv.lock`. |
@@ -76,7 +77,7 @@ These commands require a GitHub token:
 
 - any command that posts to a pull request, and `post-coverage-status`
 - the `github-settings`, `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys`, `security-settings`, `dependabot-uv`, `github-releases`, `autofix` and `testpypi` commands
-- `downstream bump --pr`
+- `bump-version --pr` and `downstream bump --pr`
 - `release-tag release`
 
 These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when `$GITHUB_TOKEN` is not set.
@@ -84,7 +85,7 @@ These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when 
 `wait-for-base-coverage` sends `$GITHUB_TOKEN` when it is set, and does not run `gh auth token`.
 Of the `secrets` and `variables` subcommands, only `check`, `dump`, `secrets inspect-remote` and `secrets export-remote` use the token.
 `dependabot-uv bump --version <version>` uses the token only with `--pr`.
-With `--pr`, `dependabot-uv bump`, `github-releases bump` and `downstream bump` also need the token to have the Pull requests `write` permission.
+With `--pr`, `bump-version`, `dependabot-uv bump`, `github-releases bump` and `downstream bump` also need the token to have the Pull requests `write` permission.
 Their `git push` to `origin` uses Git's own credentials, which need the Contents `write` permission.
 A push that changes a workflow file also needs the Workflows `write` permission.
 
@@ -463,6 +464,50 @@ Push with a token other than a `GITHUB_TOKEN` if the push must start workflow ru
 A workflow that a branch can change, such as a `pull_request` workflow, can expose the token to anyone who can push to the branch.
 For a token that can push to other branches, put the push job in a workflow that runs from the default branch, and keep the token in an environment that only the default branch can deploy to, as the PR Fixes Push workflow does.
 The token needs the Contents `write` permission, and also the Workflows `write` permission if the bundle changes a file in `.github/workflows`, such as `actions.lock`.
+
+### Bumping the version
+
+A Bump Version workflow, run by hand from the default branch, can open a pull request that bumps the version of the project.
+The `bump-version` composite action does the work of its one job:
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        required: true
+        default: patch
+        type: choice
+        options: [patch, minor, major]
+
+jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: sjktools/repoutils/.github/actions/bump-version@v<version>
+        with:
+          bump: ${{ inputs.bump }}
+          token: ${{ secrets.GH_ACTIONS_TOKEN }}
+          auto-merge: squash
+```
+
+The action checks out the default branch with the token, and runs `repoutils bump-version --pr` from its own commit with the `python3` of the runner.
+It installs nothing, so no cache runs alongside the token.
+
+- The command reads `[project] version` from `pyproject.toml`, which must be of the form X.Y.Z, and bumps the level that you give.
+- It changes the version in `pyproject.toml`, and the version in the entry of the project itself in `uv.lock`, if the project has a `uv.lock`.
+  It edits both files as text and does not run `uv`, so no build backend runs alongside the token.
+- It fails, and changes nothing, unless the checkout is on the default branch of the repository.
+- It commits the change to a new branch, `release-version-<version>`, pushes the branch, and opens a pull request into the default branch.
+  If a pull request from that branch is already open, it changes nothing.
+- With `--auto-merge <method>`, or the `auto-merge` input of the action, it then turns on auto-merge for the pull request, with that merge method.
+
+A pull request that a `GITHUB_TOKEN` opens starts no workflow run, so the token is another token, with the Contents `write` and Pull requests `write` permissions.
+Keep it in an environment that only the default branch can deploy to.
+Once the pull request merges, the release job can tag the version (see [Tagging a release](#tagging-a-release)).
 
 ### Tagging a release
 

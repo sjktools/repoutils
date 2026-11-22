@@ -380,11 +380,69 @@ def test_finds_only_the_versions_test_pull_request(
     assert "d/down has no open test pull request that bumps pkg to 0.4.1.dev7" in capsys.readouterr().err
 
 
-def test_refuses_a_release(upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    fake = FakeGitHub(monkeypatch, [PASSED], pulls=[pull(4, "downstream/pkg-0.4.0")])
-    assert downstream.run(["finish", "--repo", "d/down", "--version", "0.4.0"]) == 1
+RELEASE_BRANCH = "downstream/pkg-0.4.0"
+RELEASE_MARKER = "<!-- up-downstream-pkg -->\nBumps"
+
+
+def finish_release(*args: str) -> int:
+    return downstream.run(["finish", "--repo", "d/down", "--version", "0.4.0", *args])
+
+
+def test_leaves_a_releases_pull_request_open_if_its_checks_pass(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pulls = [pull(5, RELEASE_BRANCH, RELEASE_MARKER), pull(3, BRANCH)]
+    fake = FakeGitHub(monkeypatch, [PASSED], pulls=pulls)
+    assert finish_release() == 0
     assert fake.changes == []
-    assert "0.4.0 isn't a dev version" in capsys.readouterr().err
+    assert "All 4 checks passed on " + "a" * 40 + ", so left https://github.com/d/down/pull/5 open for review" in (
+        capsys.readouterr().out
+    )
+
+
+def test_reruns_a_releases_failed_jobs(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    failed: Poll = ([run("test", conclusion="failure", run_id=10), run("lint")], [status("cov")])
+    passed: Poll = ([run("test", run_id=11), run("lint")], [status("cov")])
+    fake = FakeGitHub(monkeypatch, [failed], pulls=[pull(5, RELEASE_BRANCH, RELEASE_MARKER)], after=[[passed]])
+    assert finish_release() == 0
+    assert fake.changes == [("POST", "/actions/runs/101/rerun-failed-jobs", None)]
+    assert "open for review" in capsys.readouterr().out
+
+
+def test_fails_if_a_releases_check_still_fails(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    failed: Poll = ([run("test", conclusion="failure"), run("lint")], [])
+    fake = FakeGitHub(monkeypatch, [failed], pulls=[pull(5, RELEASE_BRANCH, RELEASE_MARKER)])
+    assert finish_release("--retries", "0") == 1
+    assert fake.changes == []
+    assert "these checks failed" in capsys.readouterr().err
+
+
+def test_does_nothing_without_a_releases_pull_request(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A test pull request, and a release's for another version.
+    pulls = [pull(3, BRANCH), pull(4, "downstream/pkg-0.3.0", RELEASE_MARKER)]
+    fake = FakeGitHub(monkeypatch, [PASSED], pulls=pulls)
+    assert finish_release() == 0
+    assert fake.changes == []
+    assert "d/down has no open pull request that bumps pkg to 0.4.0, so there's nothing to wait for" in (
+        capsys.readouterr().out
+    )
+
+
+def test_stops_waiting_once_a_releases_pull_request_merges(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeGitHub(monkeypatch, [PASSED], pulls=[pull(5, RELEASE_BRANCH, RELEASE_MARKER)], state="closed")
+    assert finish_release() == 0
+    assert fake.changes == []
+    assert "https://github.com/d/down/pull/5 is no longer open, so there's nothing left to wait for" in (
+        capsys.readouterr().out
+    )
 
 
 def test_fails_if_the_pull_request_closed(

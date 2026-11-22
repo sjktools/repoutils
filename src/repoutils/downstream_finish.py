@@ -1,13 +1,14 @@
-"""`downstream finish`, which waits for the checks on a test bump's pull
-request in a downstream, and closes it without merging it if they all pass,
-kept apart from the command for length.
+"""`downstream finish`, which waits for the checks on a bump's pull request
+in a downstream. For a test bump, to a dev version, it closes the pull
+request without merging it if they all pass. For a release, it leaves the
+pull request open for review. Kept apart from the command for length.
 
 It first waits for the checks that the downstream's rulesets require on the
 pull request's base branch to appear, as a check registers some time after
 the pull request opens, and then for every check run and commit status on
 its head to finish. If only GitHub Actions jobs failed, it re-runs them
 once (or --retries times), as a downstream's CI can fail for a moment's
-reason, such as a TestPyPI server that doesn't yet list the dev version.
+reason, such as a package index server that doesn't yet list the version.
 Stdlib-only, like every repoutils module."""
 
 import os
@@ -107,17 +108,21 @@ def missing(required: list[Required], found: list[Check]) -> list[Required]:
     return [r for r in required if not any(c.name == r.context and r.app in (None, c.app) for c in found)]
 
 
-def find(repo: str, token: str, package: str, version: str, marker: str) -> downstream_prs.Bump:
-    """The open test pull request in repo that bumps package to dev version
-    version, whose body starts with marker, raising ValueError if version
-    isn't a dev version, and RuntimeError if there's no such pull request."""
-    if not downstream_pins.is_dev(version):
-        raise ValueError(
-            f"{version} isn't a dev version, and finish closes only the test pull requests of dev versions"
-        )
+class Closed(RuntimeError):
+    """The pull request closed, or merged, while finish waited for its checks."""
+
+
+def find(repo: str, token: str, package: str, version: str, marker: str) -> downstream_prs.Bump | None:
+    """The open pull request in repo that bumps package to version, whose
+    body starts with marker, a test pull request for a dev version. None if
+    there's no such pull request for a release, which a bump that had
+    nothing to do, or a merged pull request, leaves. Raises RuntimeError if
+    there's no such test pull request, which a test run always opens."""
     for bump in downstream_prs.open_bumps(repo, token, package, version, marker):
         if bump.version == version:
             return bump
+    if not downstream_pins.is_dev(version):
+        return None
     raise RuntimeError(
         f"{repo} has no open test pull request that bumps {package} to {version}: did its bump or push fail, "
         "or was there nothing to bump?"
@@ -125,10 +130,10 @@ def find(repo: str, token: str, package: str, version: str, marker: str) -> down
 
 
 def _pull(repo: str, token: str, bump: downstream_prs.Bump) -> dict[str, Any]:
-    """bump's pull request, raising RuntimeError if it's no longer open."""
+    """bump's pull request, raising Closed if it's no longer open."""
     pull: dict[str, Any] = github.request("GET", f"{github.API_URL}/repos/{repo}/pulls/{bump.number}", token)
     if pull["state"] != "open":
-        raise RuntimeError(f"{bump.url} is no longer open, so there's nothing to finish")
+        raise Closed(f"{bump.url} is no longer open, so there's nothing to finish")
     return pull
 
 
@@ -214,10 +219,13 @@ def rerun(repo: str, token: str, failed: list[Check]) -> bool:
 def finish(
     repo: str, token: str, bump: downstream_prs.Bump, *, interval: float, timeout: float, retries: int = 1
 ) -> int:
-    """Wait for the checks on bump's pull request, then close it and delete
-    its branch if they all passed, and return 0. If only GitHub Actions jobs
-    failed, re-run them and wait again, up to retries times while time is
-    left. If any still failed, leave it open, and return 1."""
+    """Wait for the checks on bump's pull request, and return 0 if they all
+    passed, after closing it and deleting its branch if it's a test bump, to
+    a dev version. If only GitHub Actions jobs failed, re-run them and wait
+    again, up to retries times while time is left. If any still failed,
+    leave it open, and return 1. Return 0 if a release's pull request closes,
+    or merges, while it waits, as there's nothing left to watch then."""
+    test = downstream_pins.is_dev(bump.version)
     deadline = monotonic() + timeout
     required = required_checks(repo, token, bump.base)
     print(f"Waiting for the checks on {bump.url}")
@@ -236,11 +244,19 @@ def finish(
             failed = [c for c in found if c.state == "failed"]
     except TimeoutError as e:
         raise TimeoutError(f"Gave up after {timeout:g} seconds {e}") from None
+    except Closed:
+        if test:
+            raise
+        print(f"{bump.url} is no longer open, so there's nothing left to wait for")
+        return 0
     if failed:
         print(f"Left {bump.url} open, as these checks failed on {sha}:", file=sys.stderr)
         for check in failed:
             print(f"- {check.name}: {check.detail}" + (f" {check.url}" if check.url else ""), file=sys.stderr)
         return 1
+    if not test:
+        print(f"All {len(found)} checks passed on {sha}, so left {bump.url} open for review")
+        return 0
     close(repo, token, bump, len(found))
     print(f"All {len(found)} checks passed on {sha}, so closed {bump.url} and deleted its branch {bump.branch}")
     return 0

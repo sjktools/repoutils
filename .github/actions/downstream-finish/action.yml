@@ -1,11 +1,12 @@
-name: Finish a downstream test bump
+name: Finish a downstream bump
 description: >-
-  Waits for the checks on a dev version's test pull request in a downstream
-  repository, and closes it without merging it, deleting its branch, if they
-  all pass, with `repoutils downstream finish`. If only GitHub Actions jobs
-  fail, it re-runs them, and waits again. Fails if any still fails.
+  Waits for the checks on a bump's pull request in a downstream repository,
+  with `repoutils downstream finish`. If only GitHub Actions jobs fail, it
+  re-runs them, and waits again. Fails if any still fails. If they all pass,
+  it closes a dev version's test pull request without merging it, deleting
+  its branch, but leaves a release's pull request open for review.
 
-# The finish job of a Bump downstream workflow's test run (see the README),
+# The finish job of a Bump downstream workflow (see the README),
 # once for each downstream, in an environment that only main can deploy to,
 # which holds the token. It runs only repoutils, from this action's own
 # commit, with the runner's python3, installing nothing, and runs no code from
@@ -16,13 +17,13 @@ inputs:
     description: The downstream, as owner/name.
     required: true
   version:
-    description: The dev version on TestPyPI that the test pull request bumps to, such as 0.4.1.dev123.
+    description: The version that the pull request bumps to, a release such as 0.5.0, or a dev version on TestPyPI such as 0.4.1.dev123.
     required: true
   token:
     description: >-
-      A token with Contents and Pull requests write on the downstream, which
-      closes the pull request and deletes its branch, and Actions write, which
-      re-runs failed jobs. On a private downstream, it also needs Commit
+      A token with Actions write on the downstream, which re-runs failed jobs,
+      and Contents and Pull requests write, which close a test pull request
+      and delete its branch. On a private downstream, it also needs Commit
       statuses read and Checks read, to read its checks.
     required: true
   package:
@@ -51,7 +52,7 @@ runs:
           exit 1
         fi
 
-    - name: Finish the test pull request
+    - name: Finish the pull request
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.token }}

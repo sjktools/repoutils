@@ -5,6 +5,9 @@ from email.message import Message
 from typing import Any, override
 from unittest import TestCase, mock
 
+import pytest
+
+from repoutils import github
 from repoutils.github import request as github_request
 
 # What request() opens URLs with; wait_for_base_coverage's tests use it too.
@@ -132,3 +135,15 @@ class GitHubCommentsRequestTests(TestCase):
             self.assertRaises(urllib.error.HTTPError),
         ):
             github_request("GET", "https://api.github.com/x", "tok")
+
+
+def test_a_reaction_that_cannot_connect_only_warns(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def request(method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        raise urllib.error.URLError("no route to host")
+
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setattr(github, "request", request)
+    github.react("o/r", 99, "tok")
+    assert capsys.readouterr().err == "Couldn't react to comment 99: <urlopen error no route to host>\n"

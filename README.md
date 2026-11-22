@@ -41,6 +41,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `check-pins` | Fails unless every `setup-uv` and `setup-just` workflow step pins the versions required by `pyproject.toml` and the justfile, and the actions that the project uses from the repository of a locked package that is installed come from the commit of that package, or only from the tag of its version if the package does not record its commit (see [Checking actions against a locked package](#checking-actions-against-a-locked-package)). |
 | `check-checkout-credentials` | Fails on any `actions/checkout` step that does not set `persist-credentials`. |
 | `autofix` | Starts the PR Fixes workflow on a pull request, waits for the workflow that pushes its fixes, and prints the new head commit of the branch. `autofix resolve` and `autofix check-branch` make the checks of the two workflows (see [Running PR Fixes with a command](#running-pr-fixes-with-a-command)). |
+| `testpypi` | Starts the Publish workflow on the branch of a pull request, which publishes a dev version of the branch to TestPyPI, and prints the link to the run (see [Starting a TestPyPI release with a command](#starting-a-testpypi-release-with-a-command)). |
 | `push-bundle` | Fetches the head of a Git bundle, checks that it adds commits to a start commit and, optionally, that it changes only the paths you allow, and pushes it to a branch with a lease on the start commit (see [Pushing a Git bundle](#pushing-a-git-bundle)). |
 | `claude-route` | Reads a comment from standard input and prints `review`, `other` or `none` to route between the Claude workflows. |
 | `requirements-min-versions` | Checks or updates the `>=` minimum versions in `pyproject.toml` to match the versions in `uv.lock`. |
@@ -384,6 +385,27 @@ A project that uses these actions must keep these names:
 - The run name of `fix.yml` is `PR Fixes #<number>`, or `PR Fixes` without a number.
 - The run name of `fix-push.yml` is `PR Fixes Push for run <fix run ID>`, its job that pushes the fixes is `push`, and its job that comments on the pull request is `report`.
 - The artifact that holds the bundle is `fixes`.
+
+### Starting a TestPyPI release with a command
+
+In this repository, a `/testpypi` comment on a pull request, from a commenter whose author association is `OWNER` or `MEMBER`, starts the Publish workflow (`publish-pypi.yml`) on the branch of the pull request.
+A run that is started that way publishes a dev version of the branch to TestPyPI, checks that it installs from there, and never publishes to PyPI.
+
+`repoutils testpypi <pull request>` does the same as the comment, for a client that cannot post the exact comment, such as Claude Code on the web.
+
+- The command refuses a pull request that is closed or comes from a fork, because the branch of a fork is not in the repository.
+- It starts the workflow on the branch, and prints the link to the run on standard output.
+  It does not wait for the run.
+- `--workflow` names another workflow file.
+- It appends a note with the link to the file that `--step-summary` names, by default `$GITHUB_STEP_SUMMARY`.
+- `--comment-id <ID>` reacts to the comment with a rocket once the run starts, and replies on the pull request with the link.
+  If either fails, the command only warns.
+
+The token needs the Actions `write` permission, and the Pull requests `read` permission, or `write` with `--comment-id`.
+In GitHub Actions, the command prints its errors and warnings as annotations.
+
+The `testpypi-dispatch` composite action is the job of `testpypi-comment.yml`.
+It does nothing unless the comment is `/testpypi`, ignoring whitespace, and then runs `repoutils testpypi` with `--comment-id`, from its own commit with the `python3` of the runner.
 
 ### Pushing a Git bundle
 

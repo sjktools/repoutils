@@ -30,6 +30,8 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
   `src/repoutils/ruleset_labels.py` gives the labels GitHub's ruleset page uses, which `dump` writes as comments.
 - `src/repoutils/github.py` holds the GitHub API helpers the posting commands share.
   They are a request function that never follows a redirect with the token to another host, paginated comment listing, `upsert_comment` and `hide_comments`.
+  It also holds `react`, which only warns if reacting to a comment fails.
+  `guarded` prints a command's error from the API, the network or `gh`, and returns 1 for it.
 - `src/repoutils/secret_inspect.py` is `secrets inspect`, which reports what each secret a workflow passes it is, kept apart from the command for length.
   `src/repoutils/workflow_summaries.py` is `secrets inspect-remote`, which starts the workflow that runs `secrets inspect` and prints the step summaries it keeps as artifacts.
   `src/repoutils/secret_export.py` is `secrets export`, which encrypts those secrets' values with age for a backup.
@@ -164,6 +166,8 @@ That deploy key must be the repository's only one with write access, as the rule
 Two comments act on an open PR from this repository, when the comment is just the command.
 The commenter's author association must be `OWNER` or `MEMBER`, so outside collaborators and contributors can't use them.
 `/testpypi` publishes a dev build of the PR's branch to TestPyPI only.
+`testpypi-comment.yml` starts the Publish run with the `testpypi-dispatch` action, which runs `repoutils testpypi`.
+A client that can't post the comment, such as Claude Code on the web, can run `repoutils testpypi` itself.
 `/autofix` runs `just fix` on the PR's branch and pushes the result (with the `AUTOFIX_TOKEN` secret).
 It dispatches `fix.yml` on the PR's branch, which runs `just fix` with no secrets and uploads its commits as a Git bundle.
 Then `fix-push.yml` checks that the bundle only adds commits to the branch, and pushes them from `main`, where it always runs.

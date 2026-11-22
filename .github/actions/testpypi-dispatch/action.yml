@@ -1,0 +1,61 @@
+name: Start a TestPyPI release for a /testpypi comment
+description: >-
+  Starts the Publish workflow on a pull request's branch for a comment that is
+  just `/testpypi`, with `repoutils testpypi`, which publishes a dev version of
+  the branch to TestPyPI. Reacts to the comment and replies with the run's link.
+
+# Runs repoutils from this action's own commit, with the runner's python3,
+# installing nothing, and runs no code from the pull request's branch. Use it
+# in a job for an issue_comment event, with actions write and pull-requests
+# write. The job's last step should upload the step summary that this copies
+# to $RUNNER_TEMP/step-summaries/testpypi.md, as GitHub's API doesn't serve
+# step summaries.
+#
+# A dispatch sent with GITHUB_TOKEN does start a run, and TestPyPI's trusted
+# publisher trusts the Publish workflow and its environment, not who started
+# it. So only let a comment from someone who may publish run this action.
+inputs:
+  pr:
+    description: The pull request's number.
+    required: true
+  comment-id:
+    description: The comment's ID, to react to with a rocket and answer with the run's link.
+    required: true
+  comment-body:
+    description: The comment's body. Nothing runs unless it's /testpypi, whitespace aside.
+    required: true
+  workflow:
+    description: The Publish workflow's file name.
+    required: false
+    default: publish-pypi.yml
+
+runs:
+  using: composite
+  steps:
+    - name: Check the comment is only /testpypi
+      id: check
+      shell: bash
+      env:
+        BODY: ${{ inputs.comment-body }}
+      run: |
+        # ^ and $ anchor the whole body, and [[:space:]] matches newlines and
+        # the \r of a comment written on GitHub.
+        if [[ $BODY =~ ^[[:space:]]*/testpypi[[:space:]]*$ ]]; then
+          echo "matched=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "Comment has more than /testpypi in it; not starting a TestPyPI release."
+        fi
+
+    - name: Start the Publish workflow on the pull request's branch
+      if: steps.check.outputs.matched == 'true'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        PR: ${{ inputs.pr }}
+        COMMENT_ID: ${{ inputs.comment-id }}
+        WORKFLOW: ${{ inputs.workflow }}
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+        PYTHONSAFEPATH: "1"
+      run: |
+        trap 'mkdir -p "$RUNNER_TEMP/step-summaries" && cp "$GITHUB_STEP_SUMMARY" "$RUNNER_TEMP/step-summaries/testpypi.md"' EXIT
+        python3 -m repoutils testpypi "$PR" --comment-id "$COMMENT_ID" --workflow "$WORKFLOW"

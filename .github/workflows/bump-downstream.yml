@@ -25,7 +25,7 @@ name: Bump downstream
 # downstream's secrets. Run it by hand with a dev version, and the commit its
 # build came from, to make a test run again.
 #
-# Three jobs, one composite action each, so the code that re-locks never runs
+# Four jobs, one composite action each, so the code that re-locks never runs
 # alongside a token that can push:
 #
 # - plan checks DOWNSTREAM_REPOS and gives the matrix, and works out the
@@ -42,14 +42,17 @@ name: Bump downstream
 #   uv.lock and actions.lock from bump as data, checking actions.lock with
 #   gh actions-lock --verify.
 #
-# - finish, in a test run only, closes each test pull request whose checks
-#   pass with DOWNSTREAM_TOKEN, in the downstream environment. Like push, it
-#   runs only main's repoutils, with the runner's python3.
+# - finish waits for the checks on each pull request, and re-runs failed
+#   jobs once with DOWNSTREAM_TOKEN, in the downstream environment, as a
+#   downstream's CI can start before PyPI's index lists the release. In a
+#   test run, it closes each test pull request whose checks pass, but it
+#   leaves a release's pull request open. Like push, it runs only main's
+#   repoutils, with the runner's python3.
 #
 # DOWNSTREAM_TOKEN needs Contents and Pull requests write on each downstream,
-# and Workflows write on each where the PR changes a file in
-# .github/workflows, such as a workflow or actions.lock that uses this
-# repository's actions.
+# Actions write to re-run failed jobs, and Workflows write on each where the
+# PR changes a file in .github/workflows, such as a workflow or actions.lock
+# that uses this repository's actions.
 # It's a token rather than the GITHUB_TOKEN, which can't write to another
 # repository.
 on:
@@ -175,11 +178,11 @@ jobs:
           commit: ${{ needs.plan.outputs.commit }}
           token: ${{ secrets.DOWNSTREAM_TOKEN }}
 
-  # A test run's only. Each downstream's finish runs whether or not another's
-  # push failed, and fails if its own did, as it then finds no pull request.
+  # Each downstream's finish runs whether or not another's push failed. In a
+  # test run, it fails if its own did, as it then finds no pull request.
   finish:
     needs: [plan, push]
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.test == 'true' }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
     runs-on: ubuntu-latest
     environment: downstream
     # DOWNSTREAM_TOKEN does the writing.
@@ -203,7 +206,7 @@ jobs:
             /src/repoutils/
           sparse-checkout-cone-mode: false
 
-      - name: Finish the test pull request in ${{ matrix.repository }}
+      - name: Finish the pull request in ${{ matrix.repository }}
         uses: $/.github/actions/downstream-finish
         with:
           repository: ${{ matrix.repository }}

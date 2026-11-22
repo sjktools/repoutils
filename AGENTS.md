@@ -52,7 +52,7 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
   `src/repoutils/downstream_prs.py` finds the open PRs of earlier `downstream bump --pr` runs, and closes or comments on them once the new PR is open.
   A dev version's bump opens a draft test PR with its own marker and branch prefix, so a release's bump and a test bump never close or comment on each other's PRs.
   `src/repoutils/downstream_plan.py` is `downstream plan`, which works out the version a Bump downstream run bumps to from the event that started it.
-  `src/repoutils/downstream_finish.py` is `downstream finish`, which closes a test PR once all its checks pass.
+  `src/repoutils/downstream_finish.py` is `downstream finish`, which waits for a bump PR's checks and re-runs failed jobs.
   `src/repoutils/pypi_provenance.py` checks that PyPI's provenance for a release, or TestPyPI's for a dev version, names the upstream's repository as its trusted publisher.
 - `src/repoutils/release_pins.py` is the format of the pins file that `github-releases bump` writes, kept apart from the command for length.
 - `src/repoutils/workflows.py` reads the workflows in `.github/workflows` for the secrets and variables they use and each job's environment, without a YAML parser.
@@ -204,7 +204,7 @@ It needs Contents and Pull requests write, and Workflows write, as the PR change
 
 `bump-downstream.yml` runs when Publish succeeds on a `v*` tag.
 It opens a PR in each repository that the `DOWNSTREAM_REPOS` variable names, with `repoutils downstream bump --pr`.
-Each of its jobs runs one composite action in `.github/actions/`: `downstream-plan`, `downstream-bump`, `downstream-push` or, in a test run only, `downstream-finish`.
+Each of its jobs runs one composite action in `.github/actions/`: `downstream-plan`, `downstream-bump`, `downstream-push` or `downstream-finish`.
 The actions find repoutils' source relative to `${{ github.action_path }}`, so other projects can use them too.
 For the same reason, they run other files of this repository by that path, and never with `uses: ./`, which names the caller's repository.
 As in Bump uv, the `bump` job re-locks with no token that can write.
@@ -214,20 +214,24 @@ It moves the `uses:` again itself.
 Before it commits `actions.lock`, it checks the file with `gh actions-lock --verify`, and checks that no other action's commit changed.
 That secret lives in the main-only `downstream` environment, and needs Contents and Pull requests write on each downstream.
 It also needs Workflows write on each downstream where the PR changes a file in `.github/workflows`, such as a workflow or `actions.lock` that uses repoutils' actions.
-For test runs, it also needs Actions write, so that `downstream finish` can re-run failed jobs.
+It also needs Actions write, so that `downstream finish` can re-run failed jobs.
 
 `bump-downstream.yml` also makes a test run when a Publish run that someone started by hand on `main` succeeds, with the dev version that the run published to TestPyPI.
 Its plan job works out that version with `repoutils downstream plan`, which shares its code with the `repoutils bump-version patch --dev <run ID>` that Publish's `Set dev version` step runs.
 A test run moves each `uses:` of repoutils' actions to the commit that Publish ran on, and opens draft test PRs.
 It makes no test run for a Publish run on another branch, as the downstream's CI would run that branch's unreviewed code with the downstream's secrets.
 Its `finish` job runs the `downstream-finish` action, in the `downstream` environment, once for each downstream.
-The action runs `repoutils downstream finish`, which waits for the test PR's checks, then:
+It runs in a release's run too.
+The action runs `repoutils downstream finish`, which waits for the PR's checks, then:
 
-- closes the PR and deletes its branch if they all pass.
+- closes a test PR and deletes its branch if they all pass.
+  It leaves a release's PR open for review.
 - re-runs the failed jobs up to `--retries` times (default `1`) and waits again, if only GitHub Actions jobs failed and time is left of the `--timeout` that the re-runs share with the first wait.
 - leaves the PR open and fails if any still fails.
 
 So a test run succeeds only if it closed every test PR.
+A release's run fails if a release PR's checks still fail after the re-runs, or don't finish within `--timeout`.
+The re-run is for a PR whose CI started before PyPI's index listed the release.
 
 `claude.yml` and `claude-code-review.yml` run Claude Code when a comment starts with `@claude` (with the `CLAUDE_CODE_OAUTH_TOKEN` secret).
 Their `route` jobs run `repoutils claude-route` through the `claude-route` action, with the runner's `python3`, installing nothing.

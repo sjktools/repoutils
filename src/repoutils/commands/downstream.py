@@ -16,8 +16,9 @@ as its trusted publisher.
 Given a dev version, such as `0.4.1.dev123`, a test build on TestPyPI, `bump`
 checks TestPyPI's provenance instead, makes the downstream take the package
 from TestPyPI, and moves the actions to the commit the build came from.
-`finish` waits for the checks on such a bump's test pull request, and closes
-it without merging it if they all pass.
+`finish` waits for the checks on a bump's pull request, and re-runs failed
+GitHub Actions jobs. It closes a test pull request without merging it if they
+all pass, and leaves a release's open for review.
 Stdlib-only, like every repoutils module."""
 
 import argparse
@@ -474,20 +475,26 @@ def main(argv: list[str]) -> int:
     bump_parser.add_argument("--repo", help="the downstream's owner/name, which --pr needs")
     finish_parser = subparsers.add_parser(
         "finish",
-        help="wait for the checks on a dev version's test pull request, and close it if they pass",
-        description="Run in the upstream's checkout. Find the open test pull request that `bump --pr` opened "
-        "for the dev version, and wait for the checks that the downstream's rulesets require on its base branch "
+        help="wait for the checks on a bump's pull request, re-running failed jobs, and close a test one if they pass",
+        description="Run in the upstream's checkout. Find the open pull request that `bump --pr` opened "
+        "for the version, and wait for the checks that the downstream's rulesets require on its base branch "
         "to appear, and for at least one check, then for every check run and commit status on its head to "
-        "finish. If they all pass, close it without merging it, and delete its branch. If only GitHub Actions jobs "
-        "failed, re-run them up to --retries times, and wait again. If any still fails, leave it open, and exit 1. "
-        "Fails if there's no such pull request, or the checks take over --timeout seconds.",
+        "finish. If only GitHub Actions jobs failed, re-run them up to --retries times, and wait again. If any "
+        "still fails, exit 1. If they all pass, close a dev version's test pull request without merging it, and "
+        "delete its branch, but leave a release's pull request open for review. For a release, it does nothing "
+        "if there's no such pull request, and stops waiting if the pull request closes or merges. Fails if a dev "
+        "version has no such pull request, if its pull request closes, or if the checks take over --timeout "
+        "seconds.",
         epilog="It uses $GITHUB_TOKEN, defaulting to `gh auth token`, which needs Contents and Pull requests write "
-        "on the downstream, and Actions write to re-run failed jobs, without which it warns and leaves the pull "
-        "request open. It reads the rules and checks with the same token, which any token can read on a public "
-        "downstream; on a private one, it also needs Commit statuses read, and read access to its checks.",
+        "on the downstream to close a test pull request, and Actions write to re-run failed jobs, without which "
+        "it warns, and fails if a job failed. It reads the rules and checks with the same token, which any token "
+        "can read on a public downstream; on a private one, it also needs Commit statuses read, and read access "
+        "to its checks.",
     )
     finish_parser.add_argument("--repo", required=True, help="the downstream's owner/name")
-    finish_parser.add_argument("--version", required=True, help="the dev version that the bump was to")
+    finish_parser.add_argument(
+        "--version", required=True, help="the version that the bump was to, a release or a dev version"
+    )
     finish_parser.add_argument(
         "--package", help="the package (default: [project] name in the current directory's pyproject.toml)"
     )
@@ -527,6 +534,12 @@ def main(argv: list[str]) -> int:
             marker = config.marker(downstream_prs.marker_name(package, args.version))
             token = os.environ.get("GITHUB_TOKEN") or github.gh_output("auth", "token")
             found = downstream_finish.find(args.repo, token, package, args.version, marker)
+            if found is None:
+                print(
+                    f"{args.repo} has no open pull request that bumps {package} to {args.version}, so there's "
+                    "nothing to wait for"
+                )
+                return 0
             return downstream_finish.finish(
                 args.repo, token, found, interval=args.interval, timeout=args.timeout, retries=args.retries
             )

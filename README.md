@@ -51,7 +51,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
 | `check-lock-platforms` | Fails if `uv.lock` contains wheels for platforms that the project does not allow. |
 | `dependabot-uv` | `show` prints the `uv` version from the newest successful Dependabot `uv` update run, `check` fails unless the minimum in `[tool.uv] required-version` is that version, and `bump` changes the project to that `uv` version (with `--pr`, in a new pull request, unless one for that version is already open). |
-| `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `plan` also works out the version that a run of the workflow bumps to, from the event that started the run. `bump` changes the pins of a downstream project to a release of this package, or to a dev version on TestPyPI, and re-locks it, and moves its uses of the actions of this package to the tag of the release, or for a dev version, to the commit that `--commit` names. With `--pr`, it opens a pull request (for a dev version, a draft test pull request), unless one for that release or a newer one is already open, and closes or comments on open pull requests for earlier versions of the same kind (releases, or dev versions), unless one for a newer version of that kind is open. `finish` waits for the checks on the test pull request of a dev version, and closes the pull request if they all pass. |
+| `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `plan` also works out the version that a run of the workflow bumps to, from the event that started the run. `bump` changes the pins of a downstream project to a release of this package, or to a dev version on TestPyPI, and re-locks it, and moves its uses of the actions of this package to the tag of the release, or for a dev version, to the commit that `--commit` names. With `--pr`, it opens a pull request (for a dev version, a draft test pull request), unless one for that release or a newer one is already open, and closes or comments on open pull requests for earlier versions of the same kind (releases, or dev versions), unless one for a newer version of that kind is open. `finish` waits for the checks on the pull request, and re-runs failed jobs. It closes the test pull request of a dev version if all its checks pass, and leaves the pull request of a release open. |
 | `github-releases` | `check` fails if a project whose release assets this project pins has a newer release, and `bump` pins the assets of that release (with `--pr`, in a new pull request, unless one for that release is already open). |
 | `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment (posting nothing with `--update-only` when none exists) or hides it when you pass `--hide-previous`. |
 | `added-strings` | Lists the added lines in a pull request that match strings configured in `pyproject.toml` (such as `# noqa:`), or posts the list to the pull request. |
@@ -210,7 +210,7 @@ A downstream project needs no workflow of its own, but it must use `uv`.
 - The workflow runs when the Publish workflow succeeds on a `v*` tag.
   It also runs by hand, with the version as input.
   A `release: published` trigger does not work if a `GITHUB_TOKEN` creates the release, because GitHub starts no workflow for an event that a `GITHUB_TOKEN` causes.
-- The workflow has three jobs for a release, and each job runs one composite action from this repository.
+- The workflow has four jobs, and each job runs one composite action from this repository.
   The actions run `repoutils` from their own commit with the `python3` of the runner, and install nothing but `uv` and the `gh-actions-lock` extension of `gh`.
 - The `plan` job runs the `downstream-plan` action, which runs `downstream plan`.
   The command gives the repositories as a job matrix, and works out the version from the event that started the run.
@@ -222,40 +222,48 @@ A downstream project needs no workflow of its own, but it must use `uv`.
   The action checks out the downstream project with a token from that environment, and runs `downstream bump --pr --lock-file <file> --actions-lock-file <file>`.
   The command copies `uv.lock` and `actions.lock` from the artifact as data, and checks `actions.lock` with `gh actions-lock --verify`.
   The action fails if the default branch of the downstream project changed after the `bump` job.
+- The `finish` job runs the `downstream-finish` action once for each downstream project, in the same environment as the `push` job.
+  The action runs `downstream finish`, which waits for the checks on the pull request, and re-runs failed jobs once.
+  For a release, it leaves the pull request open for review, and the job fails if any check still fails.
+  The command waits up to an hour for the checks, so the job has a 70-minute timeout.
+  Later runs of the workflow wait for it, because they share the `bump-downstream` concurrency group.
 
 The workflow also makes a test run when someone starts the Publish workflow by hand on `main` and the run succeeds.
 That run publishes a dev version of `main` to TestPyPI.
 
 - The test run bumps each downstream project to that dev version, with the same `plan`, `bump` and `push` jobs, and opens a draft test pull request.
   It moves the `uses:` of the actions of this repository to the commit that Publish ran on.
-- The `finish` job then runs the `downstream-finish` action once for each downstream project, in the same environment as the `push` job.
-  The action runs `downstream finish`, which closes the test pull request if all its checks pass, and leaves it open if any check still fails after a re-run.
+- The `finish` job then runs `downstream finish`, which closes the test pull request if all its checks pass, and leaves it open if any check still fails after a re-run.
 - The test run succeeds only if it closes every test pull request.
 - The workflow makes no test run for a Publish run on another branch.
   The test pull request comes from a branch of the downstream repository, so the CI of the downstream project would run the unreviewed code of that branch with the secrets of the downstream project.
 - To make a test run again, run the workflow by hand with the dev version and the commit that its build came from.
   The workflow fails if that commit is not on `main`.
 
-`downstream finish --repo <owner/name> --version <dev version>` runs in a checkout of the upstream project, as `downstream bump` does:
+`downstream finish --repo <owner/name> --version <version>` runs in a checkout of the upstream project, as `downstream bump` does:
 
-- It finds the open test pull request for the dev version by its marker and its branch, and fails if there is none.
-  It fails for a version that is not a dev version, so it never closes the pull request of a release.
+- It finds the open pull request for the version by its marker and its branch.
+  For a dev version, it finds the test pull request, and fails if there is none.
+  For a release, it exits with code `0` if there is none, because a downstream project that already has the release gets no pull request.
 - It waits for the checks that the rulesets of the downstream repository require on the base branch to appear, because GitHub adds a check some time after a pull request opens.
   It also waits for at least one check to appear.
 - It then waits for every check run and commit status on the head commit of the pull request to finish.
   A check run passes if its conclusion is `success`, `neutral` or `skipped`, and a commit status passes if its state is `success`.
   It decides only when two reads in a row find the same finished checks, because a workflow can add its check after the checks of another workflow finish.
 - A required check that names an app counts only as a check run from that app, because the API does not say which app posted a commit status.
-- If all the checks pass, it comments on the pull request, closes it without merging it, and deletes its branch.
+- If all the checks pass on a test pull request, it comments on the pull request, closes it without merging it, and deletes its branch.
+  It never closes the pull request of a release, which it leaves open for review.
 - If only GitHub Actions jobs fail, it re-runs the failed jobs of their workflow runs, and waits for the checks again.
-  It does this once, or `--retries` times (from `0` to `9`), because a check can fail for a short-lived reason, such as a TestPyPI server that does not yet list the dev version.
+  It does this once, or `--retries` times (from `0` to `9`), because a check can fail for a short-lived reason, such as a package index server that does not yet list the new version.
   It re-runs nothing if a commit status or a check run of another app fails, because the pull request cannot pass then.
   The re-runs count toward the same `--timeout`, so a re-run gets only the time that is left, and it re-runs nothing once no time is left.
 - If any check still fails, it leaves the pull request open, lists the checks that failed, and exits with code `1`.
+- If the pull request of a release closes or merges while the command waits, it stops waiting and exits with code `0`.
+  If a test pull request closes, the command fails.
 - It fails if the checks do not finish within `--timeout` seconds (default `3600`).
   It reads the checks every `--interval` seconds (default `30`).
-- Its token needs the Contents `write` and Pull requests `write` permissions on the downstream repository.
-  To re-run failed jobs, it also needs the Actions `write` permission, and without it the command prints a warning and leaves the pull request open.
+- To close a test pull request, its token needs the Contents `write` and Pull requests `write` permissions on the downstream repository.
+  To re-run failed jobs, it also needs the Actions `write` permission, and without it the command prints a warning and does not re-run them.
   It reads the checks and the rules with the same token, so the downstream repository must be public, or the token must also be able to read them.
 
 `downstream bump` runs in a checkout of the upstream project, and changes the downstream checkout that `--directory` names:
@@ -329,7 +337,8 @@ To set up the same workflow for another package:
 4. Set the `DOWNSTREAM_REPOS` variable.
 5. Create a `downstream` environment that only the default branch can deploy to, and store the `DOWNSTREAM_TOKEN` secret in it.
    The token needs the Contents `write` and Pull requests `write` permissions on each downstream repository.
-   For a test run, it also needs the Actions `write` permission, so that `downstream finish` can re-run failed jobs.
+   It also needs the Actions `write` permission, so that `downstream finish` can re-run failed jobs.
+   On a private downstream repository, it also needs the Commit statuses `read` and Checks `read` permissions, so that `downstream finish` can read the checks.
    It also needs the Workflows `write` permission on each downstream repository where the pull request changes a file in `.github/workflows`, such as a workflow or `actions.lock` that uses the actions of the package.
    A fine-grained token has one resource owner, so downstream repositories of a second owner need a second token.
    For each owner, use a copy of the workflow with its own variable, environment and token.

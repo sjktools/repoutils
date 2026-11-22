@@ -478,3 +478,12 @@ def test_wait_for_base_coverage(
     monkeypatch.setattr(github.no_redirect_opener, "open", urlopen)
     assert cli.main(["wait-for-base-coverage", "o/r", "abc"]) == 0
     assert "base commit abc has its coverage/project status (98.50% (197/200 lines))" in capsys.readouterr().out
+
+
+def test_push_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    # A missing bundle fails before anything is pushed.
+    monkeypatch.chdir(ROOT)
+    monkeypatch.setenv("GITHUB_TOKEN", "unused")
+    args = ["push-bundle", str(tmp_path / "missing.bundle"), "--branch", "x", "--start", "HEAD", "--repository", "o/r"]
+    assert cli.main(args) == 1
+    assert "git bundle verify" in capsys.readouterr().err

@@ -41,6 +41,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `check-pins` | Fails unless every `setup-uv` and `setup-just` workflow step pins the versions required by `pyproject.toml` and the justfile, and the actions that the project uses from the repository of a locked package that is installed come from the commit of that package, or only from the tag of its version if the package does not record its commit (see [Checking actions against a locked package](#checking-actions-against-a-locked-package)). |
 | `check-checkout-credentials` | Fails on any `actions/checkout` step that does not set `persist-credentials`. |
 | `autofix` | Starts the PR Fixes workflow on a pull request, waits for the workflow that pushes its fixes, and prints the new head commit of the branch. |
+| `push-bundle` | Fetches the head of a Git bundle, checks that it adds commits to a start commit and that it changes only the paths you allow, and pushes it to a branch with a lease on the start commit (see [Pushing a Git bundle](#pushing-a-git-bundle)). |
 | `claude-route` | Reads a comment from standard input and prints `review`, `other` or `none` to route between the Claude workflows. |
 | `requirements-min-versions` | Checks or updates the `>=` minimum versions in `pyproject.toml` to match the versions in `uv.lock`. |
 | `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
@@ -342,6 +343,56 @@ For example, Claude Code on the web adds a footer to each comment that it posts.
 The command does not push, so its token needs only the Actions `write` and Pull requests `read` permissions.
 `--workflow` and `--push-workflow` name other workflow files, which must work as these two do.
 The command fails if either run fails, or if the fixes are not pushed within `--timeout` minutes (default `45`).
+
+### Pushing a Git bundle
+
+A job that runs the code of a branch must not hold a token that can push.
+So the job commits its changes, and uploads them as a Git bundle artifact.
+A separate push job, which runs no code from the branch, checks the bundle and pushes it.
+The `push-bundle` composite action does this push job's work:
+
+```yaml
+  push:
+    needs: fix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: sjktools/repoutils/.github/actions/push-bundle@v<version>
+        with:
+          token: ${{ secrets.PUSH_TOKEN }}
+          artifact: fix
+          branch: ${{ github.head_ref }}
+          start: ${{ github.event.pull_request.head.sha }}
+          single-commit: "true"
+          allow-paths: |
+            pyproject.toml
+            uv.lock
+```
+
+The action downloads the artifact (from another workflow run if you give `run-id`), and runs `repoutils push-bundle` from its own commit with the `python3` of the runner.
+Check out the start commit first, without persisted credentials.
+If the bundle contains a merge, check out the full history (`fetch-depth: 0`).
+
+The command fails, and pushes nothing, unless all of these are true:
+
+- The head of the bundle adds commits to `--start`.
+- With `--expected-head`, the head is that commit.
+- With `--single-commit`, the head is one commit on `--start`.
+- With `--clean-merge-of <base>`, the head is at most one merge of a commit on the base (or a fast-forward to one), and then at most one other commit.
+  The merge must be exactly the merge that Git makes.
+- No changed path is under a `--deny-path` unless it is also under an `--allow-path`.
+  With `--allow-path` and no `--deny-path`, every path outside the `--allow-path` paths is denied.
+  With `--clean-merge-of`, these rules apply only to the commit after the merge.
+
+The command reads the token from `$GITHUB_TOKEN`, and gives it to Git in an HTTP header from the environment, not in an argument.
+It pushes with `--force-with-lease` on `--start`, so the push fails if the branch moved.
+It runs no Git hooks.
+Push with a token other than a `GITHUB_TOKEN` if the push must start workflow runs.
 
 ## Configuration
 

@@ -495,3 +495,45 @@ def test_check_workflows_reads_an_escaped_quote_in_an_environment_name(
     config_text = '[tool.repoutils.secrets]\nenvironments.prod = ["TOKEN"]\n'
     assert _workflows(tmp_path, monkeypatch, config_text, ci_yml=workflow) == 1
     assert "TOKEN: used by job a in ci.yml, which declares environment prod'us" in capsys.readouterr().out
+
+
+def test_environments_prints_the_listed_environments_as_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(ENV_CONFIG + 'environments."my env" = []\n')
+    monkeypatch.chdir(tmp_path)
+    assert secrets.main(["environments"]) == 0
+    assert capsys.readouterr().out == '["release", "autofix", "my env"]\n'
+    assert secrets.main(["environments", "--with-repository"]) == 0
+    assert capsys.readouterr().out == '["", "release", "autofix", "my env"]\n'
+
+
+def test_environments_without_any_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert secrets.main(["environments"]) == 0
+    assert secrets.main(["environments", "--with-repository"]) == 0
+    assert capsys.readouterr().out == '[]\n[""]\n'
+
+
+def test_environments_fails_on_a_bad_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("[tool.repoutils.secrets]\nenvironments = 1\n")
+    monkeypatch.chdir(tmp_path)
+    assert secrets.main(["environments"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "environments must be a table" in captured.err
+
+
+def test_an_empty_environment_name_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('[tool.repoutils.secrets]\nenvironments."" = ["A"]\n')
+    monkeypatch.chdir(tmp_path)
+    assert secrets.main(["environments", "--with-repository"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "[tool.repoutils.secrets.environments] has an environment with an empty name\n"

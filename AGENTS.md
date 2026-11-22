@@ -223,11 +223,15 @@ The action runs `repoutils downstream finish`, which waits for the test PR's che
 So a test run succeeds only if it closed every test PR.
 
 `claude.yml` and `claude-code-review.yml` run Claude Code when a comment starts with `@claude` (with the `CLAUDE_CODE_OAUTH_TOKEN` secret).
-Their `route` jobs run `repoutils claude-route` from a sparse checkout of `src/repoutils/` with the runner's `python3`, installing nothing.
+Their `route` jobs run `repoutils claude-route` through the `claude-route` action, with the runner's `python3`, installing nothing.
+On a PR that changes either workflow, its self-test posts its report with the `post-comment` action, which hides the earlier reports.
 `[tool.repoutils.secrets]` in `pyproject.toml` lists the secrets these workflows use, which `repoutils secrets check` confirms the repository has.
 Update it when a workflow starts or stops using one, as `just secrets-workflows-check` fails if the two differ.
 A workflow that uses an Actions variable (`vars.NAME`) needs it listed in `[tool.repoutils.variables]` in the same way, which `just variables-workflows-check` checks.
-`inspect-secrets.yml`, run by hand from `main`, reports what each of them is with `repoutils secrets inspect`, with a job for each environment that holds secrets.
+`inspect-secrets.yml`, run by hand from `main`, reports what each of them is with `repoutils secrets inspect`.
+Its `plan` job lists the environments that `[tool.repoutils.secrets]` gives secrets to, with `repoutils secrets environments`.
+Its matrix then has a job for the repository and one for each of those environments.
+Each of them runs the `inspect-secrets` action, which also uploads the job's step summary.
 `export-secrets.yml` is run the same way, and backs up their values with `repoutils secrets export`, encrypted to the GitHub key that the `SECRETS_EXPORT_KEY` variable names.
 `ci.yml`'s `secrets-export` job checks on every PR that this still works, with `just secrets-export-test`, which runs `secrets export --self-test` to round-trip made-up secrets.
 Both install age with the `.github/actions/install-age` action, which pins its release by version and SHA-256, so update both together.

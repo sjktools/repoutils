@@ -1090,6 +1090,11 @@ Therefore, `check-workflows` also fails when a job references an environment-onl
 When a job sets `environment:` to an expression, `check-workflows` cannot determine the environment name statically and skips environment secret checks for that job.
 The command ignores `GITHUB_TOKEN` (which GitHub provides automatically) and ignores text inside YAML comments.
 
+`repoutils secrets environments` also requires no GitHub token.
+It prints the environments in `[tool.repoutils.secrets]` as a JSON array, such as `["release", "autofix"]`, for a workflow matrix that runs `inspect` once for each environment.
+With `--with-repository`, the array starts with `""`, which stands for a job that deploys to no environment and inspects the repository secrets.
+The `inspect-secrets.yml` workflow of this repository passes that array to its matrix with `fromJSON`, so the jobs always match `pyproject.toml`.
+
 `repoutils secrets inspect` runs inside a GitHub Actions workflow and reports metadata about each secret without printing secret values.
 Use `inspect` to identify which token or key a secret contains and to detect tokens that will expire soon.
 Pass the job secrets to the command in the environment variable `SECRETS_JSON: ${{ toJSON(secrets) }}`.
@@ -1131,6 +1136,11 @@ The command writes a Markdown summary table to `$GITHUB_STEP_SUMMARY` (or to `--
 - A token has surrounding whitespace.
 
 Passing `--exit-zero` ignores those three findings, but the command still exits non-zero on a failed network request or an unparseable expiration date.
+
+The `inspect-secrets` composite action of this repository runs `inspect` as the only step of a job.
+It checks out `pyproject.toml`, runs `inspect`, and uploads the step summary as the artifact `step-summaries-<job>` (`step-summaries-<job>-<environment>` with an environment), so the job needs the Contents `read` permission.
+In the name of the artifact, the action percent-encodes each `%`, and each character that an artifact name cannot hold, such as `/`.
+Pass it the secrets as `secrets-json: ${{ toJSON(secrets) }}`, as a composite action cannot read them, and pass `environment` and `secret-names` where the job has them.
 
 `repoutils secrets inspect-remote` runs `inspect` from your own machine.
 It starts the workflow that runs `inspect` (`--workflow FILE`, default `inspect-secrets.yml`) on the default branch of the repository (`--ref BRANCH` to change it), and waits for the run to finish.

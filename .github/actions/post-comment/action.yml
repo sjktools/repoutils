@@ -1,0 +1,54 @@
+name: Post a pull request comment
+description: >-
+  Posts a Markdown file to a pull request as a comment, editing the one an
+  earlier run posted, with `repoutils post-comment`.
+
+# Runs repoutils from this action's own commit, with the runner's python3,
+# installing nothing. The job needs pull-requests write. Check out
+# pyproject.toml first if [tool.repoutils] sets comment-prefix, as the
+# comment's marker uses it.
+inputs:
+  pr:
+    description: The pull request's number.
+    required: true
+  body:
+    description: The Markdown file to post.
+    required: true
+  name:
+    description: Names the comment's marker, <!-- <comment-prefix>-<name> -->.
+    required: true
+  update-only:
+    description: Set to true to edit the earlier comment, but post nothing if there's none.
+    required: false
+    default: "false"
+  token:
+    description: The token to comment with.
+    required: false
+    default: ${{ github.token }}
+  author:
+    description: The login the token comments as, to find the earlier comment by.
+    required: false
+    default: github-actions[bot]
+
+runs:
+  using: composite
+  steps:
+    - name: Post the comment
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        PR: ${{ inputs.pr }}
+        BODY: ${{ inputs.body }}
+        NAME: ${{ inputs.name }}
+        UPDATE_ONLY: ${{ inputs.update-only }}
+        AUTHOR: ${{ inputs.author }}
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+        PYTHONSAFEPATH: "1"
+      run: |
+        args=()
+        case "$UPDATE_ONLY" in
+          true) args+=(--update-only) ;;
+          false) ;;
+          *) echo "::error::update-only must be true or false, not $UPDATE_ONLY."; exit 1 ;;
+        esac
+        python3 -m repoutils post-comment "$PR" "$BODY" --name "$NAME" --author "$AUTHOR" "${args[@]}"

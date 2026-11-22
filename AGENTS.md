@@ -168,11 +168,13 @@ The commenter's author association must be `OWNER` or `MEMBER`, so outside colla
 It dispatches `fix.yml` on the PR's branch, which runs `just fix` with no secrets and uploads its commits as a Git bundle.
 Then `fix-push.yml` checks that the bundle only adds commits to the branch, and pushes them from `main`, where it always runs.
 The bundle may hold only a clean merge of the PR's base and one commit that changes nothing in `.github/workflows` but `actions.lock`.
-`autofix-comment.yml` waits for the fix run and dispatches `fix-push.yml` itself, as a run dispatched with a `GITHUB_TOKEN` starts no `workflow_run` workflow.
+`autofix-comment.yml` runs the `autofix-start` action, which runs `repoutils autofix`.
+That waits for the fix run and dispatches `fix-push.yml` itself, as a run dispatched with a `GITHUB_TOKEN` starts no `workflow_run` workflow.
 A `workflow_run` trigger covers a fix run that a person starts by hand.
-`autofix-comment.yml` passes the PR's number to `fix.yml`, which puts it in the run's name, as GitHub's API gives a run's name but not its inputs, and `fix-push.yml` reads it from there.
+`repoutils autofix` passes the PR's number to `fix.yml`, which puts it in the run's name, as GitHub's API gives a run's name but not its inputs, and `fix-push.yml` reads it from there.
 A fix run started by hand without a number needs the branch to have exactly one open PR in this repository.
 If either run fails, or either can't start, the PR gets one comment saying so, which later runs edit, so a success replaces an earlier failure.
+`fix-push.yml`'s `report` job posts it with the `post-comment` action, and `autofix-start` posts it only if that job didn't succeed.
 The fix runs on the branch rather than on `main` because code in a run can write to the Actions cache of the run's branch.
 On `main`, that would reach the jobs that publish, tag or bump a release, which use no cache either, as a second line of defence.
 `AUTOFIX_TOKEN` lives in the `autofix` environment, which only `main` can deploy to, as with `release`.

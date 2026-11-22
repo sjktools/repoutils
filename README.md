@@ -333,7 +333,8 @@ For example, Claude Code on the web adds a footer to each comment that it posts.
 
 - The command starts `fix.yml` on the branch of the pull request, with the head commit and the number of the pull request as inputs.
   It refuses a pull request that is closed, comes from a fork, or comes from the default branch.
-- When that run succeeds, the command finds the `fix-push.yml` run for it by the run name `PR Fixes Push for run <run ID>`.
+- When that run finishes, the command finds the `fix-push.yml` run for it by the run name `PR Fixes Push for run <run ID>`.
+  It does this even if the run failed, because the `report` job of `fix-push.yml` comments on the pull request about a failed run too.
   GitHub starts that run itself, because `fix-push.yml` has a `workflow_run` trigger.
 - GitHub starts no `workflow_run` workflow for a run that a `GITHUB_TOKEN` starts.
   For such a run, or when no `fix-push.yml` run appears within two minutes, the command starts `fix-push.yml` on the default branch with the run ID as input.
@@ -344,6 +345,21 @@ For example, Claude Code on the web adds a footer to each comment that it posts.
 The command does not push, so its token needs only the Actions `write` and Pull requests `read` permissions.
 `--workflow` and `--push-workflow` name other workflow files, which must work as these two do.
 The command fails if either run fails, or if the fixes are not pushed within `--timeout` minutes (default `45`).
+
+Two options are for a workflow that runs the command for a `/autofix` comment:
+
+- `--comment-id <ID>` reacts to the comment with a rocket once the fix run starts.
+  The token then needs the Pull requests `write` permission.
+  If the reaction fails, the command only warns.
+- `--report <file>` writes the Markdown for a comment on the pull request when the command fails, unless the `report` job of the `fix-push.yml` run succeeded.
+  The comment says how far the command got, and links to the run of the workflow, which the command reads from `$GITHUB_SERVER_URL`, `$GITHUB_REPOSITORY` and `$GITHUB_RUN_ID`.
+
+In GitHub Actions, the command prints its errors and warnings as annotations.
+
+The `autofix-start` composite action is the job of `autofix-comment.yml`.
+It does nothing unless the comment is `/autofix`, ignoring whitespace.
+It runs `repoutils autofix` with both options, and posts the report with `repoutils post-comment`, in the comment that the `report` job of `fix-push.yml` posts.
+The `post-comment` composite action runs `repoutils post-comment`, and is the last step of that `report` job.
 
 The two workflows check the fix run and its pull request with two subcommands, which the `autofix-check` and `autofix-resolve` composite actions run from their own commit with the `python3` of the runner:
 
@@ -366,7 +382,7 @@ A project that uses these actions must keep these names:
 
 - The workflow files are `fix.yml` and `fix-push.yml`, and their workflow names are `PR Fixes` and `PR Fixes Push`.
 - The run name of `fix.yml` is `PR Fixes #<number>`, or `PR Fixes` without a number.
-- The run name of `fix-push.yml` is `PR Fixes Push for run <fix run ID>`, and its job that pushes the fixes is `push`.
+- The run name of `fix-push.yml` is `PR Fixes Push for run <fix run ID>`, its job that pushes the fixes is `push`, and its job that comments on the pull request is `report`.
 - The artifact that holds the bundle is `fixes`.
 
 ### Pushing a Git bundle

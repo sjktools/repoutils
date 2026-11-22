@@ -136,9 +136,8 @@ jobs:
           deny-paths: .github/workflows
           allow-paths: .github/workflows/actions.lock
 
-  # Runs main's repoutils from a sparse checkout with the runner's python3,
-  # installing nothing, like claude.yml's route job. It reports only when
-  # resolve could read the run's branch, as it finds the PR from that.
+  # It reports only when resolve could read the run's branch, as it finds the
+  # PR from that.
   report:
     needs: [resolve, push]
     if: >-
@@ -153,19 +152,17 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Checkout repoutils' source
+      # Only for [tool.repoutils]'s comment-prefix, which the comment's marker uses.
+      - name: Checkout pyproject.toml
         uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-          sparse-checkout: |
-            /src/repoutils/
-            /pyproject.toml
+          sparse-checkout: /pyproject.toml
           sparse-checkout-cone-mode: false
 
-      - name: Report on the pull request
+      - name: Write the report
+        id: write
         env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_TOKEN: ${{ github.token }}
           BRANCH: ${{ needs.resolve.outputs.branch }}
           START_SHA: ${{ needs.resolve.outputs.start_sha }}
           FIX_CONCLUSION: ${{ needs.resolve.outputs.conclusion }}
@@ -176,13 +173,13 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           # The resolve job couldn't tell which PR the fix run was for. Failing
-          # lets autofix-comment.yml report on the PR that was commented on.
+          # lets autofix-start report on the PR that was commented on.
           if [ -z "$NUMBER" ]; then
             echo "::error::Couldn't tell which pull request to report to on branch $BRANCH."
             exit 1
           fi
           body="$RUNNER_TEMP/autofix.md"
-          update_only=()
+          update_only=false
           # Push is skipped only when resolve found no bundle; any other result
           # means the fixes weren't pushed, whether a check refused them (the
           # branch moved on, say) or something failed.
@@ -190,12 +187,22 @@ jobs:
             echo "PR Fixes [failed]($FIX_URL) on $START_SHA, so nothing was pushed." > "$body"
           elif [ "$RESOLVE_RESULT" = success ] && [ "$PUSH_RESULT" = success ]; then
             echo "PR Fixes [pushed its fixes]($RUN_URL) on top of $START_SHA." > "$body"
-            update_only=(--update-only)
+            update_only=true
           elif [ "$RESOLVE_RESULT" = success ] && [ "$PUSH_RESULT" = skipped ]; then
             echo "PR Fixes [found nothing to fix]($FIX_URL) on $START_SHA." > "$body"
-            update_only=(--update-only)
+            update_only=true
           else
             echo "PR Fixes ran on $START_SHA, but [didn't push its fixes]($RUN_URL)." > "$body"
           fi
-          PYTHONPATH=src python3 -m repoutils post-comment "$NUMBER" "$body" \
-            --name autofix --author "github-actions[bot]" "${update_only[@]}"
+          {
+            echo "body=$body"
+            echo "update_only=$update_only"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Report on the pull request
+        uses: $/.github/actions/post-comment
+        with:
+          pr: ${{ needs.resolve.outputs.number }}
+          body: ${{ steps.write.outputs.body }}
+          name: autofix
+          update-only: ${{ steps.write.outputs.update_only }}

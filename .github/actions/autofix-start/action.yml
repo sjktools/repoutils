@@ -1,0 +1,78 @@
+name: Start PR Fixes for an /autofix comment
+description: >-
+  Runs PR Fixes on a pull request for a comment that is just `/autofix`, with
+  `repoutils autofix`, hands its fixes to PR Fixes Push, and waits for that to
+  report on the pull request. If PR Fixes Push can't, this reports instead.
+
+# Runs repoutils from this action's own commit, with the runner's python3,
+# installing nothing. Use it in a job for an issue_comment event, with actions
+# write and pull-requests write, and a timeout longer than the timeout input,
+# as a job that times out runs no failure() steps. Check out pyproject.toml
+# first if [tool.repoutils] sets comment-prefix, as the report comment's marker
+# uses it. The workflows must be fix.yml and fix-push.yml, as
+# `repoutils autofix --help` describes.
+#
+# It comments with the job's GITHUB_TOKEN, as github-actions[bot], in the
+# comment that fix-push.yml's report job posts. A fix run started with a
+# GITHUB_TOKEN starts no workflow_run workflow, so `repoutils autofix` starts
+# fix-push.yml itself.
+inputs:
+  pr:
+    description: The pull request's number.
+    required: true
+  comment-id:
+    description: The comment's ID, to react to with a rocket once PR Fixes starts.
+    required: true
+  comment-body:
+    description: The comment's body. Nothing runs unless it's /autofix, whitespace aside.
+    required: true
+  timeout:
+    description: Minutes to wait for the fixes to be pushed.
+    required: false
+    default: "40"
+
+runs:
+  using: composite
+  steps:
+    - name: Check the comment is only /autofix
+      id: check
+      shell: bash
+      env:
+        BODY: ${{ inputs.comment-body }}
+      run: |
+        if [[ $BODY =~ ^[[:space:]]*/autofix[[:space:]]*$ ]]; then
+          echo "matched=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "Comment has more than /autofix in it; not running PR Fixes."
+        fi
+
+    - name: Run PR Fixes and push its fixes
+      id: autofix
+      if: steps.check.outputs.matched == 'true'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        PR: ${{ inputs.pr }}
+        COMMENT_ID: ${{ inputs.comment-id }}
+        TIMEOUT: ${{ inputs.timeout }}
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+        PYTHONSAFEPATH: "1"
+      run: |
+        python3 -m repoutils autofix "$PR" --comment-id "$COMMENT_ID" --timeout "$TIMEOUT" \
+          --report "$RUNNER_TEMP/autofix-report.md"
+
+    # `repoutils autofix` writes the report only if PR Fixes Push didn't
+    # comment on the pull request itself.
+    - name: Report on the pull request
+      if: failure() && steps.autofix.outcome == 'failure'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        PR: ${{ inputs.pr }}
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+        PYTHONSAFEPATH: "1"
+      run: |
+        report="$RUNNER_TEMP/autofix-report.md"
+        if [ -f "$report" ]; then
+          python3 -m repoutils post-comment "$PR" "$report" --name autofix --author "github-actions[bot]"
+        fi

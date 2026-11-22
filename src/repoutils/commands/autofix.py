@@ -10,9 +10,14 @@ fixes, found by its run name, which names the fix run.
 
 GitHub starts that push run itself, through its ``workflow_run`` trigger,
 unless the fix run was started with a GITHUB_TOKEN. Then, or if no push run
-appears within two minutes, this starts it on the default branch, as
-autofix-comment.yml does. The push run, not this command, pushes the fixes,
-and needs a token this command never sees.
+appears within two minutes, this starts it on the default branch. It hands
+every fix run to a push run, even a failed one, as the push run's report job
+tells the PR how the fix run went. The push run, not this command, pushes the
+fixes, and needs a token this command never sees.
+
+The ``autofix-start`` action runs it for a ``/autofix`` comment, with
+``--comment-id`` to react to the comment and ``--report`` to say on the PR
+what went wrong when the push run couldn't.
 
 ``autofix resolve`` and ``autofix check-branch`` are the checks the two
 workflows make of the fix run and its PR (see ``repoutils.autofix_runs``).
@@ -23,6 +28,9 @@ import os
 import subprocess
 import sys
 import urllib.error
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
 from time import monotonic, sleep
 from typing import Any
 
@@ -37,6 +45,28 @@ PUSH_GRACE = 120.0
 # GitHub starts no workflow_run workflow for a run this account started.
 GITHUB_ACTIONS_BOT = "github-actions[bot]"
 SUBCOMMANDS = ("resolve", "check-branch")
+# fix-push.yml's job that comments on the PR.
+REPORT_JOB = "report"
+
+
+@dataclass
+class Progress:
+    """How far autofix() got, for the report a workflow posts when it fails."""
+
+    fix_url: str | None = None
+    push_url: str | None = None
+    # Whether the push run's report job commented on the PR.
+    reported: bool = False
+
+
+def _annotation(kind: str) -> str:
+    """The prefix that makes GitHub Actions show a line as an annotation, or
+    nothing outside Actions."""
+    return f"::{kind}::" if os.environ.get("GITHUB_ACTIONS") == "true" else ""
+
+
+def _run_page(repo: str, run_id: int) -> str:
+    return f"https://github.com/{repo}/actions/runs/{run_id}"
 
 
 def check_pr(repo: str, pr: int, token: str) -> tuple[str, str]:
@@ -45,6 +75,50 @@ def check_pr(repo: str, pr: int, token: str) -> tuple[str, str]:
     data = github.request("GET", f"{github.API_URL}/repos/{repo}/pulls/{pr}", token)
     autofix_runs.check_pr_data(data, pr)
     return str(data["head"]["ref"]), str(data["head"]["sha"])
+
+
+def _close(e: OSError) -> None:
+    """Close an HTTPError's response, which an error that's handled and
+    dropped would otherwise leave open."""
+    if isinstance(e, urllib.error.HTTPError):
+        e.close()
+
+
+def react(repo: str, comment_id: int, token: str) -> None:
+    """React to the comment with a rocket. The fix run has started by then,
+    so a failure only warns: a failed run would suggest commenting again."""
+    try:
+        github.request(
+            "POST",
+            f"{github.API_URL}/repos/{repo}/issues/comments/{comment_id}/reactions",
+            token,
+            json_body={"content": "rocket"},
+        )
+    except OSError as e:
+        _close(e)
+        print(f"{_annotation('warning')}Couldn't react to comment {comment_id}: {e}", file=sys.stderr)
+
+
+def report_succeeded(repo: str, run_id: int, token: str) -> bool:
+    """Whether the push run's report job succeeded, and so commented on the PR."""
+    url = f"{github.API_URL}/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100"
+    jobs = github.request("GET", url, token)["jobs"]
+    return any(job.get("name") == REPORT_JOB and job.get("conclusion") == "success" for job in jobs)
+
+
+def report(progress: Progress, run_url: str) -> str | None:
+    """The Markdown to post on the PR for a run that failed, or None if the
+    push run's report job already said how it went."""
+    if progress.reported:
+        return None
+    if progress.fix_url is None:
+        return f"/autofix [couldn't start PR Fixes]({run_url}).\n"
+    if progress.push_url is None:
+        return f"/autofix started [PR Fixes]({progress.fix_url}), but [couldn't start pushing its fixes]({run_url}).\n"
+    return (
+        f"/autofix started [PR Fixes]({progress.fix_url}), "
+        f"but [PR Fixes Push]({progress.push_url}) didn't report whether it pushed the fixes.\n"
+    )
 
 
 def find_push_run(
@@ -93,32 +167,56 @@ def autofix(
     push_workflow: str = PUSH_WORKFLOW,
     interval: float,
     timeout: float,
+    comment_id: int | None = None,
+    progress: Progress | None = None,
 ) -> int:
     """Run PR Fixes on pr and wait for its fixes to be pushed. Exits 0 if
-    they were, or there was nothing to fix."""
+    they were, or there was nothing to fix. Reacts to comment_id if given,
+    and records how far it got in progress if given."""
+    progress = progress or Progress()
     deadline = monotonic() + timeout
     branch, head_sha = check_pr(repo, pr, token)
     # The head commit makes the run fail if the branch moves on before it
     # starts, and the number goes into its name, where fix-push.yml reads it.
     inputs = {"head-sha": head_sha, "pr-number": str(pr)}
     fix_run_id = workflow_summaries.dispatch(repo, workflow, branch, token, inputs)
-    print(f"Started {workflow} on {branch}: https://github.com/{repo}/actions/runs/{fix_run_id}", file=sys.stderr)
+    progress.fix_url = _run_page(repo, fix_run_id)
+    print(f"Started {workflow} on {branch}: {progress.fix_url}", file=sys.stderr)
+    if comment_id is not None:
+        react(repo, comment_id, token)
     fix_run = workflow_summaries.wait(
         repo, fix_run_id, token, interval=interval, timeout=deadline - monotonic(), just_started=True
     )
-    if fix_run.get("conclusion") != "success":
+    fixed = fix_run.get("conclusion") == "success"
+    if not fixed:
         print(
             f"{workflow} run {fix_run_id} finished with conclusion {fix_run.get('conclusion')}, "
-            f"so nothing was pushed: {fix_run.get('html_url')}",
+            f"so it has nothing to push: {fix_run.get('html_url')}",
             file=sys.stderr,
         )
-        return 1
+    # Even a failed fix run, as the push run reports it on the PR.
     push_run_id = start_push(repo, push_workflow, fix_run, token, interval=interval, deadline=deadline)
-    print(f"Waiting for {push_workflow}: https://github.com/{repo}/actions/runs/{push_run_id}", file=sys.stderr)
-    push_run = workflow_summaries.wait(
-        repo, push_run_id, token, interval=interval, timeout=max(deadline - monotonic(), 0.0), just_started=True
-    )
-    if push_run.get("conclusion") != "success":
+    progress.push_url = _run_page(repo, push_run_id)
+    print(f"Waiting for {push_workflow}: {progress.push_url}", file=sys.stderr)
+    try:
+        push_run = workflow_summaries.wait(
+            repo, push_run_id, token, interval=interval, timeout=max(deadline - monotonic(), 0.0), just_started=True
+        )
+    except OSError:
+        # A failed poll or a timeout says nothing about the report job, which
+        # may have commented already. If this fails too, the wait's error is
+        # still the one to show.
+        try:
+            progress.reported = report_succeeded(repo, push_run_id, token)
+        except OSError as e:
+            _close(e)
+        raise
+    pushed = push_run.get("conclusion") == "success"
+    if not fixed or not pushed:
+        progress.reported = report_succeeded(repo, push_run_id, token)
+    if not fixed:
+        return 1
+    if not pushed:
         print(
             f"{push_workflow} run {push_run_id} finished with conclusion {push_run.get('conclusion')}, "
             f"so the fixes may not have been pushed: {push_run.get('html_url')}",
@@ -211,8 +309,9 @@ def _autofix_parser() -> argparse.ArgumentParser:
         description=summary(__doc__),
         epilog="Prints the branch's new head commit on standard output if fixes were pushed. "
         "Fails if either run fails. "
+        "In GitHub Actions, its errors and warnings are annotations. "
         "Uses $GITHUB_TOKEN, defaulting to `gh auth token`, which needs the Actions write permission, "
-        "and Pull requests read. "
+        "and Pull requests read, or write with --comment-id. "
         "The workflows must be repoutils' own, or work as they do: "
         "the push workflow's run-name must be 'PR Fixes Push for run <fix run ID>'. "
         "`repoutils autofix resolve` and `repoutils autofix check-branch` are the checks the two workflows make "
@@ -235,6 +334,18 @@ def _autofix_parser() -> argparse.ArgumentParser:
         metavar="SECONDS",
         help="how often to check on the runs (default: 10)",
     )
+    parser.add_argument(
+        "--comment-id",
+        type=_number,
+        help="the ID of the /autofix comment to react to with a rocket once the fix run starts",
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        metavar="FILE",
+        help="if this fails and the push workflow didn't comment on the pull request, "
+        "write the Markdown to post there to FILE, linking to this run (for a GitHub Actions job)",
+    )
     return parser
 
 
@@ -245,7 +356,7 @@ def _actions_env(name: str) -> str:
     return value
 
 
-def _run_command(command: str, args: argparse.Namespace) -> int:
+def _run_command(command: str, args: argparse.Namespace, progress: Progress) -> int:
     token = os.environ.get("GITHUB_TOKEN") or github.gh_output("auth", "token")
     repo = args.repo or github.gh_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
     if command == "resolve":
@@ -277,7 +388,36 @@ def _run_command(command: str, args: argparse.Namespace) -> int:
         push_workflow=args.push_workflow,
         interval=args.interval,
         timeout=args.timeout * 60,
+        comment_id=args.comment_id,
+        progress=progress,
     )
+
+
+def _write_report(path: Path, progress: Progress) -> None:
+    run_url = (
+        f"{_actions_env('GITHUB_SERVER_URL')}/{_actions_env('GITHUB_REPOSITORY')}"
+        f"/actions/runs/{_actions_env('GITHUB_RUN_ID')}"
+    )
+    body = report(progress, run_url)
+    if body is None:
+        print("The push run reported on the pull request, so there's nothing more to report.", file=sys.stderr)
+    else:
+        path.write_text(body)
+
+
+def _guarded(error: str, action: Callable[[], int | None]) -> int:
+    """Run action, printing an exception it raises and returning 1 for it."""
+    try:
+        return action() or 0
+    except subprocess.CalledProcessError as e:
+        print(f"{error}{' '.join(e.cmd)} failed:\n{e.stderr}", file=sys.stderr)
+    except urllib.error.HTTPError as e:
+        with e:
+            detail = e.read().decode(errors="replace")
+        print(f"{error}HTTP {e.code} from {e.filename}:\n{detail}", file=sys.stderr)
+    except (OSError, ValueError, RuntimeError) as e:
+        print(f"{error}{e}", file=sys.stderr)
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -290,20 +430,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         args = _autofix_parser().parse_args(argv)
     # The subcommands run in a workflow, where an ::error:: line is shown as an annotation.
-    error = "::error::" if command else ""
-    try:
-        return _run_command(command, args)
-    except subprocess.CalledProcessError as e:
-        print(f"{error}{' '.join(e.cmd)} failed:\n{e.stderr}", file=sys.stderr)
-        return 1
-    except urllib.error.HTTPError as e:
-        with e:
-            detail = e.read().decode(errors="replace")
-        print(f"{error}HTTP {e.code} from {e.filename}:\n{detail}", file=sys.stderr)
-        return 1
-    except (OSError, ValueError, RuntimeError) as e:
-        print(f"{error}{e}", file=sys.stderr)
-        return 1
+    error = "::error::" if command else _annotation("error")
+    progress = Progress()
+    code = _guarded(error, lambda: _run_command(command, args, progress))
+    if code and not command and args.report:
+        _guarded(error, lambda: _write_report(args.report, progress))
+    return code
 
 
 run = main

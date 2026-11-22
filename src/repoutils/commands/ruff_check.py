@@ -39,10 +39,11 @@ def main(ruff_args: list[str]) -> int:
 def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="repoutils ruff-check",
-        allow_abbrev=False,
         usage="%(prog)s [-h] [RUFF_ARGS ...]",
         description=summary(__doc__),
-        epilog="Every argument but -h and --help goes to `ruff check`, in order.",
+        epilog="Every argument goes to `ruff check`, in order, unless -h or --help comes before any --.",
     )
-    _, ruff_args = parser.parse_known_args(argv)
-    return main(ruff_args)
+    end = argv.index("--") if "--" in argv else len(argv)
+    if any(argument in ("-h", "--help") for argument in argv[:end]):
+        parser.parse_args(["--help"])
+    return main(argv)

@@ -40,7 +40,7 @@ def _run(monkeypatch: pytest.MonkeyPatch, argv: list[str], *, stderr: str = "", 
 def test_passes_arguments_in_order_after_no_cache(
     fake_ruff: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
-    argv = ["src", "--select", "E501", "--", "-odd"]
+    argv = ["src", "--select", "E501", "-hq", "--help=x", "--", "-h"]
     assert _run(monkeypatch, argv) == 0
     assert fake_ruff.read_text().split("\n") == ["check", "--no-cache", *argv]
     out, err = capfd.readouterr()

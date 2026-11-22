@@ -378,15 +378,37 @@ Two options are for a workflow that runs the command for a `/autofix` comment:
   If GitHub refused to start a run, the comment gives the reason from GitHub.
 
 GitHub does not start a workflow whose `uses:` are not all in `.github/workflows/actions.lock`.
-So a branch that changes the `uses:` of `fix.yml`, for example to move to a new release of the actions of repoutils, can stop `/autofix` from starting.
-`/autofix` cannot then update `actions.lock` itself.
+So a branch that changes the `uses:` of `fix.yml`, for example to move to a new release of the actions of repoutils, can stop `fix.yml` from starting.
 The command and the comment of `--report` recognise this error, and say how to fix it: run `gh actions-lock` on the branch where `gh` is logged in to GitHub, then commit and push `actions.lock`.
+
+A `/autofix` comment updates `actions.lock` on the branch itself, because `autofix-comment.yml` runs from the default branch, with the `actions.lock` of the default branch.
+Two more options are for this:
+
+- `--relock <file>` makes the command exit `0` when GitHub refuses to start `fix.yml` for this error.
+  The command then appends `relock=true` and `head_sha=<head commit>` to the file, such as `$GITHUB_OUTPUT`, for a later job that updates `actions.lock`.
+- `--relocked <run ID>` is for a job after that later job, in the same run.
+  The command starts `fix-push.yml` with that run ID, which pushes the commit of the `relock` job of the run, and then starts `fix.yml` on the new head commit.
+  If the `relock` job failed or changed nothing, the command starts `fix.yml` without a push.
+  If GitHub refuses again, the comment says so, and nothing updates `actions.lock` a second time.
+
+In `autofix-comment.yml`, the `dispatch` job runs the command with `--relock`.
+If GitHub refuses to start `fix.yml` for this error, the `relock` job runs the `autofix-relock` composite action:
+
+- The action checks out the head commit of the pull request, and runs `gh actions-lock` with the read-only `GITHUB_TOKEN` of the job.
+- It commits `actions.lock`, and uploads the commit as a Git bundle in the `fixes` artifact.
+- The job has no secrets and only the Contents `read` permission, and runs no code from the branch.
+  `gh actions-lock` only reads the workflow files, and reads the actions that they use through the API.
+
+The `retry` job then runs the command with `--relocked`.
+`fix-push.yml` pushes that commit only if it is one commit on the head commit of the pull request, and changes only `actions.lock`.
+The `actions.lock` change shows in the diff of the pull request, and the push triggers CI, as a push of fixes does.
 
 In GitHub Actions, the command prints its errors and warnings as annotations.
 
 The `autofix-start` composite action is the job of `autofix-comment.yml`.
 It does nothing unless the comment is `/autofix`, ignoring whitespace.
-It runs `repoutils autofix` with both options, and posts the report with `repoutils post-comment`, with the marker of the comment that the `report` job of `fix-push.yml` posts.
+It runs `repoutils autofix` with `--comment-id` and `--report`, and posts the report with `repoutils post-comment`, with the marker of the comment that the `report` job of `fix-push.yml` posts.
+With its `relock` input set to `true`, it also passes `--relock`, and with its `relocked-run` input, it passes `--relocked` instead.
 The `post-comment` composite action runs `repoutils post-comment`, and is the last step of that `report` job.
 Each report, of a success or a failure, is a new comment below the `/autofix` comment, because GitHub notifies the subscribers of the pull request about a new comment but not about an edit.
 The report hides the earlier reports as outdated.
@@ -397,11 +419,14 @@ The two workflows check the fix run and its pull request with two subcommands, w
   It fails unless the run is on a branch other than the default branch, at `--head-sha` if given.
   It then finds the pull request, with `--pr-number` if given, and prints its base branch as `base_branch`.
 - `repoutils autofix resolve --run-id <run ID>` is the `resolve` job of `fix-push.yml`.
-  It fails unless the run is a finished `workflow_dispatch` run of `fix.yml` on a branch of the repository other than the default branch.
+  It fails unless the run is a finished `workflow_dispatch` run of `fix.yml` on a branch of the repository other than the default branch, or a relock run.
   It finds the pull request, even if the run failed, so that the `report` job can comment on it.
   If the run succeeded, it fails if the branch moved on from the commit where the run started, unless another `fix-push.yml` run for the same fix run already pushed the fixes.
-  It prints `run_id`, `pr_number`, `branch`, `start_sha`, `conclusion`, `url`, `number`, `head_sha` and `base`.
+  It prints `kind` (`fix` or `relock`), `run_id`, `pr_number`, `branch`, `start_sha`, `conclusion`, `url`, `number`, `head_sha` and `base`.
   If the run succeeded, it also prints `fixes` and `already_pushed`.
+- A relock run is an `issue_comment` run of `autofix-comment.yml` (`--relock-workflow`) on the default branch, with the run name `Comment on #<pull request>`.
+  Its `relock` job must have finished, though the run itself has not.
+  Its `conclusion` and `url` are those of the `relock` job, and its `start_sha` is the head commit of the pull request.
 
 Both subcommands print their outputs as `name=value` lines, for `$GITHUB_OUTPUT`.
 Both find the pull request in the same way.

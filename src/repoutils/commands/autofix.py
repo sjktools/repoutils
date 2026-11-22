@@ -22,6 +22,12 @@ the report gives GitHub's reason. When the reason is an ``actions.lock`` that
 doesn't list every action ``fix.yml`` uses, the report also says how to fix
 it, as PR Fixes, which would relock it, can't start until it does.
 
+In ``autofix-comment.yml``, ``--relock`` hands that refusal to a later job,
+which relocks the branch with no write token (the ``autofix-relock`` action).
+The job after that runs this again with ``--relocked``: it has the push
+workflow push the relock's commit, then starts PR Fixes on the new head. If
+GitHub refuses again, the report says so, and nothing relocks a second time.
+
 ``autofix resolve`` and ``autofix check-branch`` are the checks the two
 workflows make of the fix run and its PR (see ``repoutils.autofix_runs``).
 Stdlib-only, like every repoutils module."""
@@ -42,6 +48,7 @@ from repoutils.docstrings import summary
 
 FIX_WORKFLOW = autofix_runs.FIX_WORKFLOW
 PUSH_WORKFLOW = autofix_runs.PUSH_WORKFLOW
+FIXES_ARTIFACT = autofix_runs.FIXES_ARTIFACT
 push_run_name = autofix_runs.push_run_name
 # How long to wait for GitHub to start the push run before starting it here.
 PUSH_GRACE = 120.0
@@ -62,6 +69,11 @@ class Progress:
     reported: bool = False
     # Why GitHub refused to start a run, as its API said.
     refused: str | None = None
+    # With --relocked: the relock job's page, the push run for its commit,
+    # and, once that's done, a note on how it went for the end of the report.
+    relock_url: str | None = None
+    relock_push_url: str | None = None
+    relock: str | None = None
 
 
 def _run_page(repo: str, run_id: int) -> str:
@@ -78,8 +90,7 @@ def check_pr(repo: str, pr: int, token: str) -> tuple[str, str]:
 
 def report_succeeded(repo: str, run_id: int, token: str) -> bool:
     """Whether the push run's report job succeeded, and so commented on the PR."""
-    url = f"{github.API_URL}/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100"
-    jobs = github.request("GET", url, token)["jobs"]
+    jobs = autofix_runs.run_jobs(repo, run_id, token)
     return any(job.get("name") == REPORT_JOB and job.get("conclusion") == "success" for job in jobs)
 
 
@@ -99,16 +110,20 @@ def lockfile_refused(reason: str) -> bool:
 
 
 LOCKFILE_FIX = (
-    "GitHub won't start a workflow until `.github/workflows/actions.lock` lists every action it uses, "
-    "so /autofix can't relock it. "
+    "GitHub won't start a workflow until `.github/workflows/actions.lock` lists every action it uses. "
     "Run `gh actions-lock` (the github/gh-actions-lock extension) on the branch, "
     "wherever `gh` is logged in to GitHub, then commit and push `actions.lock`.\n"
 )
 
 
+class LockfileRefused(RuntimeError):
+    """GitHub refused to start a workflow because actions.lock doesn't list every action it uses."""
+
+
 def dispatch(repo: str, workflow: str, ref: str, token: str, inputs: dict[str, str], progress: Progress) -> int:
     """workflow_summaries.dispatch, recording why in progress and raising
-    RuntimeError if GitHub refuses to start the run."""
+    RuntimeError if GitHub refuses to start the run (LockfileRefused for
+    an incomplete actions.lock)."""
     try:
         return workflow_summaries.dispatch(repo, workflow, ref, token, inputs)
     except urllib.error.HTTPError as e:
@@ -118,7 +133,7 @@ def dispatch(repo: str, workflow: str, ref: str, token: str, inputs: dict[str, s
         progress.refused = reason
         message = f"GitHub refused to start {workflow} on {ref}: {reason}"
         if lockfile_refused(reason):
-            message += f"\n{LOCKFILE_FIX}"
+            raise LockfileRefused(f"{message}\n{LOCKFILE_FIX}") from None
         raise RuntimeError(message) from None
 
 
@@ -144,17 +159,30 @@ def report(progress: Progress, run_url: str) -> str | None:
     push run's report job already said how it went."""
     if progress.reported:
         return None
-    if progress.fix_url is None:
-        return f"/autofix [couldn't start PR Fixes]({run_url})" + _refusal(progress)
-    if progress.push_url is None:
+    if progress.relock_url is not None and progress.relock is None:
+        # It failed while pushing the relock's commit.
+        if progress.relock_push_url is None:
+            return (
+                f"/autofix [relocked `actions.lock`]({progress.relock_url}), "
+                f"but [couldn't start pushing it]({run_url})" + _refusal(progress)
+            )
         return (
+            f"/autofix [relocked `actions.lock`]({progress.relock_url}), "
+            f"but [PR Fixes Push]({progress.relock_push_url}) didn't report whether it pushed it.\n"
+        )
+    if progress.fix_url is None:
+        text = f"/autofix [couldn't start PR Fixes]({run_url})" + _refusal(progress)
+    elif progress.push_url is None:
+        text = (
             f"/autofix started [PR Fixes]({progress.fix_url}), but [couldn't start pushing its fixes]({run_url})"
             + _refusal(progress)
         )
-    return (
-        f"/autofix started [PR Fixes]({progress.fix_url}), "
-        f"but [PR Fixes Push]({progress.push_url}) didn't report whether it pushed the fixes.\n"
-    )
+    else:
+        text = (
+            f"/autofix started [PR Fixes]({progress.fix_url}), "
+            f"but [PR Fixes Push]({progress.push_url}) didn't report whether it pushed the fixes.\n"
+        )
+    return text if progress.relock is None else f"{text}\n{progress.relock}"
 
 
 def find_push_run(
@@ -195,6 +223,61 @@ def start_push(
     return dispatch(repo, push_workflow, default_branch, token, {"run-id": str(fix_run_id)}, progress)
 
 
+def wait_for_push(
+    repo: str, push_run_id: int, token: str, *, interval: float, deadline: float, progress: Progress
+) -> dict[str, Any]:
+    """The push run, once it finishes. If waiting fails, records in progress
+    whether its report job commented on the PR."""
+    try:
+        return workflow_summaries.wait(
+            repo, push_run_id, token, interval=interval, timeout=max(deadline - monotonic(), 0.0), just_started=True
+        )
+    except OSError:
+        # A failed poll or a timeout says nothing about the report job, which
+        # may have commented already. If this fails too, the wait's error is
+        # still the one to show.
+        try:
+            progress.reported = report_succeeded(repo, push_run_id, token)
+        except OSError as e:
+            github.close_error(e)
+        raise
+
+
+def push_relock(
+    repo: str, relock_run: int, token: str, *, push_workflow: str, interval: float, deadline: float, progress: Progress
+) -> None:
+    """Have the push workflow push the commit that relock_run's relock job
+    made, if it made one, and wait for it. Raises RuntimeError if it isn't
+    pushed. If the relock job failed or changed nothing, it only says so in
+    progress, as starting the fix workflow then fails as before, or succeeds
+    if the branch was relocked since."""
+    job = autofix_runs.relock_job(repo, relock_run, token)
+    progress.relock_url = str(job.get("html_url"))
+    if job.get("conclusion") != "success":
+        print(f"Relocking actions.lock didn't succeed: {progress.relock_url}", file=sys.stderr)
+        progress.relock = f"/autofix tried to relock `actions.lock` first, but [that failed]({progress.relock_url}).\n"
+        return
+    artifacts = workflow_summaries.artifacts(repo, relock_run, token, FIXES_ARTIFACT)
+    if not any(artifact["name"] == FIXES_ARTIFACT for artifact in artifacts):
+        print(f"Relocking actions.lock changed nothing: {progress.relock_url}", file=sys.stderr)
+        progress.relock = (
+            f"/autofix tried to relock `actions.lock` first, but [that changed nothing]({progress.relock_url}).\n"
+        )
+        return
+    default_branch = workflow_summaries.default_branch(repo, token)
+    push_run_id = dispatch(repo, push_workflow, default_branch, token, {"run-id": str(relock_run)}, progress)
+    progress.relock_push_url = _run_page(repo, push_run_id)
+    print(f"Waiting for {push_workflow} to push the relocked actions.lock: {progress.relock_push_url}", file=sys.stderr)
+    push_run = wait_for_push(repo, push_run_id, token, interval=interval, deadline=deadline, progress=progress)
+    if push_run.get("conclusion") != "success":
+        progress.reported = report_succeeded(repo, push_run_id, token)
+        raise RuntimeError(
+            f"{push_workflow} run {push_run_id} finished with conclusion {push_run.get('conclusion')}, "
+            f"so the relocked actions.lock may not have been pushed: {push_run.get('html_url')}"
+        )
+    progress.relock = f"/autofix relocked `actions.lock` first, and [pushed it]({progress.relock_push_url}).\n"
+
+
 def autofix(
     repo: str,
     pr: int,
@@ -206,17 +289,51 @@ def autofix(
     timeout: float,
     comment_id: int | None = None,
     progress: Progress | None = None,
+    relock: autofix_runs.Output | None = None,
+    relocked_run: int | None = None,
 ) -> int:
     """Run PR Fixes on pr and wait for its fixes to be pushed. Exits 0 if
     they were, or there was nothing to fix. Reacts to comment_id if given,
-    and records how far it got in progress if given."""
+    and records how far it got in progress if given.
+
+    If GitHub refuses to start PR Fixes because actions.lock is incomplete,
+    and relock is given, gives relock=true and head_sha (the commit to
+    relock) to relock and exits 0, for a later job to relock the branch.
+    With relocked_run, the run whose relock job did that, it pushes the
+    relock's commit first."""
     progress = progress or Progress()
     deadline = monotonic() + timeout
     branch, head_sha = check_pr(repo, pr, token)
+    first_head = head_sha
+    if relocked_run is not None:
+        push_relock(
+            repo,
+            relocked_run,
+            token,
+            push_workflow=push_workflow,
+            interval=interval,
+            deadline=deadline,
+            progress=progress,
+        )
+        if progress.relock_push_url is not None:
+            branch, head_sha = check_pr(repo, pr, token)
     # The head commit makes the run fail if the branch moves on before it
     # starts, and the number goes into its name, where fix-push.yml reads it.
     inputs = {"head-sha": head_sha, "pr-number": str(pr)}
-    fix_run_id = dispatch(repo, workflow, branch, token, inputs, progress)
+    try:
+        fix_run_id = dispatch(repo, workflow, branch, token, inputs, progress)
+    except LockfileRefused:
+        if relock is None:
+            raise
+        # Not the error's advice to relock by hand, as a later job relocks it.
+        print(
+            f"GitHub refused to start {workflow} on {branch}: {progress.refused}\n"
+            f"Relocking actions.lock on {branch} at {head_sha} first.",
+            file=sys.stderr,
+        )
+        relock("relock", "true")
+        relock("head_sha", head_sha)
+        return 0
     progress.fix_url = _run_page(repo, fix_run_id)
     print(f"Started {workflow} on {branch}: {progress.fix_url}", file=sys.stderr)
     if comment_id is not None:
@@ -237,19 +354,7 @@ def autofix(
     )
     progress.push_url = _run_page(repo, push_run_id)
     print(f"Waiting for {push_workflow}: {progress.push_url}", file=sys.stderr)
-    try:
-        push_run = workflow_summaries.wait(
-            repo, push_run_id, token, interval=interval, timeout=max(deadline - monotonic(), 0.0), just_started=True
-        )
-    except OSError:
-        # A failed poll or a timeout says nothing about the report job, which
-        # may have commented already. If this fails too, the wait's error is
-        # still the one to show.
-        try:
-            progress.reported = report_succeeded(repo, push_run_id, token)
-        except OSError as e:
-            github.close_error(e)
-        raise
+    push_run = wait_for_push(repo, push_run_id, token, interval=interval, deadline=deadline, progress=progress)
     pushed = push_run.get("conclusion") == "success"
     if not fixed or not pushed:
         progress.reported = report_succeeded(repo, push_run_id, token)
@@ -263,7 +368,7 @@ def autofix(
         )
         return 1
     new_head = github.pr_head(repo, pr, token)
-    if new_head == head_sha:
+    if new_head == first_head:
         print(f"PR Fixes found nothing to fix on {branch} at {head_sha}", file=sys.stderr)
     else:
         print(f"PR Fixes pushed its fixes to {branch}, which is now at {new_head}", file=sys.stderr)
@@ -304,19 +409,29 @@ def _optional_number(text: str) -> int | None:
 def _resolve_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="repoutils autofix resolve",
-        description="Check a finished PR Fixes run and find its pull request, for the PR Fixes Push workflow.",
-        epilog="Prints run_id, pr_number, branch, start_sha, conclusion, url, number, head_sha and base, "
+        description="Check a finished PR Fixes run, or the relock job of a relock run, and find its pull request, "
+        "for the PR Fixes Push workflow.",
+        epilog="Prints kind (fix or relock), run_id, pr_number, branch, start_sha, conclusion, url, number, "
+        "head_sha and base, "
         "then, if the run succeeded, fixes and already_pushed, as name=value lines for $GITHUB_OUTPUT. "
         "Each is printed once known, so a failed check keeps the lines before it. "
         "Fails if the run isn't a finished workflow_dispatch run of the fix workflow on a branch of this "
         "repository other than the default, if its pull request can't be found, "
         "or if the run succeeded but the branch has moved on and no other push run pushed its fixes. "
+        "A relock run is an issue_comment run of the relock workflow on the default branch, "
+        "named 'Comment on #<pull request>', whose relock job has finished. "
+        "Its start_sha is the pull request's head, as the push checks the bundle builds on it. "
         "Run it on the default branch: it fails if $GITHUB_REF is another ref. "
         "Uses $GITHUB_TOKEN, defaulting to `gh auth token`, which needs Actions read and Pull requests read.",
     )
-    parser.add_argument("--run-id", type=_number, required=True, help="the ID of the PR Fixes run")
+    parser.add_argument("--run-id", type=_number, required=True, help="the ID of the PR Fixes run or relock run")
     _repo_option(parser)
     _workflow_options(parser)
+    parser.add_argument(
+        "--relock-workflow",
+        default=autofix_runs.RELOCK_WORKFLOW,
+        help=f"the workflow file name of a relock run (default: {autofix_runs.RELOCK_WORKFLOW})",
+    )
     return parser
 
 
@@ -353,6 +468,9 @@ def _autofix_parser() -> argparse.ArgumentParser:
         "and Pull requests read, or write with --comment-id. "
         "The workflows must be repoutils' own, or work as they do: "
         "the push workflow's run-name must be 'PR Fixes Push for run <fix run ID>'. "
+        "With --relock, it exits 0 if GitHub refuses to start the fix workflow for actions.lock, "
+        "and a later job's --relocked pushes the relock: "
+        "the relock job must be named relock, and upload its commit as a bundle in the artifact fixes. "
         "`repoutils autofix resolve` and `repoutils autofix check-branch` are the checks the two workflows make "
         "(see their --help).",
     )
@@ -386,6 +504,22 @@ def _autofix_parser() -> argparse.ArgumentParser:
         "write the Markdown to post there to FILE, linking to this run, "
         "with GitHub's reason if it refused to start a run (for a GitHub Actions job)",
     )
+    relock = parser.add_mutually_exclusive_group()
+    relock.add_argument(
+        "--relock",
+        type=Path,
+        metavar="FILE",
+        help="if GitHub refuses to start the fix workflow because actions.lock doesn't list every action it uses, "
+        "append relock=true and head_sha=<the pull request's head commit> to FILE, such as $GITHUB_OUTPUT, "
+        "and exit 0, for a later job to relock the branch (for a GitHub Actions job)",
+    )
+    relock.add_argument(
+        "--relocked",
+        type=_number,
+        metavar="RUN_ID",
+        help="the run whose relock job relocked actions.lock after --relock: "
+        "have the push workflow push its commit, if it made one, then start the fix workflow",
+    )
     return parser
 
 
@@ -408,6 +542,7 @@ def _run_command(command: str, args: argparse.Namespace, progress: Progress) -> 
             this_run=os.environ.get("GITHUB_RUN_ID"),
             workflow=args.workflow,
             push_workflow=args.push_workflow,
+            relock_workflow=args.relock_workflow,
         )
         return 0
     if command == "check-branch":
@@ -430,7 +565,21 @@ def _run_command(command: str, args: argparse.Namespace, progress: Progress) -> 
         timeout=args.timeout * 60,
         comment_id=args.comment_id,
         progress=progress,
+        relock=None if args.relock is None else _file_output(args.relock),
+        relocked_run=args.relocked,
     )
+
+
+def _file_output(path: Path) -> autofix_runs.Output:
+    """An Output that appends name=value lines to path, as to $GITHUB_OUTPUT."""
+
+    def write(name: str, value: str) -> None:
+        if "\n" in value or "\r" in value:
+            raise ValueError(f"{name}'s value has a line break in it")
+        with path.open("a") as file:
+            file.write(f"{name}={value}\n")
+
+    return write
 
 
 def _write_report(path: Path, progress: Progress) -> None:

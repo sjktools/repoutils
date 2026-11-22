@@ -42,7 +42,7 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
 - `src/repoutils/uv_bump.py` is `dependabot-uv bump`'s changes to the files that `check-pins` checks, and its re-lock of `uv.lock`, kept apart from the command for length.
   It changes them only if `check-pins` passes, before and after, and puts them back if re-locking fails.
 - `src/repoutils/locked_actions.py` is `check-pins`' check that the actions in `actions.lock` from a locked package's repository are at the commit in that package's `build_info.json`, kept apart from the command for length.
-- `src/repoutils/autofix_runs.py` is `autofix resolve` and `autofix check-branch`, the checks that `fix-push.yml` and `fix.yml` make of a fix run and its PR, kept apart from the command for length.
+- `src/repoutils/autofix_runs.py` is `autofix resolve` and `autofix check-branch`, the checks that `fix-push.yml` and `fix.yml` make of a fix run (or relock run) and its PR, kept apart from the command for length.
   The `autofix-resolve` and `autofix-check` actions run them.
 - `src/repoutils/pull_request.py` commits a change to a new branch, pushes it and opens a PR, for `bump-version --pr` and for `bump --pr` in `dependabot-uv`, `downstream` and `github-releases`.
 - `src/repoutils/downstream_pins.py` holds `downstream bump`'s changes to a downstream's pins and its re-lock, kept apart from the command for length.
@@ -185,8 +185,14 @@ A `workflow_run` trigger covers a fix run that a person starts by hand.
 `repoutils autofix` passes the PR's number to `fix.yml`, which puts it in the run's name, as GitHub's API gives a run's name but not its inputs, and `fix-push.yml` reads it from there.
 A fix run started by hand without a number needs the branch to have exactly one open PR in this repository.
 Each fix run gets one new comment on the PR saying how it went, whether it pushed fixes, found nothing to fix, failed or couldn't start, and hides the earlier ones, as GitHub notifies nobody of an edit.
-If GitHub refuses to start a run, the comment gives GitHub's reason, and says how to fix an `actions.lock` that doesn't list every action `fix.yml` uses, which `/autofix` can't relock.
+If GitHub refuses to start a run, the comment gives GitHub's reason, and says how to fix an `actions.lock` that doesn't list every action `fix.yml` uses.
 `fix-push.yml`'s `report` job posts it with the `post-comment` action, and `autofix-start` posts it only if that job didn't succeed.
+When GitHub refuses to start `fix.yml` for an incomplete `actions.lock`, `autofix-comment.yml` relocks the branch itself, as it runs from `main` with `main`'s lock:
+
+- Its `relock` job runs the `autofix-relock` action, with no secrets and contents `read`, and uploads the commit as a bundle.
+- Its `retry` job runs `repoutils autofix --relocked`, which has `fix-push.yml` push that commit, then starts `fix.yml` again on the new head.
+- `fix-push.yml` tells that relock run by its workflow, event and run name (`Comment on #<PR>`), and pushes only one commit that changes only `actions.lock`.
+
 The fix runs on the branch rather than on `main` because code in a run can write to the Actions cache of the run's branch.
 On `main`, that would reach the jobs that publish, tag or bump a release, which use no cache either, as a second line of defence.
 `AUTOFIX_TOKEN` lives in the `autofix` environment, which only `main` can deploy to, as with `release`.

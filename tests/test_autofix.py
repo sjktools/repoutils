@@ -53,9 +53,12 @@ class FakeGitHub:
         push_runs: list[dict[str, Any]],
         report: str | None = "success",
         refused: dict[str, bytes] | None = None,
+        push_ids: list[int] | None = None,
     ) -> None:
         # The workflows whose dispatch GitHub refuses with a 422, and the body it answers with.
         self.refused = refused or {}
+        # The IDs of the push runs dispatched, in turn.
+        self.push_ids = push_ids or [8]
         self.answers: dict[str, list[Any]] = {
             f"{REPO}/pulls/5": prs,
             FIX_RUN: fix_runs,
@@ -82,8 +85,9 @@ class FakeGitHub:
             for workflow, body in self.refused.items():
                 if url.endswith(f"/{workflow}/dispatches"):
                     raise urllib.error.HTTPError(url, 422, "Unprocessable Entity", Message(), io.BytesIO(body))
-            run_id = 7 if url.endswith("/fix.yml/dispatches") else 8
-            return {"workflow_run_id": run_id}
+            if url.endswith("/fix.yml/dispatches"):
+                return {"workflow_run_id": 7}
+            return {"workflow_run_id": self.push_ids.pop(0) if len(self.push_ids) > 1 else self.push_ids[0]}
         answers = self.answers[url]
         return answers.pop(0) if len(answers) > 1 else answers[0]
 
@@ -498,6 +502,8 @@ def test_command_line(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFix
                 "timeout": 120.0,
                 "comment_id": None,
                 "progress": autofix.Progress(),
+                "relock": None,
+                "relocked_run": None,
             },
         )
     ]
@@ -599,3 +605,219 @@ def test_command_line_reports_a_failed_gh(monkeypatch: pytest.MonkeyPatch, capsy
     monkeypatch.setattr(github, "gh_output", fail)
     assert autofix.main(["5", "--repo", "o/r"]) == 1
     assert capsys.readouterr().err == "gh auth token failed:\nnot logged in\n\n"
+
+
+RELOCK_JOBS = f"{REPO}/actions/runs/3/jobs?per_page=100"
+RELOCK_ARTIFACTS = f"{REPO}/actions/runs/3/artifacts?per_page=100&page=1"
+RELOCK_PUSH_RUN = f"{REPO}/actions/runs/6"
+RELOCK_PUSH_JOBS = f"{RELOCK_PUSH_RUN}/jobs?per_page=100"
+RELOCK_PAGE = "https://github.com/o/r/actions/runs/3/job/30"
+RELOCK_PUSH_PAGE = "https://github.com/o/r/actions/runs/6"
+
+
+def _relocked(
+    fake: FakeGitHub,
+    *,
+    conclusion: str = "success",
+    fixes: bool = True,
+    push: str = "success",
+    report: str | None = "success",
+) -> FakeGitHub:
+    """fake, with run 3's relock job, and run 6 that pushes its commit."""
+    fake.answers[RELOCK_JOBS] = [
+        {"jobs": [{"name": "relock", "status": "completed", "conclusion": conclusion, "html_url": RELOCK_PAGE}]}
+    ]
+    fake.answers[RELOCK_ARTIFACTS] = [{"artifacts": [{"name": "fixes"}] if fixes else []}]
+    fake.answers[RELOCK_PUSH_RUN] = [_done(6, push)]
+    fake.answers[RELOCK_PUSH_JOBS] = [{"jobs": [{"name": "report", "conclusion": report}]}]
+    return fake
+
+
+def _moved(sha: str) -> dict[str, Any]:
+    return _pr(head={"ref": "feature", "sha": sha, "repo": {"id": 1}})
+
+
+def test_asks_for_a_relock_when_github_refuses_for_the_lockfile(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    _actions_env(monkeypatch)
+    fake = FakeGitHub(prs=[_pr()], fix_runs=[], push_lists=[], push_runs=[], refused={"fix.yml": LOCKFILE_422})
+    _install(monkeypatch, fake)
+    output = tmp_path / "output"
+    output.write_text("earlier=1\n")
+    report = tmp_path / "report.md"
+    assert autofix.main(["5", "--comment-id", "99", "--report", str(report), "--relock", str(output)]) == 0
+    assert output.read_text() == "earlier=1\nrelock=true\nhead_sha=aaa\n"
+    assert not report.exists()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.endswith("Relocking actions.lock on feature at aaa first.\n")
+
+
+def test_reports_another_refusal_even_with_relock(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    run = _actions_env(monkeypatch)
+    fake = FakeGitHub(prs=[_pr()], fix_runs=[], push_lists=[], push_runs=[], refused={"fix.yml": b"nope"})
+    _install(monkeypatch, fake)
+    output = tmp_path / "output"
+    report = tmp_path / "report.md"
+    assert autofix.main(["5", "--report", str(report), "--relock", str(output)]) == 1
+    assert not output.exists()
+    assert (
+        report.read_text()
+        == f"/autofix [couldn't start PR Fixes]({run}), as GitHub refused:\n\n```\nHTTP 422: nope\n```\n"
+    )
+
+
+def test_relock_output_refuses_a_line_break(tmp_path: Path) -> None:
+    write = autofix._file_output(tmp_path / "output")  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(ValueError, match="head_sha's value has a line break in it"):
+        write("head_sha", "a\nrelock=false")
+
+
+def test_relock_and_relocked_are_exclusive(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        autofix.main(["5", "--relock", str(tmp_path / "output"), "--relocked", "3"])
+    assert exit_info.value.code == 2
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+def test_pushes_the_relock_then_runs_pr_fixes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], slept: list[float]
+) -> None:
+    fake = _relocked(
+        FakeGitHub(
+            prs=[_pr(), _moved("rrr")],
+            fix_runs=[_done(7, actor="github-actions[bot]")],
+            push_lists=[],
+            push_runs=[_done(8)],
+            push_ids=[6, 8],
+        )
+    )
+    _install(monkeypatch, fake)
+    assert autofix.autofix("o/r", 5, "tok", interval=10, timeout=600, relocked_run=3) == 0
+    captured = capsys.readouterr()
+    # PR Fixes found nothing more, but the relock moved the branch on.
+    assert captured.out == "rrr\n"
+    assert captured.err == (
+        f"Waiting for fix-push.yml to push the relocked actions.lock: {RELOCK_PUSH_PAGE}\n"
+        f"Started fix.yml on feature: {FIX_PAGE}\n"
+        f"Waiting for fix-push.yml: {PUSH_PAGE}\n"
+        "PR Fixes pushed its fixes to feature, which is now at rrr\n"
+    )
+    assert fake.posts() == [
+        (
+            "/actions/workflows/fix-push.yml/dispatches",
+            {"ref": "main", "return_run_details": True, "inputs": {"run-id": "3"}},
+        ),
+        (
+            "/actions/workflows/fix.yml/dispatches",
+            {"ref": "feature", "return_run_details": True, "inputs": {"head-sha": "rrr", "pr-number": "5"}},
+        ),
+        (
+            "/actions/workflows/fix-push.yml/dispatches",
+            {"ref": "main", "return_run_details": True, "inputs": {"run-id": "7"}},
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("conclusion", "fixes", "note"),
+    [
+        ("failure", True, f"/autofix tried to relock `actions.lock` first, but [that failed]({RELOCK_PAGE}).\n"),
+        (
+            "success",
+            False,
+            f"/autofix tried to relock `actions.lock` first, but [that changed nothing]({RELOCK_PAGE}).\n",
+        ),
+    ],
+)
+def test_reports_a_relock_that_pushed_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    conclusion: str,
+    fixes: bool,
+    note: str,
+) -> None:
+    run = _actions_env(monkeypatch)
+    fake = _relocked(
+        FakeGitHub(prs=[_pr()], fix_runs=[], push_lists=[], push_runs=[], refused={"fix.yml": LOCKFILE_422}),
+        conclusion=conclusion,
+        fixes=fixes,
+    )
+    _install(monkeypatch, fake)
+    report = tmp_path / "report.md"
+    assert autofix.main(["5", "--report", str(report), "--relocked", "3"]) == 1
+    assert report.read_text() == (
+        f"/autofix [couldn't start PR Fixes]({run}), as GitHub refused:\n\n```\n{LOCKFILE_REASON}\n```\n\n"
+        + autofix.LOCKFILE_FIX
+        + "\n"
+        + note
+    )
+    # Nothing pushed, so the PR Fixes run starts on the same head, and GitHub refuses it again.
+    assert [url for url, _ in fake.posts()] == ["/actions/workflows/fix.yml/dispatches"]
+
+
+def test_reports_a_relock_and_a_second_refusal(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path, slept: list[float]
+) -> None:
+    run = _actions_env(monkeypatch)
+    fake = _relocked(
+        FakeGitHub(
+            prs=[_pr(), _moved("rrr")], fix_runs=[], push_lists=[], push_runs=[], refused={"fix.yml": LOCKFILE_422}
+        ),
+    )
+    fake.push_ids = [6]
+    _install(monkeypatch, fake)
+    report = tmp_path / "report.md"
+    assert autofix.main(["5", "--report", str(report), "--relocked", "3"]) == 1
+    assert report.read_text() == (
+        f"/autofix [couldn't start PR Fixes]({run}), as GitHub refused:\n\n```\n{LOCKFILE_REASON}\n```\n\n"
+        + autofix.LOCKFILE_FIX
+        + f"\n/autofix relocked `actions.lock` first, and [pushed it]({RELOCK_PUSH_PAGE}).\n"
+    )
+
+
+@pytest.mark.parametrize("report_job", ["success", "skipped"])
+def test_a_relock_that_was_not_pushed(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    slept: list[float],
+    report_job: str,
+) -> None:
+    _actions_env(monkeypatch)
+    fake = _relocked(
+        FakeGitHub(prs=[_pr()], fix_runs=[], push_lists=[], push_runs=[], push_ids=[6]),
+        push="failure",
+        report=report_job,
+    )
+    _install(monkeypatch, fake)
+    report = tmp_path / "report.md"
+    assert autofix.main(["5", "--report", str(report), "--relocked", "3"]) == 1
+    if report_job == "success":
+        # PR Fixes Push said so on the PR.
+        assert not report.exists()
+    else:
+        assert report.read_text() == (
+            f"/autofix [relocked `actions.lock`]({RELOCK_PAGE}), "
+            f"but [PR Fixes Push]({RELOCK_PUSH_PAGE}) didn't report whether it pushed it.\n"
+        )
+    assert "so the relocked actions.lock may not have been pushed" in capsys.readouterr().err
+    assert [url for url, _ in fake.posts()] == ["/actions/workflows/fix-push.yml/dispatches"]
+
+
+def test_reports_a_relock_it_could_not_start_pushing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    run = _actions_env(monkeypatch)
+    fake = _relocked(FakeGitHub(prs=[_pr()], fix_runs=[], push_lists=[], push_runs=[], refused={"fix-push.yml": b"no"}))
+    _install(monkeypatch, fake)
+    report = tmp_path / "report.md"
+    assert autofix.main(["5", "--report", str(report), "--relocked", "3"]) == 1
+    assert report.read_text() == (
+        f"/autofix [relocked `actions.lock`]({RELOCK_PAGE}), but [couldn't start pushing it]({run}), "
+        "as GitHub refused:\n\n```\nHTTP 422: no\n```\n"
+    )

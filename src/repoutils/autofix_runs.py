@@ -2,6 +2,11 @@
 workflow (``fix.yml``) and the PR Fixes Push workflow (``fix-push.yml``) make
 of a fix run and its pull request, kept apart from the command for length.
 
+The PR Fixes Push workflow also pushes the commit of a relock run: a run of
+``autofix-comment.yml`` whose ``relock`` job relocked ``actions.lock``, after
+GitHub refused to start PR Fixes because the lock didn't list every action
+``fix.yml`` uses.
+
 Both print their results as ``name=value`` lines, for a step to append to
 ``$GITHUB_OUTPUT``. Standard library only, like every repoutils module."""
 
@@ -16,10 +21,15 @@ from repoutils import github, workflow_summaries
 
 FIX_WORKFLOW = "fix.yml"
 PUSH_WORKFLOW = "fix-push.yml"
+RELOCK_WORKFLOW = "autofix-comment.yml"
 # fix.yml's run-name: "PR Fixes #<number>", or "PR Fixes" without one.
 FIX_RUN_NAME = "PR Fixes"
 _FIX_RUN_NAME_WITH_NUMBER = re.compile(r"PR Fixes #([0-9]+)")
-# fix.yml's artifact, which holds the bundle.
+# autofix-comment.yml's run-name: "Comment on #<number>".
+_RELOCK_RUN_NAME = re.compile(r"Comment on #([0-9]+)")
+# autofix-comment.yml's job that relocks actions.lock.
+RELOCK_JOB = "relock"
+# The artifact that holds the bundle, from fix.yml or the relock job.
 FIXES_ARTIFACT = "fixes"
 # fix-push.yml's job that pushes the bundle.
 PUSH_JOB = "push"
@@ -58,6 +68,25 @@ def push_runs(
         if len(batch) < PER_PAGE:
             return
         page += 1
+
+
+def run_jobs(repo: str, run_id: int, token: str) -> list[dict[str, Any]]:
+    """The jobs of the run's latest attempt."""
+    url = f"{github.API_URL}/repos/{repo}/actions/runs/{run_id}/jobs?per_page={PER_PAGE}"
+    jobs: list[dict[str, Any]] = github.request("GET", url, token)["jobs"]
+    return jobs
+
+
+def relock_job(repo: str, run_id: int, token: str) -> dict[str, Any]:
+    """The relock job of run run_id. Raises ValueError if the run has none,
+    or it hasn't finished. The run itself is still going, as the job after
+    the relock job starts the push run."""
+    job = next((job for job in run_jobs(repo, run_id, token) if job.get("name") == RELOCK_JOB), None)
+    if job is None:
+        raise ValueError(f"Run {run_id} has no {RELOCK_JOB} job.")
+    if job.get("status") != "completed":
+        raise ValueError(f"Run {run_id}'s {RELOCK_JOB} job hasn't finished; it's {job.get('status')}.")
+    return job
 
 
 def check_pr_data(data: dict[str, Any], pr: int, branch: str | None = None) -> None:
@@ -119,10 +148,10 @@ def _already_pushed(
     for run in push_runs(repo, push_workflow, int(fix_run["id"]), token, fix_run.get("created_at")):
         if str(run["id"]) == this_run:
             continue
-        jobs = github.request(
-            "GET", f"{github.API_URL}/repos/{repo}/actions/runs/{run['id']}/jobs?per_page={PER_PAGE}", token
-        )["jobs"]
-        if any(job.get("name") == PUSH_JOB and job.get("conclusion") == "success" for job in jobs):
+        if any(
+            job.get("name") == PUSH_JOB and job.get("conclusion") == "success"
+            for job in run_jobs(repo, int(run["id"]), token)
+        ):
             return int(run["id"])
     return None
 
@@ -136,10 +165,12 @@ def resolve(
     this_run: str | None,
     workflow: str = FIX_WORKFLOW,
     push_workflow: str = PUSH_WORKFLOW,
+    relock_workflow: str = RELOCK_WORKFLOW,
     output: Output = print_output,
 ) -> None:
-    """Check fix run run_id and find its pull request, for fix-push.yml,
-    giving each output as soon as it's known, so a later failure keeps them.
+    """Check fix run or relock run run_id and find its pull request, for
+    fix-push.yml, giving each output as soon as it's known, so a later
+    failure keeps them. kind says which it is: fix or relock.
 
     Everything about the run comes from the API, which GitHub sets, rather
     than from the event that started the push run. ref is the push run's own
@@ -153,11 +184,42 @@ def resolve(
         raise ValueError(f"Run this workflow on {default_branch}, not on {ref}.")
     run = github.request("GET", f"{api}/actions/runs/{run_id}", token)
     # A branch could add another workflow named PR Fixes; only fix.yml's runs
-    # count, though nothing here trusts them more for it.
-    if run["workflow_id"] != github.request("GET", f"{api}/actions/workflows/{workflow}", token)["id"]:
-        raise ValueError(f"Run {run_id} isn't a run of {workflow}.")
+    # count, though nothing here trusts them more for it. A relock run is of
+    # the default branch's copy of relock_workflow, which a branch can't change.
+    if run["workflow_id"] == github.request("GET", f"{api}/actions/workflows/{workflow}", token)["id"]:
+        kind = "fix"
+    elif run["workflow_id"] == github.request("GET", f"{api}/actions/workflows/{relock_workflow}", token)["id"]:
+        kind = "relock"
+    else:
+        raise ValueError(f"Run {run_id} isn't a run of {workflow} or {relock_workflow}.")
     if (run.get("head_repository") or {}).get("id") != run["repository"]["id"]:
         raise ValueError(f"Run {run_id} ran on {(run.get('head_repository') or {}).get('full_name')}, not {repo}.")
+    if kind == "relock":
+        _resolve_relock(repo, run, token, default_branch=default_branch, output=output)
+    else:
+        _resolve_fix(
+            repo,
+            run,
+            token,
+            default_branch=default_branch,
+            this_run=this_run,
+            push_workflow=push_workflow,
+            output=output,
+        )
+
+
+def _resolve_fix(
+    repo: str,
+    run: dict[str, Any],
+    token: str,
+    *,
+    default_branch: str,
+    this_run: str | None,
+    push_workflow: str,
+    output: Output,
+) -> None:
+    """resolve() for a run of the fix workflow."""
+    run_id = int(run["id"])
     if run["event"] != "workflow_dispatch":
         raise ValueError(f"Run {run_id} was started by {run['event']}, not workflow_dispatch.")
     if run["status"] != "completed":
@@ -175,6 +237,7 @@ def resolve(
         raise ValueError(f"Run {run_id}'s name, {title}, doesn't give a pull request.")
     start_sha = str(run["head_sha"])
     conclusion = str(run["conclusion"] or "")
+    output("kind", "fix")
     output("run_id", str(run_id))
     output("pr_number", "" if pr_number is None else str(pr_number))
     output("branch", branch)
@@ -205,10 +268,53 @@ def resolve(
         output("fixes", "false")
         output("already_pushed", "true")
         return
+    _output_fixes(repo, run_id, token, f"PR Fixes found nothing to push to {branch}.", output)
+
+
+def _resolve_relock(repo: str, run: dict[str, Any], token: str, *, default_branch: str, output: Output) -> None:
+    """resolve() for a relock run, whose relock job has finished, though the
+    run hasn't. The run is on the default branch, so its pull request comes
+    from its name, and the commit the relock started from is the pull
+    request's head: the push checks the bundle builds on it, and the lease
+    that the branch is still there."""
+    run_id = int(run["id"])
+    if run["event"] != "issue_comment":
+        raise ValueError(f"Run {run_id} was started by {run['event']}, not issue_comment.")
+    if run["head_branch"] != default_branch:
+        raise ValueError(f"Run {run_id} ran on {run['head_branch']}, not {default_branch}.")
+    title = str(run["display_title"])
+    match = _RELOCK_RUN_NAME.fullmatch(title)
+    if match is None:
+        raise ValueError(f"Run {run_id}'s name, {title}, doesn't give a pull request.")
+    pr_number = int(match.group(1))
+    job = relock_job(repo, run_id, token)
+    conclusion = str(job.get("conclusion") or "")
+    output("kind", "relock")
+    output("run_id", str(run_id))
+    output("pr_number", str(pr_number))
+
+    pr = github.request("GET", f"{github.API_URL}/repos/{repo}/pulls/{pr_number}", token)
+    check_pr_data(pr, pr_number)
+    branch = str(pr["head"]["ref"])
+    _check_branch_name(branch)
+    head_sha = str(pr["head"]["sha"])
+    output("branch", branch)
+    output("start_sha", head_sha)
+    output("conclusion", conclusion)
+    output("url", str(job["html_url"]))
+    output("number", str(pr_number))
+    output("head_sha", head_sha)
+    output("base", str(pr["base"]["ref"]))
+    if conclusion == "success":
+        _output_fixes(repo, run_id, token, f"Relocking actions.lock found nothing to push to {branch}.", output)
+
+
+def _output_fixes(repo: str, run_id: int, token: str, nothing: str, output: Output) -> None:
+    """Output whether run run_id uploaded a bundle to push, printing nothing if it didn't."""
     artifacts = workflow_summaries.artifacts(repo, run_id, token, FIXES_ARTIFACT)
     fixes = any(artifact["name"] == FIXES_ARTIFACT for artifact in artifacts)
     if not fixes:
-        print(f"PR Fixes found nothing to push to {branch}.", file=sys.stderr)
+        print(nothing, file=sys.stderr)
     output("fixes", str(fixes).lower())
     output("already_pushed", "false")
 

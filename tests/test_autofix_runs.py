@@ -9,6 +9,9 @@ API = github.API_URL
 REPO = f"{API}/repos/o/r"
 RUN = f"{REPO}/actions/runs/7"
 FIX_WORKFLOW = f"{REPO}/actions/workflows/fix.yml"
+RELOCK_WORKFLOW = f"{REPO}/actions/workflows/autofix-comment.yml"
+JOBS = f"{RUN}/jobs?per_page=100"
+JOB_PAGE = "https://github.com/o/r/actions/runs/7/job/70"
 PUSH_RUNS = f"{REPO}/actions/workflows/fix-push.yml/runs?per_page=100&created=%3E%3D2026-11-22T06%3A00%3A00Z&page=1"
 ARTIFACTS = f"{RUN}/artifacts?per_page=100&page=1"
 OPEN_PRS = f"{REPO}/pulls?state=open&head=o%3Afeature&per_page=100&page=1"
@@ -46,7 +49,12 @@ def _pr(number: int = 5, **overrides: Any) -> dict[str, Any]:
 
 class FakeGitHub:
     def __init__(self, answers: dict[str, Any]) -> None:
-        self.answers = {REPO: {"default_branch": "main"}, FIX_WORKFLOW: {"id": 11}, **answers}
+        self.answers = {
+            REPO: {"default_branch": "main"},
+            FIX_WORKFLOW: {"id": 11},
+            RELOCK_WORKFLOW: {"id": 13},
+            **answers,
+        }
         self.urls: list[str] = []
 
     def request(self, method: str, url: str, token: str) -> Any:
@@ -91,6 +99,7 @@ def _check_branch(
 
 
 RUN_OUTPUTS = [
+    ("kind", "fix"),
     ("run_id", "7"),
     ("pr_number", "5"),
     ("branch", "feature"),
@@ -136,6 +145,7 @@ def test_resolve_of_a_failed_run_only_finds_the_pr(
     _install(monkeypatch, {RUN: _run(conclusion="failure", display_title="PR Fixes"), OPEN_PRS: [_pr(head=head)]})
     _resolve(outputs)
     assert outputs == [
+        ("kind", "fix"),
         ("run_id", "7"),
         ("pr_number", ""),
         ("branch", "feature"),
@@ -197,7 +207,7 @@ def test_resolve_refuses_a_branch_that_moved_on(
 @pytest.mark.parametrize(
     ("run", "message"),
     [
-        (_run(workflow_id=12), "Run 7 isn't a run of fix.yml"),
+        (_run(workflow_id=12), "Run 7 isn't a run of fix.yml or autofix-comment.yml"),
         (_run(head_repository={"id": 2, "full_name": "f/r"}), "Run 7 ran on f/r, not o/r"),
         (_run(head_repository=None), "Run 7 ran on None, not o/r"),
         (_run(event="push"), "Run 7 was started by push, not workflow_dispatch"),
@@ -216,6 +226,119 @@ def test_resolve_refuses_a_run(
     with pytest.raises(ValueError, match=message):
         _resolve(outputs)
     assert outputs == []
+
+
+def _relock_run(**overrides: Any) -> dict[str, Any]:
+    # The run is still going, as its retry job starts the push run.
+    run = {
+        "workflow_id": 13,
+        "event": "issue_comment",
+        "status": "in_progress",
+        "conclusion": None,
+        "head_sha": "mmm",
+        "head_branch": "main",
+        "display_title": "Comment on #5",
+    }
+    return _run(**{**run, **overrides})
+
+
+def _relock_jobs(conclusion: str | None = "success", status: str = "completed") -> dict[str, Any]:
+    return {
+        "jobs": [
+            {"name": "dispatch", "status": "completed", "conclusion": "success"},
+            {"name": "relock", "status": status, "conclusion": conclusion, "html_url": JOB_PAGE},
+            {"name": "retry", "status": "in_progress", "conclusion": None},
+        ]
+    }
+
+
+RELOCK_OUTPUTS = [
+    ("kind", "relock"),
+    ("run_id", "7"),
+    ("pr_number", "5"),
+    ("branch", "feature"),
+    ("start_sha", "aaa"),
+    ("conclusion", "success"),
+    ("url", JOB_PAGE),
+    *PR_OUTPUTS,
+]
+
+
+def test_resolve_finds_a_relock(monkeypatch: pytest.MonkeyPatch, outputs: list[tuple[str, str]]) -> None:
+    _install(
+        monkeypatch,
+        {
+            RUN: _relock_run(),
+            JOBS: _relock_jobs(),
+            f"{REPO}/pulls/5": _pr(),
+            ARTIFACTS: {"artifacts": [{"name": "fixes", "expired": False}]},
+        },
+    )
+    _resolve(outputs)
+    assert outputs == [*RELOCK_OUTPUTS, ("fixes", "true"), ("already_pushed", "false")]
+
+
+def test_resolve_finds_a_relock_that_changed_nothing(
+    monkeypatch: pytest.MonkeyPatch, outputs: list[tuple[str, str]], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _install(
+        monkeypatch,
+        {RUN: _relock_run(), JOBS: _relock_jobs(), f"{REPO}/pulls/5": _pr(), ARTIFACTS: {"artifacts": []}},
+    )
+    _resolve(outputs)
+    assert outputs[-2:] == [("fixes", "false"), ("already_pushed", "false")]
+    assert capsys.readouterr().err == "Relocking actions.lock found nothing to push to feature.\n"
+
+
+def test_resolve_of_a_failed_relock_only_finds_the_pr(
+    monkeypatch: pytest.MonkeyPatch, outputs: list[tuple[str, str]]
+) -> None:
+    _install(monkeypatch, {RUN: _relock_run(), JOBS: _relock_jobs("failure"), f"{REPO}/pulls/5": _pr()})
+    _resolve(outputs)
+    assert outputs == [(name, "failure" if name == "conclusion" else value) for name, value in RELOCK_OUTPUTS]
+
+
+@pytest.mark.parametrize(
+    ("run", "jobs", "message"),
+    [
+        (_relock_run(event="workflow_dispatch"), _relock_jobs(), "started by workflow_dispatch, not issue_comment"),
+        (_relock_run(head_branch="feature"), _relock_jobs(), "Run 7 ran on feature, not main"),
+        (_relock_run(display_title="PR Fixes #5"), _relock_jobs(), "Run 7's name, PR Fixes #5, doesn't give"),
+        (_relock_run(display_title="Comment on #5 "), _relock_jobs(), "doesn't give a pull request"),
+        (_relock_run(), {"jobs": [{"name": "dispatch"}]}, "Run 7 has no relock job"),
+        (_relock_run(), _relock_jobs(None, "in_progress"), "Run 7's relock job hasn't finished; it's in_progress"),
+    ],
+)
+def test_resolve_refuses_a_relock_run(
+    monkeypatch: pytest.MonkeyPatch,
+    outputs: list[tuple[str, str]],
+    run: dict[str, object],
+    jobs: dict[str, object],
+    message: str,
+) -> None:
+    _install(monkeypatch, {RUN: run, JOBS: jobs})
+    with pytest.raises(ValueError, match=message):
+        _resolve(outputs)
+    assert outputs == []
+
+
+@pytest.mark.parametrize(
+    ("pr", "message"),
+    [
+        (_pr(state="closed"), "Pull request #5 is not open"),
+        (_pr(head={"ref": "feature", "sha": "aaa", "repo": None}), "Pull request #5 is from a fork"),
+        (_pr(head={"ref": "main", "sha": "aaa", "repo": {"id": 1}}), "branch is main, which PR Fixes doesn't push to"),
+        (_pr(head={"ref": "-x", "sha": "aaa", "repo": {"id": 1}}), "-x isn't a valid branch name"),
+    ],
+)
+def test_resolve_refuses_a_relock_run_pr(
+    monkeypatch: pytest.MonkeyPatch, outputs: list[tuple[str, str]], pr: dict[str, object], message: str
+) -> None:
+    _install(monkeypatch, {RUN: _relock_run(), JOBS: _relock_jobs(), f"{REPO}/pulls/5": pr})
+    with pytest.raises(ValueError, match=message):
+        _resolve(outputs)
+    # The report job can't tell which branch to report to.
+    assert outputs == [("kind", "relock"), ("run_id", "7"), ("pr_number", "5")]
 
 
 def test_resolve_runs_on_the_default_branch_only(
@@ -325,7 +448,13 @@ def test_resolve_command_line(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Ca
             "o/r",
             7,
             "tok",
-            {"ref": "refs/heads/main", "this_run": "9", "workflow": "f.yml", "push_workflow": "fix-push.yml"},
+            {
+                "ref": "refs/heads/main",
+                "this_run": "9",
+                "workflow": "f.yml",
+                "push_workflow": "fix-push.yml",
+                "relock_workflow": "autofix-comment.yml",
+            },
         )
     ]
 

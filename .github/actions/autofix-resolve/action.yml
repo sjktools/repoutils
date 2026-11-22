@@ -8,19 +8,24 @@ description: >-
 # branch, in a job with actions read and pull-requests read. The fix workflow
 # must be fix.yml, with the run-name "PR Fixes #<number>" or "PR Fixes", and
 # the push workflow fix-push.yml, with the run-name "PR Fixes Push for run
-# <fix run ID>" and the job that pushes named push.
+# <fix run ID>" and the job that pushes named push. A relock run must be a run
+# of autofix-comment.yml, with the run-name "Comment on #<number>" and the job
+# that relocks named relock.
 #
 # Each output is set as soon as it's known, so a check that fails keeps the
 # outputs before it, for a report job to say which pull request failed.
 inputs:
   run-id:
-    description: The ID of the PR Fixes run.
+    description: The ID of the PR Fixes run, or of the relock run.
     required: true
   token:
     description: The token to read the run and the pull request with.
     required: false
     default: ${{ github.token }}
 outputs:
+  kind:
+    description: fix for a PR Fixes run, relock for a relock run.
+    value: ${{ steps.resolve.outputs.kind }}
   run_id:
     description: The fix run's ID.
     value: ${{ steps.resolve.outputs.run_id }}

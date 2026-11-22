@@ -1,0 +1,73 @@
+name: Relock actions.lock for /autofix
+description: >-
+  Checks out a pull request's head, runs `gh actions-lock` on it, and uploads
+  the commit that changes actions.lock as a Git bundle, for PR Fixes Push to
+  push, when GitHub won't start PR Fixes because actions.lock is incomplete.
+
+# The relock job of autofix-comment.yml runs it, after the autofix-start action
+# set its relock output, and before a job that runs autofix-start again with
+# relocked-run. Use it in a job named relock, with contents read and no other
+# permissions and no secrets, as it reads the branch's workflow files. It runs
+# nothing from the branch: gh actions-lock only reads the workflow files and
+# resolves their actions through the API with the job's read-only
+# GITHUB_TOKEN. It installs gh-actions-lock by path, from this action's own
+# commit, and restores no cache.
+#
+# The bundle holds one commit on head-sha that changes only actions.lock, which
+# fix-push.yml checks before it pushes. If gh actions-lock changes nothing, it
+# uploads nothing, and the relocked output is false.
+inputs:
+  head-sha:
+    description: The pull request's head commit, to relock.
+    required: true
+outputs:
+  relocked:
+    description: true if it uploaded a commit, false if actions.lock needed no change.
+    value: ${{ steps.commit.outputs.relocked }}
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout the pull request's head
+      uses: actions/checkout@v7.0.1
+      with:
+        ref: ${{ inputs.head-sha }}
+        persist-credentials: false
+
+    # Run by path, as `uses: ./` would name the caller's repository.
+    - name: Install gh-actions-lock
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/../install-gh-actions-lock/install.sh"
+
+    - name: Relock actions.lock
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: gh actions-lock
+
+    - name: Commit actions.lock
+      id: commit
+      shell: bash
+      env:
+        HEAD_SHA: ${{ inputs.head-sha }}
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add .github/workflows/actions.lock
+        if git diff --staged --quiet; then
+          echo "actions.lock needs no change"
+          echo "relocked=false" >> "$GITHUB_OUTPUT"
+        else
+          git commit -m "chore: relock actions.lock"
+          git bundle create "$RUNNER_TEMP/fixes.bundle" "$HEAD_SHA..HEAD"
+          echo "relocked=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Upload the relock
+      if: steps.commit.outputs.relocked == 'true'
+      uses: actions/upload-artifact@v7.0.2
+      with:
+        name: fixes
+        path: ${{ runner.temp }}/fixes.bundle
+        retention-days: 1
+        if-no-files-found: error

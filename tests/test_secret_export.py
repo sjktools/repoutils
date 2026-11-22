@@ -365,7 +365,7 @@ class FakeAgeTools:
             recipients = [args[i + 1] for i, arg in enumerate(args) if arg == "--recipient"]
             header = "age-encryption.org/v1\n"
             for recipient in recipients:
-                kind = recipient.split(" ", 1)[0]
+                kind = recipient.split()[0]
                 ssh = kind in secret_export.AGE_SSH_TYPES and self.ssh_stanzas
                 header += f"-> {secret_export.ssh_tag(recipient) if ssh else 'X25519'} x\n"
             body = base64.b64encode(f"{header}---\n".encode() + input).decode()
@@ -401,7 +401,10 @@ def test_self_test_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     tools = FakeAgeTools()
-    assert _self_test(tmp_path, monkeypatch, tools, "--environment", "release", "--recipient", ED25519) == 0
+    assert (
+        _self_test(tmp_path, monkeypatch, tools, "--environment", "release", "--recipient", ED25519.replace(" ", "\t"))
+        == 0
+    )
     assert tomllib.loads(tools.encrypt_input.decode()) == {
         "environments": {"release": secret_export.made_up_values(["RELEASE_TOKEN"])}
     }

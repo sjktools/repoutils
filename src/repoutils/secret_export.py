@@ -261,7 +261,7 @@ def self_test(
         levels = secret_levels.Levels(frozenset(), {environment.lower(): frozenset(n.upper() for n in wanted)})
     # Picked here rather than by export, to check the header names each one.
     keys = [pick_key(user, fingerprint, fetch_keys(user)) for user, fingerprint in github_keys]
-    ssh_keys = [key for key in [*recipients, *keys] if key.split(" ", 1)[0] in AGE_SSH_TYPES]
+    ssh_keys = [key for key in [*recipients, *keys] if key.split()[0] in AGE_SSH_TYPES]
     with tempfile.TemporaryDirectory() as tmp:
         identity, output = Path(tmp, "identity"), Path(tmp, "secrets.toml.age")
         _run_age_keygen(age_keygen, "-o", str(identity))

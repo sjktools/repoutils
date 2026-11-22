@@ -316,6 +316,46 @@ def test_main_checks_callers_overriding_a_checked_input_default(repo: Path, caps
     ]
 
 
+WRAPPER = """\
+inputs:
+  version:
+    default: "0.13.6"
+runs:
+  using: composite
+  steps:
+    - uses: $/.github/actions/{target}
+      with:
+        {key}: ${{{{ inputs.version }}}}
+"""
+
+
+def test_main_checks_callers_of_wrappers_of_a_checked_action(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # outer -> wrapper -> setup: a caller of outer is checked, and cycle,
+    # which outer's input reaches and which calls itself, ends the search.
+    (repo / ".github/actions/setup").mkdir(parents=True)
+    (repo / ".github/actions/setup/action.yml").write_text(
+        INPUT_ACTION.replace("'0.13.5'", "'0.13.6'").replace("${{ inputs.just-version }}", "1.58.0")
+    )
+    for name, target, key in (("wrapper", "setup", "uv-version"), ("outer", "wrapper", "version")):
+        (repo / f".github/actions/{name}").mkdir()
+        (repo / f".github/actions/{name}/action.yml").write_text(WRAPPER.format(target=target, key=key))
+    (repo / ".github/actions/cycle").mkdir()
+    cycle = WRAPPER.format(target="outer", key="version")
+    (repo / ".github/actions/cycle/action.yml").write_text(
+        cycle + cycle.split("  steps:\n")[1].replace("outer", "cycle")
+    )
+    (repo / ".github/workflows/a.yml").write_text(
+        "jobs:\n  a:\n    steps:\n"
+        "      - uses: $/.github/actions/outer\n        with:\n          version: 0.13.5\n"
+        "      - uses: $/.github/actions/cycle\n        with:\n          version: 0.13.4\n"
+    )
+    assert main(repo) == 1
+    assert capsys.readouterr().err.splitlines() == [
+        ".github/workflows/a.yml: a ./.github/actions/outer step has version: 0.13.5, not 0.13.6",
+        ".github/workflows/a.yml: a ./.github/actions/cycle step has version: 0.13.4, not 0.13.6",
+    ]
+
+
 PUBLISH_WORKFLOW = f"""\
 jobs:
   publish:

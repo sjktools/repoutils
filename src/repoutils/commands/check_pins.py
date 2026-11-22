@@ -269,15 +269,23 @@ def dockerfile_problems(root: Path, uv: str) -> list[str]:
 def local_inputs(root: Path, files: dict[Path, str], tool: tuple[str, str]) -> list[tuple[str, str]]:
     """Each local action in files whose pin of tool takes its default from one
     of the action's inputs, as `./<path>` and the input. A step that uses the
-    action and sets the input pins tool with it instead of the default."""
-    found = [
-        ("./" + path.parent.relative_to(root).as_posix(), pin.source)
-        for path, text in files.items()
-        for action, key in PINS[tool]
-        for pin in pin_lines(text, action, key)
-        if pin is not None and pin.source
-    ]
-    return list(dict.fromkeys(found))
+    action and sets the input pins tool with it instead of the default. That
+    holds through wrappers too: an action whose step passes its own input on
+    to such an action's input is one of them."""
+    found: dict[tuple[str, str], None] = {}
+    pins = list(PINS[tool])
+    while pins:
+        new = [
+            ("./" + path.parent.relative_to(root).as_posix(), pin.source)
+            for path, text in files.items()
+            for action, key in pins
+            for pin in pin_lines(text, action, key)
+            if pin is not None and pin.source
+        ]
+        # Each pair is looked for once, so a cycle of actions ends.
+        pins = [pair for pair in dict.fromkeys(new) if pair not in found]
+        found.update(dict.fromkeys(pins))
+    return list(found)
 
 
 def problems(root: Path) -> tuple[list[str], dict[tuple[str, str], int]]:

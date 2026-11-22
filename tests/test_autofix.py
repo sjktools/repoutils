@@ -2,6 +2,7 @@ import io
 import subprocess
 import urllib.error
 from email.message import Message
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,6 +15,8 @@ REPO = f"{API}/repos/o/r"
 FIX_RUN = f"{REPO}/actions/runs/7"
 PUSH_RUN = f"{REPO}/actions/runs/8"
 PUSH_RUNS = f"{REPO}/actions/workflows/fix-push.yml/runs?per_page=100&page=1"
+PUSH_JOBS = f"{PUSH_RUN}/jobs?per_page=100"
+REACTIONS = f"{REPO}/issues/comments/99/reactions"
 FIX_PAGE = "https://github.com/o/r/actions/runs/7"
 PUSH_PAGE = "https://github.com/o/r/actions/runs/8"
 
@@ -48,6 +51,7 @@ class FakeGitHub:
         fix_runs: list[dict[str, Any]],
         push_lists: list[list[dict[str, Any]]],
         push_runs: list[dict[str, Any]],
+        report: str = "success",
     ) -> None:
         self.answers: dict[str, list[Any]] = {
             f"{REPO}/pulls/5": prs,
@@ -55,12 +59,17 @@ class FakeGitHub:
             PUSH_RUNS: [{"workflow_runs": runs} for runs in push_lists],
             PUSH_RUN: push_runs,
             REPO: [{"default_branch": "main"}],
+            PUSH_JOBS: [
+                {"jobs": [{"name": "push", "conclusion": "success"}, {"name": "report", "conclusion": report}]}
+            ],
         }
         self.calls: list[tuple[str, str, object]] = []
 
     def request(self, method: str, url: str, token: str, *, json_body: object = None) -> Any:
         self.calls.append((method, url, json_body))
         assert token == "tok"
+        if method == "POST" and url == REACTIONS:
+            return {"content": "rocket"}
         if method == "POST":
             run_id = 7 if url.endswith("/fix.yml/dispatches") else 8
             return {"workflow_run_id": run_id}
@@ -69,6 +78,12 @@ class FakeGitHub:
 
     def posts(self) -> list[tuple[str, object]]:
         return [(url.removeprefix(REPO), body) for method, url, body in self.calls if method == "POST"]
+
+
+@pytest.fixture(autouse=True)
+def not_in_actions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Outside GitHub Actions, as CI runs these tests in it, which makes errors annotations."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
 
 
 @pytest.fixture
@@ -170,27 +185,110 @@ def test_starts_the_push_run_if_github_does_not(
     assert fake.posts()[1][0] == "/actions/workflows/fix-push.yml/dispatches"
 
 
-def test_failed_fix_run_waits_for_no_push(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], slept: list[float]
+@pytest.mark.parametrize(("report", "reported"), [("success", True), ("skipped", False)])
+def test_failed_fix_run_still_goes_to_a_push_run(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    slept: list[float],
+    report: str,
+    reported: bool,
 ) -> None:
-    fake = FakeGitHub(prs=[_pr()], fix_runs=[_done(7, "failure")], push_lists=[[]], push_runs=[])
-    _install(monkeypatch, fake)
-    assert _run() == 1
-    assert capsys.readouterr().err.endswith(
-        f"fix.yml run 7 finished with conclusion failure, so nothing was pushed: {FIX_PAGE}\n"
+    fake = FakeGitHub(
+        prs=[_pr()], fix_runs=[_done(7, "failure")], push_lists=[[_push_run()]], push_runs=[_done(8)], report=report
     )
-    assert PUSH_RUNS not in [url for _, url, _ in fake.calls]
-
-
-def test_failed_push_run(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], slept: list[float]
-) -> None:
-    fake = FakeGitHub(prs=[_pr()], fix_runs=[_done(7)], push_lists=[[_push_run()]], push_runs=[_done(8, "failure")])
     _install(monkeypatch, fake)
-    assert _run() == 1
+    progress = autofix.Progress()
+    assert autofix.autofix("o/r", 5, "tok", interval=10, timeout=600, progress=progress) == 1
+    assert capsys.readouterr().err == (
+        f"Started fix.yml on feature: {FIX_PAGE}\n"
+        f"fix.yml run 7 finished with conclusion failure, so it has nothing to push: {FIX_PAGE}\n"
+        f"Waiting for fix-push.yml: {PUSH_PAGE}\n"
+    )
+    assert progress == autofix.Progress(fix_url=FIX_PAGE, push_url=PUSH_PAGE, reported=reported)
+
+
+@pytest.mark.parametrize(("report", "reported"), [("success", True), ("failure", False)])
+def test_failed_push_run(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    slept: list[float],
+    report: str,
+    reported: bool,
+) -> None:
+    fake = FakeGitHub(
+        prs=[_pr()], fix_runs=[_done(7)], push_lists=[[_push_run()]], push_runs=[_done(8, "failure")], report=report
+    )
+    _install(monkeypatch, fake)
+    progress = autofix.Progress()
+    assert autofix.autofix("o/r", 5, "tok", interval=10, timeout=600, progress=progress) == 1
     assert capsys.readouterr().err.endswith(
         f"fix-push.yml run 8 finished with conclusion failure, so the fixes may not have been pushed: {PUSH_PAGE}\n"
     )
+    assert progress.reported is reported
+
+
+def test_reads_no_jobs_when_the_fixes_were_pushed(monkeypatch: pytest.MonkeyPatch, slept: list[float]) -> None:
+    fake = FakeGitHub(prs=[_pr()], fix_runs=[_done(7)], push_lists=[[_push_run()]], push_runs=[_done(8)])
+    _install(monkeypatch, fake)
+    assert _run() == 0
+    assert PUSH_JOBS not in [url for _, url, _ in fake.calls]
+
+
+def test_reacts_to_the_comment_once_the_fix_run_starts(monkeypatch: pytest.MonkeyPatch, slept: list[float]) -> None:
+    fake = FakeGitHub(prs=[_pr()], fix_runs=[_done(7)], push_lists=[[_push_run()]], push_runs=[_done(8)])
+    _install(monkeypatch, fake)
+    assert autofix.autofix("o/r", 5, "tok", interval=10, timeout=600, comment_id=99) == 0
+    assert [url for url, _ in fake.posts()] == [
+        "/actions/workflows/fix.yml/dispatches",
+        "/issues/comments/99/reactions",
+    ]
+    assert fake.posts()[1][1] == {"content": "rocket"}
+
+
+@pytest.mark.parametrize(("actions", "prefix"), [("true", "::warning::"), (None, "")])
+def test_a_failed_reaction_only_warns(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    slept: list[float],
+    actions: str | None,
+    prefix: str,
+) -> None:
+    fake = FakeGitHub(prs=[_pr()], fix_runs=[_done(7)], push_lists=[[_push_run()]], push_runs=[_done(8)])
+
+    def request(method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        if url == REACTIONS:
+            raise urllib.error.HTTPError(url, 403, "Forbidden", Message(), io.BytesIO(b"{}"))
+        return fake.request(method, url, token, json_body=json_body)
+
+    monkeypatch.setattr(github, "request", request)
+    if actions is not None:
+        monkeypatch.setenv("GITHUB_ACTIONS", actions)
+    assert autofix.autofix("o/r", 5, "tok", interval=10, timeout=600, comment_id=99) == 0
+    assert f"{prefix}Couldn't react to comment 99: HTTP Error 403: Forbidden\n" in capsys.readouterr().err
+
+
+def test_a_reaction_that_cannot_connect_only_warns(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def request(method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        raise urllib.error.URLError("no route to host")
+
+    monkeypatch.setattr(github, "request", request)
+    autofix.react("o/r", 99, "tok")
+    assert capsys.readouterr().err == "Couldn't react to comment 99: <urlopen error no route to host>\n"
+
+
+def test_report() -> None:
+    run = "https://github.com/o/r/actions/runs/1"
+    assert autofix.report(autofix.Progress(), run) == f"/autofix [couldn't start PR Fixes]({run}).\n"
+    assert autofix.report(autofix.Progress(fix_url=FIX_PAGE), run) == (
+        f"/autofix started [PR Fixes]({FIX_PAGE}), but [couldn't start pushing its fixes]({run}).\n"
+    )
+    assert autofix.report(autofix.Progress(fix_url=FIX_PAGE, push_url=PUSH_PAGE), run) == (
+        f"/autofix started [PR Fixes]({FIX_PAGE}), "
+        f"but [PR Fixes Push]({PUSH_PAGE}) didn't report whether it pushed the fixes.\n"
+    )
+    assert autofix.report(autofix.Progress(fix_url=FIX_PAGE, push_url=PUSH_PAGE, reported=True), run) is None
 
 
 def test_find_push_run_reads_every_page_since_the_fix_run(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -254,8 +352,86 @@ def test_command_line(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFix
     monkeypatch.setattr(autofix, "autofix", fake_autofix)
     assert autofix.main(["5", "--repo", "o/r", "--timeout", "2", "--interval", "3", "--workflow", "f.yml"]) == 0
     assert calls == [
-        ("o/r", 5, "tok", {"workflow": "f.yml", "push_workflow": "fix-push.yml", "interval": 3.0, "timeout": 120.0})
+        (
+            "o/r",
+            5,
+            "tok",
+            {
+                "workflow": "f.yml",
+                "push_workflow": "fix-push.yml",
+                "interval": 3.0,
+                "timeout": 120.0,
+                "comment_id": None,
+                "progress": autofix.Progress(),
+            },
+        )
     ]
+
+
+def _actions_env(monkeypatch: pytest.MonkeyPatch) -> str:
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_SERVER_URL", "https://github.com")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("GITHUB_RUN_ID", "1")
+    return "https://github.com/o/r/actions/runs/1"
+
+
+def test_command_line_writes_a_report_when_the_push_run_did_not(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path, slept: list[float]
+) -> None:
+    run = _actions_env(monkeypatch)
+    fake = FakeGitHub(
+        prs=[_pr()],
+        fix_runs=[_done(7)],
+        push_lists=[[_push_run()]],
+        push_runs=[_done(8, "cancelled")],
+        report="skipped",
+    )
+    _install(monkeypatch, fake)
+    report = tmp_path / "report.md"
+    assert autofix.main(["5", "--comment-id", "99", "--report", str(report)]) == 1
+    assert report.read_text() == autofix.report(autofix.Progress(fix_url=FIX_PAGE, push_url=PUSH_PAGE), run)
+    assert REACTIONS in [url for _, url, _ in fake.calls]
+
+
+def test_command_line_writes_no_report_when_the_push_run_reported(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path, slept: list[float]
+) -> None:
+    _actions_env(monkeypatch)
+    fake = FakeGitHub(prs=[_pr()], fix_runs=[_done(7, "failure")], push_lists=[[_push_run()]], push_runs=[_done(8)])
+    _install(monkeypatch, fake)
+    report = tmp_path / "report.md"
+    assert autofix.main(["5", "--report", str(report)]) == 1
+    assert not report.exists()
+    assert capsys.readouterr().err.endswith(
+        "The push run reported on the pull request, so there's nothing more to report.\n"
+    )
+
+
+def test_command_line_reports_a_pr_it_cannot_fix(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    run = _actions_env(monkeypatch)
+    fake = FakeGitHub(prs=[_pr(state="closed")], fix_runs=[], push_lists=[], push_runs=[])
+    _install(monkeypatch, fake)
+    report = tmp_path / "report.md"
+    assert autofix.main(["5", "--report", str(report)]) == 1
+    assert report.read_text() == f"/autofix [couldn't start PR Fixes]({run}).\n"
+    assert capsys.readouterr().err == "::error::Pull request #5 is not open.\n"
+
+
+def test_command_line_report_needs_actions(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+    monkeypatch.delenv("GITHUB_SERVER_URL", raising=False)
+    fake = FakeGitHub(prs=[_pr(state="closed")], fix_runs=[], push_lists=[], push_runs=[])
+    _install(monkeypatch, fake)
+    report = tmp_path / "report.md"
+    assert autofix.main(["5", "--repo", "o/r", "--report", str(report)]) == 1
+    assert not report.exists()
+    assert capsys.readouterr().err.endswith("$GITHUB_SERVER_URL isn't set: run this in a GitHub Actions job.\n")
 
 
 def test_command_line_reports_errors(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

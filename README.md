@@ -1007,6 +1007,17 @@ Pass `--armor` to write ASCII-armored output instead of binary output (`age --de
 Pass `--age PATH` to specify the path to the `age` executable when `age` is not on `PATH`.
 The command writes the exported secret names and the decryption command to `$GITHUB_STEP_SUMMARY` (or to `--summary FILE`).
 
+Pass `--self-test` instead of `--output FILE` to check that the export works, for example in a CI job on every pull request.
+It exports a made-up value for each listed secret, never a real one, so it needs no `SECRETS_JSON`.
+It encrypts them to a throwaway key from `age-keygen` (`--age-keygen PATH`), to each `--recipient` and to each `--github-key`, with `--armor`.
+Then it decrypts the output with the throwaway key, and fails in these cases:
+
+- The output is not ASCII-armored.
+- The `age` header does not name an SSH recipient for each SSH key given.
+- The decrypted TOML does not give back exactly the made-up values.
+
+As in a real export, the plaintext reaches `age` only on its standard input.
+
 The command writes the encrypted file only to the runner, so add a workflow step after `export` to upload that file as a workflow artifact.
 Any signed-in GitHub user can download artifacts from a public repository, so set a short `retention-days` and delete the artifact after download.
 Deleting old artifacts prevents a future compromise of the private key from decrypting earlier backups left on GitHub.

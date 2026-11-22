@@ -523,8 +523,19 @@ def main(argv: list[str]) -> int:
             )
         if args.mode == "export":
             listed = _load(Path())
+            names = selected(listed, args.environment, ("actions",), "export")
+            if args.self_test:
+                return secret_export.self_test(
+                    names,
+                    listed.all_names(),
+                    args.environment,
+                    recipients=args.recipient,
+                    github_keys=args.github_key,
+                    age=args.age,
+                    age_keygen=args.age_keygen,
+                )
             return secret_export.export(
-                selected(listed, args.environment, ("actions",), "export"),
+                names,
                 listed.all_names(),
                 args.environment,
                 recipients=args.recipient,

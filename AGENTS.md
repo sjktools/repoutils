@@ -215,7 +215,7 @@ Update it when a workflow starts or stops using one, as `just secrets-workflows-
 A workflow that uses an Actions variable (`vars.NAME`) needs it listed in `[tool.repoutils.variables]` in the same way, which `just variables-workflows-check` checks.
 `inspect-secrets.yml`, run by hand from `main`, reports what each of them is with `repoutils secrets inspect`, with a job for each environment that holds secrets.
 `export-secrets.yml` is run the same way, and backs up their values with `repoutils secrets export`, encrypted to the GitHub key that the `SECRETS_EXPORT_KEY` variable names.
-`ci.yml`'s `secrets-export` job checks on every PR that this still works, by round-tripping made-up secrets with `just secrets-export-test`.
+`ci.yml`'s `secrets-export` job checks on every PR that this still works, with `just secrets-export-test`, which runs `secrets export --self-test` to round-trip made-up secrets.
 Both install age with the `.github/actions/install-age` action, which pins its release by version and SHA-256, so update both together.
 
 GitHub's API doesn't serve step summaries, so every job that writes one also uploads it as an artifact.

@@ -11,23 +11,28 @@ Given the names set at each level in $SECRET_NAMES, as for ``secrets inspect``,
 an environment's job fails if the environment doesn't set a secret it lists,
 rather than export the repository's or the organization's value as the
 environment's.
+``--self-test`` exports made-up values for the listed secrets to a throwaway
+age identity, and to any recipient or GitHub key given, and checks they decrypt
+as they were.
 Stdlib-only, like every repoutils module: age is run as a program."""
 
 import argparse
 import base64
 import binascii
+import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 import urllib.parse
 import urllib.request
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from repoutils import config, github, secret_inspect, secret_levels
+from repoutils import config, github, secret_export_remote, secret_inspect, secret_levels
 
 # The SSH key types age can encrypt to.
 AGE_SSH_TYPES = ("ssh-ed25519", "ssh-rsa")
@@ -203,6 +208,86 @@ def export(
     return 0
 
 
+def made_up_values(names: Iterable[str]) -> dict[str, str]:
+    """A made-up value for each name, never a real one, with the characters TOML must escape."""
+    return {name: f'made-up {name}, with "quotes", a \\ and\na second line\n' for name in names}
+
+
+def _run_age_keygen(age_keygen: str, *args: str) -> str:
+    try:
+        result = subprocess.run([age_keygen, *args], capture_output=True, text=True, check=False)
+    except FileNotFoundError:
+        raise ValueError(f"can't run {age_keygen}: install age, or give its path with --age-keygen") from None
+    if result.returncode:
+        raise RuntimeError(f"{age_keygen} failed (exit {result.returncode}):\n{result.stderr}")
+    return result.stdout
+
+
+def armored_header(armored: str) -> bytes:
+    """The age header (and the start of the payload) of an ASCII-armored file."""
+    if not armored.startswith("-----BEGIN AGE ENCRYPTED FILE-----"):
+        raise RuntimeError("the export isn't ASCII-armored")
+    return base64.b64decode("".join(armored.splitlines()[1:-1]))
+
+
+def ssh_stanzas(header: bytes) -> int:
+    """How many of the recipients in an age header are SSH keys age can encrypt to.
+    The header names each recipient's type, in a ``-> TYPE ...`` line."""
+    return sum(header.count(f"\n-> {kind} ".encode()) for kind in AGE_SSH_TYPES)
+
+
+def self_test(
+    wanted: list[str],
+    listed: Iterable[str],
+    environment: str | None,
+    *,
+    recipients: list[str],
+    github_keys: list[tuple[str, str]],
+    age: str = "age",
+    age_keygen: str = "age-keygen",
+) -> int:
+    """Export made-up values for the secrets in wanted, as export would the real
+    ones, to a throwaway age identity, recipients and github_keys, and check that the
+    export is armored, is encrypted to every SSH key, and decrypts with the
+    identity to exactly those values. The plaintext reaches age only on its
+    standard input, as in a real export."""
+    values = made_up_values(wanted)
+    # Tell export the environment sets every secret, as the made-up ones are its own.
+    levels = None
+    if environment is not None:
+        levels = secret_levels.Levels(frozenset(), {environment.lower(): frozenset(n.upper() for n in wanted)})
+    with tempfile.TemporaryDirectory() as tmp:
+        identity, output = Path(tmp, "identity"), Path(tmp, "secrets.toml.age")
+        _run_age_keygen(age_keygen, "-o", str(identity))
+        recipient = _run_age_keygen(age_keygen, "-y", str(identity)).strip()
+        export(
+            wanted,
+            listed,
+            environment,
+            recipients=[recipient, *recipients],
+            github_keys=github_keys,
+            output=output,
+            age=age,
+            armor=True,
+            secrets_json=json.dumps(values),
+            levels=levels,
+        )
+        armored = output.read_text()
+        header = armored_header(armored)
+        ssh_keys = len(github_keys) + sum(r.split(" ", 1)[0] in AGE_SSH_TYPES for r in recipients)
+        if ssh_stanzas(header) != ssh_keys:
+            raise RuntimeError(f"the export isn't encrypted to each of the {ssh_keys} SSH key(s) given")
+        plaintext = secret_export_remote.decrypt(age, [identity], armored.encode())
+    expected: dict[str, object] = {"actions": values}
+    if environment is not None:
+        expected = {"environments": {environment: values}}
+    if tomllib.loads(plaintext.decode()) != expected:
+        raise RuntimeError("the decrypted secrets differ from the made-up ones")
+    keys = "".join(f", also encrypted to {user}/{fingerprint}" for user, fingerprint in github_keys)
+    print(f"Self-test passed: exported and decrypted {len(values)} made-up secret(s){keys}")
+    return 0
+
+
 # argparse has no public name for the type add_subparsers() returns.
 def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:  # pyright: ignore[reportPrivateUsage]
     """Add the export subcommand and its options."""
@@ -232,8 +317,19 @@ def add_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]"
         help="encrypt to the key of USER's on GitHub with this fingerprint, "
         f"fetched from {KEYS_URL.format(user='USER')} (repeatable)",
     )
-    parser.add_argument("--output", type=Path, required=True, help="the encrypted file to write")
+    # One or the other: a self-test writes only to a temporary directory.
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--output", type=Path, help="the encrypted file to write")
+    target.add_argument(
+        "--self-test",
+        action="store_true",
+        help="rather than export the job's secrets, export made-up values for them to a throwaway age key "
+        "and to each --recipient and --github-key, and check they decrypt to the same values (needs no $SECRETS_JSON)",
+    )
     parser.add_argument("--age", default="age", help="the age program to run (default: age)")
+    parser.add_argument(
+        "--age-keygen", default="age-keygen", help="the age-keygen program --self-test runs (default: age-keygen)"
+    )
     parser.add_argument(
         "--armor", action="store_true", help="write the encrypted file as ASCII text rather than binary"
     )

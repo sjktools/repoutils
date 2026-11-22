@@ -1,6 +1,7 @@
 import argparse
 import base64
 import json
+import shutil
 import subprocess
 import tomllib
 import urllib.request
@@ -340,3 +341,129 @@ def test_export_armor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, age: Fake
     assert age.args[:3] == ["age", "--encrypt", "--armor"]
     assert secrets.main(["export", "--recipient", "age1abc", "--output", "out.age"]) == 0
     assert "--armor" not in age.args
+
+
+ARMOR_BEGIN, ARMOR_END = "-----BEGIN AGE ENCRYPTED FILE-----", "-----END AGE ENCRYPTED FILE-----"
+
+
+class FakeAgeTools:
+    """Stands in for subprocess.run of age and age-keygen, with an "encryption"
+    that keeps the plaintext after a header naming each recipient's type."""
+
+    def __init__(self, *, armor: bool = True, ssh_stanzas: bool = True, tamper: bool = False) -> None:
+        self.armor, self.ssh_stanzas, self.tamper = armor, ssh_stanzas, tamper
+        self.encrypt_input = b""
+
+    def __call__(self, args: list[str], *, input: bytes = b"", **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        if args[0] == "age-keygen":
+            if args[1] == "-o":
+                Path(args[2]).write_text("AGE-SECRET-KEY-1FAKE\n")
+                return subprocess.CompletedProcess(args, 0, "", "")
+            return subprocess.CompletedProcess(args, 0, "age1throwaway\n", "")
+        if "--encrypt" in args:
+            self.encrypt_input = input
+            recipients = [args[i + 1] for i, arg in enumerate(args) if arg == "--recipient"]
+            header = "age-encryption.org/v1\n"
+            for recipient in recipients:
+                kind = recipient.split(" ", 1)[0]
+                header += f"-> {kind if kind in secret_export.AGE_SSH_TYPES and self.ssh_stanzas else 'X25519'} x\n"
+            body = base64.b64encode(f"{header}---\n".encode() + input).decode()
+            text = f"{ARMOR_BEGIN}\n{body}\n{ARMOR_END}\n" if self.armor else body
+            Path(args[args.index("--output") + 1]).write_text(text)
+            return subprocess.CompletedProcess(args, 0, b"", b"")
+        assert "--decrypt" in args
+        plaintext = base64.b64decode(input.decode().splitlines()[1]).split(b"---\n", 1)[1]
+        return subprocess.CompletedProcess(args, 0, plaintext + (b"X = 1\n" if self.tamper else b""), None)
+
+
+def _self_test(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tools: FakeAgeTools, *argv: str) -> int:
+    _project(tmp_path, monkeypatch, values=None)
+    monkeypatch.setattr(subprocess, "run", tools)
+    monkeypatch.setattr(secret_export, "fetch_keys", lambda user: KEYS)
+    return secrets.main(["export", "--self-test", *argv])
+
+
+def test_self_test(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    tools = FakeAgeTools()
+    assert _self_test(tmp_path, monkeypatch, tools, "--github-key", f"octocat/{ED25519_FP}") == 0
+    out = capsys.readouterr().out
+    assert (
+        f"Self-test passed: exported and decrypted 2 made-up secret(s), also encrypted to octocat/{ED25519_FP}" in out
+    )
+    values = tomllib.loads(tools.encrypt_input.decode())["actions"]
+    assert values == secret_export.made_up_values(["TOKEN", "DEPLOY_KEY"])
+    assert values["TOKEN"] == 'made-up TOKEN, with "quotes", a \\ and\na second line\n'
+    assert list(tmp_path.iterdir()) == [tmp_path / "pyproject.toml"]
+
+
+def test_self_test_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tools = FakeAgeTools()
+    assert _self_test(tmp_path, monkeypatch, tools, "--environment", "release", "--recipient", ED25519) == 0
+    assert tomllib.loads(tools.encrypt_input.decode()) == {
+        "environments": {"release": secret_export.made_up_values(["RELEASE_TOKEN"])}
+    }
+    captured = capsys.readouterr()
+    assert "Self-test passed: exported and decrypted 1 made-up secret(s)" in captured.out
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize(
+    ("tools", "error"),
+    [
+        (FakeAgeTools(armor=False), "the export isn't ASCII-armored"),
+        (FakeAgeTools(ssh_stanzas=False), "the export isn't encrypted to each of the 1 SSH key(s) given"),
+        (FakeAgeTools(tamper=True), "the decrypted secrets differ from the made-up ones"),
+    ],
+)
+def test_self_test_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tools: FakeAgeTools, error: str
+) -> None:
+    assert _self_test(tmp_path, monkeypatch, tools, "--github-key", f"octocat/{ED25519_FP}") == 1
+    assert error in capsys.readouterr().err
+
+
+def test_self_test_without_age_keygen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _project(tmp_path, monkeypatch, values=None)
+    assert secrets.main(["export", "--self-test", "--age-keygen", str(tmp_path / "missing")]) == 1
+    assert "install age, or give its path with --age-keygen" in capsys.readouterr().err
+
+
+def test_self_test_age_keygen_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _project(tmp_path, monkeypatch, values=None)
+    monkeypatch.setattr(subprocess, "run", lambda args, **kwargs: subprocess.CompletedProcess(args, 1, "", "no\n"))
+    assert secrets.main(["export", "--self-test"]) == 1
+    assert "age-keygen failed (exit 1):\nno" in capsys.readouterr().err
+
+
+def test_self_test_takes_no_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _project(tmp_path, monkeypatch, values=None)
+    with pytest.raises(SystemExit) as exit_info:
+        secrets.main(["export", "--self-test", "--output", "out.age"])
+    assert exit_info.value.code == 2
+    with pytest.raises(SystemExit) as exit_info:
+        secrets.main(["export", "--recipient", "age1abc"])
+    assert exit_info.value.code == 2
+
+
+@pytest.mark.skipif(
+    shutil.which("age") is None or shutil.which("age-keygen") is None or shutil.which("ssh-keygen") is None,
+    reason="needs age, age-keygen and ssh-keygen",
+)
+def test_self_test_with_age(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    key = tmp_path / "id_ed25519"
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
+    public = key.with_suffix(".pub").read_text()
+    fingerprint = secret_inspect.fingerprint(base64.b64decode(public.split()[1]))
+    (tmp_path / "project").mkdir()
+    _project(tmp_path / "project", monkeypatch, values=None)
+    monkeypatch.setattr(secret_export, "fetch_keys", lambda user: public)
+    assert secrets.main(["export", "--self-test", "--github-key", f"octocat/{fingerprint}"]) == 0
+    assert "Self-test passed" in capsys.readouterr().out

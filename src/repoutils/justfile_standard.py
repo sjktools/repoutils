@@ -5,7 +5,7 @@ prints for a project to paste in when the recipe is missing. The command never
 compares a recipe's text with the project's, as a project may have a reason to
 change it. In the text, ``@default-branch@`` stands for the project's
 ``default-branch``. An aggregate recipe's text has no header line: the command
-writes ``<name>: <dependencies>`` after it, with only the dependencies the
+writes ``<name><parameters>: <dependencies>`` after it, with only the dependencies the
 project's features and settings ask for.
 
 A test checks that repoutils' own justfile has every recipe's text, so the
@@ -25,16 +25,21 @@ class Recipe:
     feature: str | None = None
     # The standard recipes it must reach, directly or through other recipes.
     dependencies: tuple[str, ...] = ()
-    # Whether the text leaves out the header line, which is `<name>: <dependencies>`.
+    # Whether the text leaves out the header line, which is `<name><parameters>: <dependencies>`.
     aggregate: bool = False
+    parameters: str = ""
+    # How the header writes a dependency that it passes arguments, such as `(diff-cover base)`.
+    calls: tuple[tuple[str, str], ...] = ()
 
 
 def _recipe(name: str, text: str, feature: str | None = None) -> Recipe:
     return Recipe(name, text.removeprefix("\n"), feature)
 
 
-def _aggregate(name: str, doc: str, dependencies: str) -> Recipe:
-    return Recipe(name, doc + "\n", None, tuple(dependencies.split()), aggregate=True)
+def _aggregate(
+    name: str, doc: str, dependencies: str, parameters: str = "", calls: tuple[tuple[str, str], ...] = ()
+) -> Recipe:
+    return Recipe(name, doc + "\n", None, tuple(dependencies.split()), True, parameters, calls)
 
 
 RECIPES: tuple[Recipe, ...] = (
@@ -78,13 +83,12 @@ coverage *args:
     uv run --group dev pytest -q --cov --cov-report=term-missing --cov-report=xml {{ args }}
 """,
     ),
-    Recipe(
+    _aggregate(
         "patch-coverage",
-        f"""\
-# Run coverage, then report coverage of the lines changed since base
-patch-coverage base='origin/{BRANCH}': coverage (diff-cover base)
-""",
-        dependencies=("coverage", "diff-cover"),
+        "# Run coverage, then report coverage of the lines changed since base",
+        "coverage diff-cover",
+        f" base='origin/{BRANCH}'",
+        (("diff-cover", "(diff-cover base)"),),
     ),
     _recipe(
         "diff-cover",

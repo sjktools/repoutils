@@ -47,7 +47,11 @@ WHERE = "[tool.repoutils.justfile]"
 
 @dataclass(frozen=True)
 class Justfile:
-    """What the command reads from ``just --dump``: each recipe's dependencies, the aliases and the variables."""
+    """What the command reads from ``just --dump``: each recipe's dependencies, the aliases and the variables.
+
+    A module's recipes are under their path, such as ``tools::list``, with
+    their dependencies given by path too.
+    """
 
     recipes: dict[str, tuple[str, ...]]
     aliases: dict[str, str]
@@ -58,7 +62,12 @@ class Justfile:
         if name in self.recipes:
             return name
         target = self.aliases.get(name)
-        return target if target in self.recipes else None
+        if target is None or target in self.recipes:
+            return target
+        # just gives an alias of a module's recipe only that recipe's own name,
+        # so take the least nested module recipe of that name.
+        paths = sorted((path.count("::"), path) for path in self.recipes if path.endswith(f"::{target}"))
+        return paths[0][1] if paths else None
 
     def reached(self, name: str) -> set[str]:
         """The recipes that the recipe name runs first or after, directly or through others."""
@@ -77,11 +86,30 @@ class Justfile:
         return target is not None and target in self.reached(name)
 
 
-def _table(dump: dict[str, Any], key: str) -> dict[str, Any]:
-    value = dump.get(key)
+def _table(dump: dict[str, Any], key: str, default: dict[str, Any] | None = None) -> dict[str, Any]:
+    value = dump.get(key, default)
     if not isinstance(value, dict):
         raise ValueError(f"{key!r} isn't an object")
     return value
+
+
+def _add_recipes(module: Any, prefix: str, recipes: dict[str, tuple[str, ...]]) -> None:
+    """Add the recipes of module, and of the modules it has, to recipes, by path.
+
+    prefix is the module's path and ``::``, or empty for the justfile itself.
+    """
+    if not isinstance(module, dict):
+        raise ValueError(f"module {prefix.removesuffix('::')!r} isn't an object")
+    for name, recipe in _table(module, "recipes").items():
+        dependencies = recipe.get("dependencies") if isinstance(recipe, dict) else None
+        if not isinstance(dependencies, list) or not all(
+            isinstance(dependency, dict) and isinstance(dependency.get("recipe"), str) for dependency in dependencies
+        ):
+            raise ValueError(f"recipe {prefix + name!r} has no list of dependencies")
+        # A dependency's path is relative to the module the recipe is in.
+        recipes[prefix + name] = tuple(prefix + dependency["recipe"] for dependency in dependencies)
+    for name, submodule in _table(module, "modules", {}).items():
+        _add_recipes(submodule, f"{prefix}{name}::", recipes)
 
 
 def parse_dump(text: str) -> Justfile:
@@ -93,13 +121,7 @@ def parse_dump(text: str) -> Justfile:
     if not isinstance(dump, dict):
         raise ValueError("not a JSON object")
     recipes: dict[str, tuple[str, ...]] = {}
-    for name, recipe in _table(dump, "recipes").items():
-        dependencies = recipe.get("dependencies") if isinstance(recipe, dict) else None
-        if not isinstance(dependencies, list) or not all(
-            isinstance(dependency, dict) and isinstance(dependency.get("recipe"), str) for dependency in dependencies
-        ):
-            raise ValueError(f"recipe {name!r} has no list of dependencies")
-        recipes[name] = tuple(dependency["recipe"] for dependency in dependencies)
+    _add_recipes(dump, "", recipes)
     aliases: dict[str, str] = {}
     for name, alias in _table(dump, "aliases").items():
         target = alias.get("target") if isinstance(alias, dict) else None
@@ -173,10 +195,12 @@ class Settings:
 
     def text(self, recipe: Recipe) -> str:
         """recipe's standard text, for this project."""
-        text = recipe.text.replace(BRANCH, self.default_branch)
+        text = recipe.text
         if recipe.aggregate:
-            text += f"{recipe.name}: {' '.join(self.dependencies(recipe))}\n"
-        return text
+            calls = dict(recipe.calls)
+            dependencies = "".join(f" {calls.get(name, name)}" for name in self.dependencies(recipe))
+            text += f"{recipe.name}{recipe.parameters}:{dependencies}\n"
+        return text.replace(BRANCH, self.default_branch)
 
 
 def problems(justfile: Justfile, settings: Settings) -> tuple[list[str], list[Recipe]]:

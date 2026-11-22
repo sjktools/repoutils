@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from repoutils import config
-from repoutils.commands.check_justfile import Justfile, Settings, main, parse_dump, problems
+from repoutils.commands.check_justfile import Justfile, Settings, main, parse_dump, problems, read_justfile
 from repoutils.justfile_standard import BY_NAME, FIX_CHECK_PAIRS, RECIPES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -101,6 +101,17 @@ def test_alias_counts_as_the_recipe() -> None:
     assert problems(justfile, ALL_FEATURES) == ([], [])
 
 
+def test_alias_to_a_module_recipe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "justfile").write_text("mod tools\n\nalias default := tools::list\n\ncheck: tools::list\n")
+    (tmp_path / "tools.just").write_text("list: other\n    echo\n\nother:\n    echo\n\nmod deeper\n")
+    (tmp_path / "deeper.just").write_text("list:\n    echo\n")
+    justfile = read_justfile("just")
+    assert justfile.resolve("default") == "tools::list"
+    assert justfile.reached("check") == {"tools::list", "tools::other"}
+    assert "tools::deeper::list" in justfile.recipes
+
+
 def test_alias_to_nothing_is_missing() -> None:
     recipes = standard_recipes()
     del recipes["default"]
@@ -175,6 +186,9 @@ def test_text() -> None:
     assert settings.text(BY_NAME["ci"]).endswith("\nci: lock-check sync check coverage\n")
     assert ALL_FEATURES.text(BY_NAME["ci"]).endswith("\nci: lock-check sync check coverage build smoke\n")
     assert Settings(omit=frozenset({"pyright"})).text(BY_NAME["check"]).count("pyright") == 0
+    # An omitted dependency isn't in the header, even one that's passed arguments.
+    omitted = Settings(omit=frozenset({"coverage"}), omit_dependencies=(("patch-coverage", frozenset({"diff-cover"})),))
+    assert omitted.text(BY_NAME["patch-coverage"]).endswith("\npatch-coverage base='origin/main':\n")
 
 
 @pytest.mark.parametrize(
@@ -187,6 +201,8 @@ def test_text() -> None:
         ('{"recipes": {"a": {"dependencies": [{}]}}}', "recipe 'a' has no list of dependencies"),
         ('{"recipes": {}, "aliases": {"a": 1}, "assignments": {}}', "alias 'a' has no target"),
         ('{"recipes": {}, "aliases": {}, "assignments": []}', "'assignments' isn't an object"),
+        ('{"recipes": {}, "modules": {"m": 1}}', "module 'm' isn't an object"),
+        ('{"recipes": {}, "modules": {"m": {"recipes": {"a": {}}}}}', "recipe 'm::a' has no list of dependencies"),
     ],
 )
 def test_parse_dump_rejects(text: str, message: str) -> None:

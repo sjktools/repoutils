@@ -42,9 +42,14 @@ environment's job can tell its own secrets from those it inherits.
 workflow to upload as a backup (see repoutils.secret_export).
 ``export-remote`` runs the workflow that runs ``export``, and decrypts and
 prints what it exported (see repoutils.secret_export_remote).
+``environments`` needs no token: it prints the environments the table lists
+as a JSON array, for a workflow's matrix to run ``inspect`` once for each.
+With ``--with-repository`` the array starts with ``""``, for the job that
+inspects the repository's own secrets, which deploys to no environment.
 Stdlib-only, like every repoutils command."""
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -202,6 +207,13 @@ def undeclared_environments(
                     f"but only environment {' or '.join(environments)} holds it"
                 )
     return problems
+
+
+def environments_json(root: Path = Path(), *, with_repository: bool = False) -> str:
+    """The environments root/pyproject.toml lists secrets for, in its order, as
+    a JSON array, which starts with "" (no environment) with with_repository."""
+    names = list(_load(root).environments or {})
+    return json.dumps(([""] if with_repository else []) + names)
 
 
 def check_workflows(root: Path = Path()) -> int:
@@ -438,7 +450,9 @@ def main(argv: list[str]) -> int:
         "Organization secrets don't count.",
     )
     subparsers = parser.add_subparsers(
-        dest="mode", required=True, metavar="{check,dump,check-workflows,inspect,inspect-remote,export,export-remote}"
+        dest="mode",
+        required=True,
+        metavar="{check,dump,check-workflows,environments,inspect,inspect-remote,export,export-remote}",
     )
     check_parser = subparsers.add_parser(
         "check",
@@ -456,6 +470,17 @@ def main(argv: list[str]) -> int:
         description="Fail if a workflow in .github/workflows uses a secret pyproject.toml doesn't list, "
         "or pyproject.toml lists one no workflow uses, "
         "or a job uses an environment's secret without deploying to that environment. Needs no token.",
+    )
+    environments_parser = subparsers.add_parser(
+        "environments",
+        help="print the environments pyproject.toml lists secrets for, as JSON (needs no token)",
+        description="Print the environments pyproject.toml lists secrets for as a JSON array, "
+        "such as for a workflow's matrix. Needs no token.",
+    )
+    environments_parser.add_argument(
+        "--with-repository",
+        action="store_true",
+        help='start the array with "", for a job that deploys to no environment',
     )
     secret_inspect.add_parser(subparsers)
     workflow_summaries.add_parser(subparsers)
@@ -482,6 +507,9 @@ def main(argv: list[str]) -> int:
     try:
         if args.mode == "check-workflows":
             return check_workflows()
+        if args.mode == "environments":
+            print(environments_json(with_repository=args.with_repository))
+            return 0
         if args.mode == "inspect":
             return inspect(
                 _load(Path()),

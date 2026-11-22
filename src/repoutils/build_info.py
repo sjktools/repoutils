@@ -60,9 +60,10 @@ def _installed_version() -> str | None:
         return None
 
 
-def short(info: BuildInfo) -> str:
-    """One line, as ``repoutils --version`` prints it."""
-    line = f"repoutils {info.version or 'unknown'}"
+def short(info: BuildInfo, name: str = "repoutils") -> str:
+    """One line, as ``repoutils --version`` prints it. A project that builds
+    with the ``repoutils-build-info`` hook prints the same, with its own name."""
+    line = f"{name} {info.version or 'unknown'}"
     if info.commit is not None:
         line += f" ({info.commit[:12]}{' with uncommitted changes' if info.dirty else ''})"
     return line

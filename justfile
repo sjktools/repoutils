@@ -81,49 +81,15 @@ check-attestations dist="dist":
 
 # Install the wheel `just build` built into a fresh environment and check that it runs and records this checkout's commit
 smoke:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    version="$(uv version --short)"
-    wheel="dist/repoutils-${version}-py3-none-any.whl"
-    run() { uvx --isolated --no-cache --from "$wheel" repoutils "$@"; }
-    # The wheel records the commit it was built from (see build_info_hook.py).
-    commit="$(git rev-parse HEAD)"
-    expected="repoutils ${version} (${commit:0:12})"
-    if [ -n "$(git status --porcelain --untracked-files=normal -- .)" ]; then
-        expected="repoutils ${version} (${commit:0:12} with uncommitted changes)"
-    fi
-    actual="$(run --version)"
-    if [ "$actual" != "$expected" ]; then
-        echo "expected '${expected}' from ${wheel} --version, got '${actual}'" >&2
-        exit 1
-    fi
-    if ! run version | grep -qxF "Commit: ${commit}"; then
-        echo "expected ${wheel}'s version command to give the commit ${commit}" >&2
-        exit 1
-    fi
-    run --help >/dev/null
-    run check-whitespace >/dev/null
-    echo "${wheel} installs and runs"
+    {{ repoutils }} check-install --wheel dist --version-line --run-with-commit version --run=--help --run check-whitespace
 
 # Retries while the index catches up with a new upload. --version must also
-# give the commit the release was built from (and a dev build's bumped version
+# give a 12-hex commit after the version (and a dev build's bumped version
 # counts as an uncommitted change).
 # Check that a released version installs from PyPI (or the index given) and runs
 [positional-arguments]
 check-release version index="https://pypi.org/simple/":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    for delay in 0 10 20 40 80 160; do
-        sleep "$delay"
-        # The commit after the version, as `repoutils --version` prints it.
-        if actual="$(uvx --isolated --no-cache --default-index "$2" --from "repoutils==$1" repoutils --version)" &&
-            [[ "$actual" == "repoutils $1 ("* && "${actual#"repoutils $1 ("}" =~ ^[0-9a-f]{12}(\ with\ uncommitted\ changes)?\)$ ]]; then
-            echo "repoutils $1 installs from $2 and runs"
-            exit 0
-        fi
-    done
-    echo "repoutils $1 did not install from $2 and run" >&2
-    exit 1
+    {{ repoutils }} check-install --version "$1" --index "$2" --version-line
 
 # Lint with ruff, failing on any warning too, as ruff only warns about such
 # things as an invalid noqa directive. --no-cache, as ruff gives those only for

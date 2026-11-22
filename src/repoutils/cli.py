@@ -79,6 +79,7 @@ GROUPS: dict[str, list[Command]] = {
     ],
     "Releases": [
         Command("check-attestations", "check_attestations", "Check every distribution has a PEP 740 attestation"),
+        Command("check-install", "check_install", "Check a wheel or a released version installs and gives its commit"),
         Command("version", "version", "Print repoutils' version, the commit it was built from, and where it runs"),
     ],
 }

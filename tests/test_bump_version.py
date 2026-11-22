@@ -135,6 +135,8 @@ def test_bump_puts_back_what_it_can(
             if len(pyproject_writes) == 2:
                 raise OSError("read-only")
         elif "1.2.4" in text:
+            # A write that fails part way leaves the file cut short.
+            write(path, text[:10])
             raise OSError("disk full")
         write(path, text)
 

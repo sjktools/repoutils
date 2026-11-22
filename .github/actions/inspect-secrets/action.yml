@@ -4,7 +4,7 @@ description: >-
   `repoutils secrets inspect`: each GitHub token's type, owner, expiry and the
   start of its SHA-256 hash, and each SSH key's fingerprint. It never shows a
   value. Uploads the step summary as the artifact step-summaries-<job>, or
-  step-summaries-<job>-<environment> with an environment.
+  step-summaries-<job>-<environment> with an environment, percent-encoded.
 
 # Runs repoutils from this action's own commit, with the runner's python3,
 # installing nothing. It checks out only the caller's pyproject.toml, which
@@ -37,6 +37,31 @@ runs:
         sparse-checkout: /pyproject.toml
         sparse-checkout-cone-mode: false
 
+    # The environment keeps the name unique when a matrix runs one job for
+    # each. Percent-encoding keeps it valid, as an artifact's name can't hold
+    # some characters, such as /, that an environment's name can, and keeps
+    # two environments' names apart.
+    - name: Name the artifact
+      id: artifact
+      shell: bash
+      env:
+        JOB: ${{ github.job }}
+        ENVIRONMENT: ${{ inputs.environment }}
+      run: |
+        name="step-summaries-$JOB"
+        if [ -n "$ENVIRONMENT" ]; then
+          encoded=""
+          for ((i = 0; i < ${#ENVIRONMENT}; i++)); do
+            c=${ENVIRONMENT:i:1}
+            case "$c" in
+              [%\"/:\<\>\|*?\\]) encoded+=$(printf '%%%02X' "'$c") ;;
+              *) encoded+=$c ;;
+            esac
+          done
+          name+="-$encoded"
+        fi
+        echo "name=$name" >> "$GITHUB_OUTPUT"
+
     - name: Inspect the secrets
       shell: bash
       env:
@@ -57,7 +82,6 @@ runs:
       if: always()
       uses: actions/upload-artifact@v7.0.2
       with:
-        # The environment keeps the name unique when a matrix runs one job for each.
-        name: step-summaries-${{ github.job }}${{ inputs.environment && format('-{0}', inputs.environment) || '' }}
+        name: ${{ steps.artifact.outputs.name }}
         path: ${{ runner.temp }}/step-summaries/
         if-no-files-found: ignore

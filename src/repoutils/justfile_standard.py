@@ -4,8 +4,9 @@ Each recipe's text is the doc comment, attributes and body that the command
 prints for a project to paste in when the recipe is missing. The command never
 compares a recipe's text with the project's, as a project may have a reason to
 change it. In the text, ``@base@`` stands for ``origin/<default-branch>``,
-with the project's ``default-branch``, written as a just string. An aggregate recipe's text has no header line: the command
-writes ``<name><parameters>: <dependencies>`` after it, with only the dependencies the
+with the project's ``default-branch``, written as a just string. An aggregate
+recipe's text has no header line: the command writes
+``<name><parameters>: <dependencies>`` after it, with only the dependencies the
 project's features and settings ask for.
 
 A test checks that repoutils' own justfile has every recipe's text, so the

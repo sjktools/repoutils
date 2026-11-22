@@ -77,6 +77,13 @@ def check_pr(repo: str, pr: int, token: str) -> tuple[str, str]:
     return str(data["head"]["ref"]), str(data["head"]["sha"])
 
 
+def _close(e: OSError) -> None:
+    """Close an HTTPError's response, which an error that's handled and
+    dropped would otherwise leave open."""
+    if isinstance(e, urllib.error.HTTPError):
+        e.close()
+
+
 def react(repo: str, comment_id: int, token: str) -> None:
     """React to the comment with a rocket. The fix run has started by then,
     so a failure only warns: a failed run would suggest commenting again."""
@@ -88,8 +95,7 @@ def react(repo: str, comment_id: int, token: str) -> None:
             json_body={"content": "rocket"},
         )
     except OSError as e:
-        if isinstance(e, urllib.error.HTTPError):
-            e.close()
+        _close(e)
         print(f"{_annotation('warning')}Couldn't react to comment {comment_id}: {e}", file=sys.stderr)
 
 
@@ -202,8 +208,8 @@ def autofix(
         # still the one to show.
         try:
             progress.reported = report_succeeded(repo, push_run_id, token)
-        except OSError:
-            pass
+        except OSError as e:
+            _close(e)
         raise
     pushed = push_run.get("conclusion") == "success"
     if not fixed or not pushed:

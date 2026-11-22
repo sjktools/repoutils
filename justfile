@@ -158,6 +158,10 @@ secrets-workflows-check:
 variables-workflows-check:
     uv run repoutils variables check-workflows
 
+# Check that the justfile has the standard recipes, and that check, fix, ci and patch-coverage reach the standard ones
+check-justfile:
+    uv run repoutils check-justfile --just {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }}
+
 # Check `secrets export` round-trips made-up secrets through age (on the PATH), also encrypting to the GitHub key given as USER/SHA256:FINGERPRINT
 secrets-export-test $SECRETS_EXPORT_KEY='':
     {{ repoutils }} secrets export --self-test ${SECRETS_EXPORT_KEY:+--github-key "$SECRETS_EXPORT_KEY"}
@@ -179,7 +183,7 @@ dependabot-relock base:
     {{ repoutils }} dependabot-relock {{ base }}
 
 # Run all checks, without fixing anything or running tests
-check: lint fmt-check just-fmt-check mypy pyright lint-workflows actions-lock-check whitespace-check sentence-per-line-check prose-check check-pins check-checkout-credentials secrets-workflows-check variables-workflows-check lock-platforms-check requirements-check
+check: lint fmt-check just-fmt-check mypy pyright lint-workflows actions-lock-check whitespace-check sentence-per-line-check prose-check check-pins check-checkout-credentials secrets-workflows-check variables-workflows-check check-justfile lock-platforms-check requirements-check
 
 # Check .github/workflows/actions.lock pins every action the workflows use, transitive ones included, to a commit that still verifies upstream (needs gh, logged in, with the github/gh-actions-lock extension)
 actions-lock-check:

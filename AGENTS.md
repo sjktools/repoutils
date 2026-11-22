@@ -66,6 +66,8 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
   Only hatchling and the hook's tests import it, so the runtime stays standard library only.
   repoutils' own build runs the file by path, and other projects use it through the `repoutils-build-info` entry point.
   As hatchling runs it by path, it loads `checkout.py` from beside itself rather than importing `repoutils`.
+- `src/repoutils/justfile_standard.py` is the standard justfile recipes that `check-justfile` checks for, with the text it prints for a missing one.
+  A test checks that this repository's `justfile` has each recipe's text, so change the two together.
 - `src/repoutils/docstrings.py` gives the summary a command's `--help` shows, the first paragraph of its module docstring.
   It returns None under `python -OO`, which strips docstrings.
 - `tests/test_<module>.py` tests each module, and `tests/test_cli.py` runs every command through `cli.main()`.

@@ -37,6 +37,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `check-screenshots-dir` | Fails unless `.gitignore` is the only tracked file in the screenshots directory and ignores all other files in that directory. |
 | `git-config-setup` | Sets the local `blame.ignoreRevsFile` Git setting (idempotent, so a justfile can run it before every recipe). |
 | `long-files` | Lists the files over a line limit as Markdown (with changed files first), or posts that list to a pull request. |
+| `check-justfile` | Fails unless the justfile has the standard recipes for the features of the project, and `check`, `fix`, `ci` and `patch-coverage` run the standard recipes that they depend on (see [Justfile](#justfile)). |
 | `ruff-check` | Runs `ruff check --no-cache` with the arguments you give it, and fails if `ruff` fails or gives any warning, such as for an invalid `noqa` directive, which `ruff` only warns about. It runs the `ruff` on `PATH`, such as the one in the dev dependency group of the project under `uv run`. |
 | `check-pins` | Fails unless every `setup-uv` and `setup-just` workflow step pins the versions required by `pyproject.toml` and the justfile, and the actions that the project uses from the repository of a locked package that is installed come from the commit of that package, or only from the tag of its version if the package does not record its commit (see [Checking actions against a locked package](#checking-actions-against-a-locked-package)). |
 | `check-checkout-credentials` | Fails on any `actions/checkout` step that does not set `persist-credentials`. |
@@ -569,6 +570,9 @@ Every setting is optional:
 comment-prefix = "repoutils"
 # The branch to compare with when there's no PR base.
 default-branch = "main"
+# The optional repoutils features this project uses: "pypi-publication" is the
+# only one. `repoutils check-justfile` uses them; see below.
+features = []
 
 # The names of the commit statuses `repoutils post-coverage-status` posts, and
 # when `repoutils post-patch-coverage` warns (false for never); see below.
@@ -588,6 +592,11 @@ max-words-per-sentence = 18
 
 [tool.repoutils.screenshots]
 dir = "screenshots"
+
+# The standard recipes and dependencies the justfile leaves out on purpose; see below.
+[tool.repoutils.justfile]
+omit = ["prose-check"]
+omit-dependencies = { check = ["pyright"] }
 
 [tool.repoutils.lock-platforms]
 # "os" allows any arch, and "os:arch" allows one arch ("*" for any).
@@ -746,6 +755,37 @@ The command still reads the remaining files, and exits with code `1` even when y
 
 The default limits for long sentences come from a sample of 17 documents, both pre-LLM README files and recent machine-generated documents.
 The default limit for short sentences comes from a smaller sample of rewrites of this README, so adjust the limits to fit your project.
+
+### Justfile
+
+`repoutils check-justfile` checks the justfile in the current directory against the standard justfile of `repoutils`.
+It reads the justfile with `just --dump --dump-format json`, which evaluates no assignments, so the command runs nothing from the justfile.
+Pass `--just <path>` to run a `just` that is not on `PATH`, and `--justfile <path>` to check a justfile that `just` does not find from the current directory.
+A recipe passes `--just {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }}`, so it checks the justfile that runs it.
+The settings always come from the `pyproject.toml` in the current directory, as with every other command, even with `--justfile`.
+
+The command fails in these cases:
+
+- A standard recipe is not in the justfile as a recipe or an alias.
+- `check`, `fix`, `ci` or `patch-coverage` does not run one of its standard dependencies, directly or through another recipe.
+- `fix` runs a recipe that fixes something, but `check` does not run the recipe that checks the same thing.
+  The pairs are `fmt` and `fmt-check`, `just-fmt` and `just-fmt-check`, `lint-fix` and `lint`, `actions-lock` and `actions-lock-check`, and `requirements-fix` and `requirements-check`.
+- The justfile has no `repoutils` variable.
+
+The command does not compare the body or the doc comment of a recipe with the standard recipe, because a project can have a reason to change them.
+It does not check the value of the `repoutils` variable either, because projects run `repoutils` in different ways.
+For each missing recipe, the command prints the standard text of the recipe, with the `default-branch` of the project, so that you can paste it into the justfile.
+
+The `pypi-publication` feature in the `features` setting of `[tool.repoutils]` adds the standard recipes `build`, `check-attestations`, `smoke` and `check-release`, and makes `ci` depend on `build` and `smoke`.
+
+An unknown feature name is an error, so a typo does not turn a feature off.
+List a standard recipe that the project leaves out on purpose in `omit`, and a standard dependency that it leaves out in `omit-dependencies`.
+An omitted recipe or dependency does not excuse a missing pair, so if `fix` runs `fmt`, `check` must run `fmt-check`, even when `fmt-check` is in `omit`.
+Pass `--exit-zero` to print the same output and exit with code `0`.
+The command exits with code `1` even with `--exit-zero` when it cannot run `just` or read the output of `just`, or when a setting is not valid.
+
+A new release of `repoutils` can add a standard recipe.
+The `just check` of a project then fails until you add the recipe, or list it in `omit`.
 
 ### Added strings
 

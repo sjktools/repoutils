@@ -13,6 +13,9 @@ from typing import Any
 
 PYPROJECT = "pyproject.toml"
 DEFAULT_COMMENT_PREFIX = "repoutils"
+# The optional features a project can list in [tool.repoutils] features:
+# pypi-publication for a package published to PyPI.
+FEATURES = ("pypi-publication",)
 # A key TOML allows unquoted.
 _BARE_KEY_RE = re.compile(r"[A-Za-z0-9_-]+")
 
@@ -103,6 +106,21 @@ def marker(name: str, root: Path = Path()) -> str:
     """The hidden HTML comment that marks this project's ``name`` PR comment,
     e.g. ``<!-- repoutils-patch-coverage -->``."""
     return f"<!-- {comment_prefix(root)}-{name} -->"
+
+
+def features(root: Path = Path()) -> frozenset[str]:
+    """The optional repoutils features the project uses (``features``, default none).
+
+    A name that isn't one of FEATURES is an error, so a typo can't turn a feature off unseen.
+    """
+    names = string_list(load(root), "features", [], "[tool.repoutils]")
+    unknown = sorted(set(names) - set(FEATURES))
+    if unknown:
+        raise ConfigError(
+            f"[tool.repoutils] features has unknown {', '.join(map(repr, unknown))}"
+            f" (known: {', '.join(map(repr, FEATURES))})"
+        )
+    return frozenset(names)
 
 
 def default_branch(root: Path = Path()) -> str:

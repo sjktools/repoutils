@@ -147,6 +147,8 @@ def test_push_goes_over_ssh_with_the_key_in_an_agent(
     # The agent is gone, and so is the known_hosts file.
     assert _wait_for_exit(int(pid))
     assert not Path(lines[1].removeprefix("UserKnownHostsFile=")).exists()
+    # The failed push leaves no tag, so a retry here pushes it.
+    assert git(checkout, "tag") == ""
 
 
 def test_push_without_a_key(

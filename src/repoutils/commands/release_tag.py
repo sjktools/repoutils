@@ -123,7 +123,12 @@ def push(remote: str, key: str, root: Path = Path()) -> int:
         print(f"Tag {tag} already exists.")
         return 0
     _git("-c", f"user.name={BOT_NAME}", "-c", f"user.email={BOT_EMAIL}", "tag", "-a", tag, "-m", f"Release {tag}")
-    push_tag(tag, remote, key)
+    try:
+        push_tag(tag, remote, key)
+    except BaseException:
+        # So a retry in this checkout pushes the tag rather than finding it here.
+        _git("tag", "--delete", tag)
+        raise
     print(f"Created and pushed tag {tag}.")
     return 0
 

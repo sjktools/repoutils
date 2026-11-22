@@ -192,9 +192,15 @@ def autofix(
     push_run_id = start_push(repo, push_workflow, fix_run, token, interval=interval, deadline=deadline)
     progress.push_url = _run_page(repo, push_run_id)
     print(f"Waiting for {push_workflow}: {progress.push_url}", file=sys.stderr)
-    push_run = workflow_summaries.wait(
-        repo, push_run_id, token, interval=interval, timeout=max(deadline - monotonic(), 0.0), just_started=True
-    )
+    try:
+        push_run = workflow_summaries.wait(
+            repo, push_run_id, token, interval=interval, timeout=max(deadline - monotonic(), 0.0), just_started=True
+        )
+    except OSError:
+        # A failed poll or a timeout says nothing about the report job, which
+        # may have commented already.
+        progress.reported = report_succeeded(repo, push_run_id, token)
+        raise
     pushed = push_run.get("conclusion") == "success"
     if not fixed or not pushed:
         progress.reported = report_succeeded(repo, push_run_id, token)

@@ -241,6 +241,25 @@ def test_failed_push_run(
     assert progress.reported is reported
 
 
+@pytest.mark.parametrize(("report", "reported"), [("success", True), ("in_progress", False)])
+def test_checks_the_report_job_when_waiting_for_the_push_run_fails(
+    monkeypatch: pytest.MonkeyPatch, slept: list[float], report: str, reported: bool
+) -> None:
+    fake = FakeGitHub(prs=[_pr()], fix_runs=[_done(7)], push_lists=[[_push_run()]], push_runs=[], report=report)
+
+    def request(method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        if url == PUSH_RUN:
+            raise urllib.error.HTTPError(url, 502, "Bad Gateway", Message(), io.BytesIO(b"{}"))
+        return fake.request(method, url, token, json_body=json_body)
+
+    monkeypatch.setattr(github, "request", request)
+    progress = autofix.Progress()
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        autofix.autofix("o/r", 5, "tok", interval=10, timeout=600, progress=progress)
+    caught.value.close()
+    assert progress == autofix.Progress(fix_url=FIX_PAGE, push_url=PUSH_PAGE, reported=reported)
+
+
 def test_reads_no_jobs_when_the_fixes_were_pushed(monkeypatch: pytest.MonkeyPatch, slept: list[float]) -> None:
     fake = FakeGitHub(prs=[_pr()], fix_runs=[_done(7)], push_lists=[[_push_run()]], push_runs=[_done(8)])
     _install(monkeypatch, fake)

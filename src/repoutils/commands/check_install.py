@@ -13,6 +13,9 @@ upload. It expects the same line with any 12-hex commit, as the checkout it
 runs in need not be the one the release was built from.
 
 Each `--run` then runs the command with those arguments, which must exit 0.
+Each `--run-with-commit` does the same, and its output must also give the
+whole 40-hex commit: this checkout's, or for a release, the one that starts
+with the 12 hex digits its `--version` gave.
 It installs nothing beyond the package it tests, which uvx installs in an
 isolated environment with no cache.
 """
@@ -24,6 +27,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from repoutils import build_info, config
@@ -51,13 +55,19 @@ def wheel_name(name: str) -> str:
 
 
 def find_wheel(path: Path, name: str, version: str | None) -> Path:
-    """path if it's a file, or else the one wheel of name (at version, if given) in the directory path."""
+    """path if it's a file, or else the one wheel of name (at version, if given) in the directory path.
+
+    A version that isn't spelt as PEP 440 normalizes it, such as `1.0-rc1`, matches no wheel's file
+    name, so then any one wheel of name will do, as this can't normalize it with the standard library."""
     if path.is_file():
         return path
     if not path.is_dir():
         raise CheckError(f"{path.as_posix()} is neither a wheel nor a directory")
     pattern = f"{wheel_name(name)}-{version if version is not None else '*'}-*.whl"
     wheels = sorted(path.glob(pattern))
+    if not wheels and version is not None:
+        pattern = f"{wheel_name(name)}-*-*.whl"
+        wheels = sorted(path.glob(pattern))
     if len(wheels) != 1:
         found = ", ".join(wheel.name for wheel in wheels) or "none"
         raise CheckError(f"expected one wheel matching {path.as_posix()}/{pattern}, found {found}")
@@ -80,7 +90,9 @@ def uvx(source: str, command: str, args: Sequence[str], index: str | None = None
 
 def release_line(name: str, version: str) -> re.Pattern[str]:
     """What `<name> --version` prints for a release built by the hook, from any commit."""
-    return re.compile(rf"{re.escape(name)} {re.escape(version)} \([0-9a-f]{{12}}( with uncommitted changes)?\)")
+    return re.compile(
+        rf"{re.escape(name)} {re.escape(version)} \((?P<commit>[0-9a-f]{{12}})( with uncommitted changes)?\)"
+    )
 
 
 def _call(runner: Runner, args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -95,17 +107,31 @@ def _failed(args: list[str], result: subprocess.CompletedProcess[str]) -> str:
     return f"`{shlex.join(args)}` exited {result.returncode}" + (f":\n{output}" if output else "")
 
 
-def _run_extra(runner: Runner, source: str, command: str, runs: Sequence[str], index: str | None) -> list[str]:
+@dataclass(frozen=True)
+class Run:
+    """A `--run` (or with `with_commit`, a `--run-with-commit`): arguments to run the command with."""
+
+    args: list[str]
+    with_commit: bool = False
+
+
+def _run_extra(
+    runner: Runner, source: str, command: str, runs: Sequence[Run], index: str | None, commit: str
+) -> list[str]:
+    """Each run's problems. commit is the whole commit, or the start of it that `--version` gave."""
+    whole = re.compile(rf"\b{re.escape(commit)}[0-9a-f]{{{40 - len(commit)}}}\b")
     problems: list[str] = []
-    for run_args in runs:
-        args = uvx(source, command, shlex.split(run_args), index)
+    for run in runs:
+        args = uvx(source, command, run.args, index)
         result = _call(runner, args)
         if result.returncode != 0:
             problems.append(_failed(args, result))
+        elif run.with_commit and whole.search(result.stdout) is None:
+            problems.append(f"expected `{shlex.join(args)}` to print the whole commit {commit}...")
     return problems
 
 
-def check_wheel(wheel: Path, name: str, command: str, runs: Sequence[str], runner: Runner = _run) -> list[str]:
+def check_wheel(wheel: Path, name: str, command: str, runs: Sequence[Run], runner: Runner = _run) -> list[str]:
     """The problems with installing and running wheel, compared with the checkout in the current directory."""
     head = head_commit(Path())
     if head is None:
@@ -120,7 +146,7 @@ def check_wheel(wheel: Path, name: str, command: str, runs: Sequence[str], runne
     actual = result.stdout.strip()
     if actual != expected:
         return [f"expected {expected!r} from `{command} --version` of {source}, got {actual!r}"]
-    return _run_extra(runner, source, command, runs, None)
+    return _run_extra(runner, source, command, runs, None, commit)
 
 
 def check_release(
@@ -128,7 +154,7 @@ def check_release(
     version: str,
     index: str,
     command: str,
-    runs: Sequence[str],
+    runs: Sequence[Run],
     runner: Runner = _run,
     delays: Sequence[float] = DELAYS,
     sleep: Callable[[float], None] = time.sleep,
@@ -148,10 +174,11 @@ def check_release(
             continue
         actual = result.stdout.strip()
         # A wrong line won't change by waiting, so it fails at once.
-        if pattern.fullmatch(actual) is None:
+        match = pattern.fullmatch(actual)
+        if match is None:
             expected = f"{name} {version} (<12-hex commit>)"
             return [f"expected `{command} --version` of {source} to print {expected!r}, got {actual!r}"]
-        return _run_extra(runner, source, command, runs, index)
+        return _run_extra(runner, source, command, runs, index, match["commit"])
     return [f"{source} did not install from {index} and run after {len(delays)} tries: {failure}"]
 
 
@@ -172,6 +199,7 @@ def main(
     name: str | None = None,
     command: str | None = None,
     runs: Sequence[str] = (),
+    runs_with_commit: Sequence[str] = (),
     runner: Runner = _run,
     delays: Sequence[float] = DELAYS,
     sleep: Callable[[float], None] = time.sleep,
@@ -185,13 +213,19 @@ def main(
         name = project_name
     command = command or name
     try:
+        parsed = [Run(shlex.split(run)) for run in runs]
+        parsed += [Run(shlex.split(run), with_commit=True) for run in runs_with_commit]
+    except ValueError as error:
+        print(f"check-install: can't split a --run's arguments: {error}", file=sys.stderr)
+        return 2
+    try:
         if wheel is not None:
             project_version = project.get("version")
             found = find_wheel(wheel, name, project_version if isinstance(project_version, str) else None)
-            problems = check_wheel(found, name, command, runs, runner)
+            problems = check_wheel(found, name, command, parsed, runner)
             done = f"{found.as_posix()} installs and runs"
         elif version is not None:
-            problems = check_release(name, version, index, command, runs, runner, delays, sleep)
+            problems = check_release(name, version, index, command, parsed, runner, delays, sleep)
             done = f"{name} {version} installs from {index} and runs"
         else:
             print("check-install: give --wheel or --version", file=sys.stderr)
@@ -225,7 +259,16 @@ def run(argv: list[str]) -> int:
         help="also run the command with these arguments, split as a shell would, which must exit 0;"
         " repeatable (use --run=ARGS when ARGS starts with -)",
     )
+    parser.add_argument(
+        "--run-with-commit",
+        action="append",
+        default=[],
+        metavar="ARGS",
+        help="as --run, and the output must also give the whole commit that --version gives the start of; repeatable",
+    )
     args = parser.parse_args(argv)
     if args.index is not None and args.version is None:
         parser.error("--index needs --version")
-    return main(args.wheel, args.version, args.index or DEFAULT_INDEX, args.name, args.command, args.run)
+    return main(
+        args.wheel, args.version, args.index or DEFAULT_INDEX, args.name, args.command, args.run, args.run_with_commit
+    )

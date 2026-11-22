@@ -81,7 +81,7 @@ check-attestations dist="dist":
 
 # Install the wheel `just build` built into a fresh environment and check that it runs and records this checkout's commit
 smoke:
-    {{ repoutils }} check-install --wheel dist --run version --run=--help --run check-whitespace
+    {{ repoutils }} check-install --wheel dist --run-with-commit version --run=--help --run check-whitespace
 
 # Retries while the index catches up with a new upload. --version must also
 # give a 12-hex commit after the version (and a dev build's bumped version

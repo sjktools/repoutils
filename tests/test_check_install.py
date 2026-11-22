@@ -86,6 +86,7 @@ def test_a_run_that_fails(project: Path, capsys: pytest.CaptureFixture[str]) -> 
     runner = FakeRunner((0, "my-pkg 1.2.0 (0123456789ab)\n"), (1, ""), (0, ""))
     assert check_install.main(Path("dist"), runs=["check 'a b'", "version"], runner=runner) == 1
     assert runner.calls[1][-2:] == ["check", "a b"]
+    assert runner.calls[2][-1:] == ["version"]
     assert f"::error::`uvx --isolated --no-cache --from dist/{WHEEL} my-pkg check 'a b'` exited 1:\nan error" in (
         capsys.readouterr().out
     )
@@ -100,7 +101,7 @@ def test_wheel_that_fails_to_install(project: Path, capsys: pytest.CaptureFixtur
     ("setup", "error"),
     [
         (lambda root: None, "can't find the commit"),
-        (lambda root: (root / "dist" / WHEEL).unlink(), "found none"),
+        (lambda root: [wheel.unlink() for wheel in (root / "dist").iterdir()], "found none"),
     ],
 )
 def test_wheel_errors(
@@ -203,9 +204,11 @@ def test_run_passes_its_options(project: Path, monkeypatch: pytest.MonkeyPatch) 
     argv = ["--version", "1", "--index", "https://example.invalid/", "--name", "n", "--command", "c"]
     assert check_install.run([*argv, "--run=--help", "--run", "x y"]) == 0
     assert check_install.run(["--wheel", "dist"]) == 0
+    assert check_install.run(["--wheel", "dist", "--run-with-commit", "version"]) == 0
     assert calls == [
-        (None, "1", "https://example.invalid/", "n", "c", ["--help", "x y"]),
-        (Path("dist"), None, check_install.DEFAULT_INDEX, None, None, []),
+        (None, "1", "https://example.invalid/", "n", "c", ["--help", "x y"], []),
+        (Path("dist"), None, check_install.DEFAULT_INDEX, None, None, [], []),
+        (Path("dist"), None, check_install.DEFAULT_INDEX, None, None, [], ["version"]),
     ]
 
 
@@ -216,3 +219,36 @@ def test_wheel_name() -> None:
 def test_default_runner_captures_output() -> None:
     result = check_install._run([sys.executable, "-c", "print('hi')"])
     assert (result.returncode, result.stdout) == (0, "hi\n")
+
+
+def test_run_with_commit_in_a_wheel(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    line = (0, "my-pkg 1.2.0 (0123456789ab)\n")
+    runner = FakeRunner(line, (0, f"Commit: {COMMIT}\n"))
+    assert check_install.main(Path("dist"), runs_with_commit=["version"], runner=runner) == 0
+    runner = FakeRunner(line, (0, f"Commit: {COMMIT[:-1]}0\n"))
+    assert check_install.main(Path("dist"), runs_with_commit=["version"], runner=runner) == 1
+    assert f"to print the whole commit {COMMIT}..." in capsys.readouterr().out
+
+
+def test_run_with_commit_in_a_release(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    line = (0, "my-pkg 1.2.0 (fedcba987654)\n")
+    other = "fedcba987654" + "1" * 28
+    runner = FakeRunner(line, (0, f"Commit: {other}\n"))
+    assert check_install.main(version="1.2.0", runs_with_commit=["version"], runner=runner, sleep=no_sleep) == 0
+    runner = FakeRunner(line, (0, f"Commit: {COMMIT}\n"))
+    assert check_install.main(version="1.2.0", runs_with_commit=["version"], runner=runner, sleep=no_sleep) == 1
+    assert "to print the whole commit fedcba987654..." in capsys.readouterr().out
+
+
+def test_unsplittable_run(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    runner = FakeRunner()
+    assert check_install.main(Path("dist"), runs=["check 'a"], runner=runner) == 2
+    assert "can't split a --run's arguments: No closing quotation" in capsys.readouterr().err
+    assert runner.calls == []
+
+
+def test_unnormalized_project_version_finds_the_one_wheel(project: Path) -> None:
+    (project / "pyproject.toml").write_text('[project]\nname = "my-pkg"\nversion = "1.2.0-rc1"\n')
+    (project / "dist" / WHEEL).unlink()
+    runner = FakeRunner((0, "my-pkg 1.1.0 (0123456789ab)\n"))
+    assert check_install.main(Path("dist"), runner=runner) == 0

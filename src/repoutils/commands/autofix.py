@@ -462,7 +462,8 @@ def _autofix_parser() -> argparse.ArgumentParser:
         prog="repoutils autofix",
         usage="%(prog)s [-h] [options] pr\n       %(prog)s {resolve,check-branch} ...",
         description=summary(__doc__),
-        epilog="Prints the branch's new head commit on standard output if fixes were pushed. "
+        epilog="Prints the branch's new head commit on standard output if fixes, or with --relocked a relock, "
+        "were pushed. "
         "Fails if either run fails. "
         "In GitHub Actions, its errors and warnings are annotations. "
         "Uses $GITHUB_TOKEN, defaulting to `gh auth token`, which needs the Actions write permission, "

@@ -44,7 +44,7 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
 - `src/repoutils/locked_actions.py` is `check-pins`' check that the actions in `actions.lock` from a locked package's repository are at the commit in that package's `build_info.json`, kept apart from the command for length.
 - `src/repoutils/autofix_runs.py` is `autofix resolve` and `autofix check-branch`, the checks that `fix-push.yml` and `fix.yml` make of a fix run and its PR, kept apart from the command for length.
   The `autofix-resolve` and `autofix-check` actions run them.
-- `src/repoutils/pull_request.py` commits a change to a new branch, pushes it and opens a PR, for `bump --pr` in `dependabot-uv`, `downstream` and `github-releases`.
+- `src/repoutils/pull_request.py` commits a change to a new branch, pushes it and opens a PR, for `bump-version --pr` and for `bump --pr` in `dependabot-uv`, `downstream` and `github-releases`.
 - `src/repoutils/downstream_pins.py` holds `downstream bump`'s changes to a downstream's pins and its re-lock, kept apart from the command for length.
   It also adds a `[tool.uv.sources]` entry that takes a dev version (a test build) from TestPyPI.
   `src/repoutils/downstream_actions.py` moves a downstream's `uses:` of the upstream's actions to the release's tag, and regenerates its `actions.lock`.
@@ -152,7 +152,9 @@ It hands its commits, as a Git bundle artifact, to a separate push job that runs
 Both push jobs use the `push-bundle` action, which checks the bundle and pushes it with `repoutils push-bundle`.
 
 Releases are cut from `main`.
-The Bump Version workflow, run from `main`, opens a PR bumping `version` in `pyproject.toml` (with the `GH_ACTIONS_TOKEN` secret).
+The Bump Version workflow, run from `main`, opens a PR bumping `version` in `pyproject.toml` and `uv.lock` (with the `GH_ACTIONS_TOKEN` secret).
+Its one step runs the `bump-version` action, which runs `repoutils bump-version --pr`.
+That command edits both files as text and runs no uv alongside the token.
 Once it merges, the `release` job in `ci.yml` runs `repoutils release-tag` through the `release-tag` action.
 `repoutils release-tag push` pushes the tag `v<version>` over SSH with the `RELEASE_DEPLOY_KEY` deploy key, which triggers the Publish workflow.
 `repoutils release-tag release` then creates the GitHub release with the job's own `GITHUB_TOKEN`.

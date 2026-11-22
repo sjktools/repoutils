@@ -1523,6 +1523,7 @@ It reads the version from these steps:
 
 In a composite action, a step can take the version from an input of the action, as `${{ inputs.<name> }}`.
 `check-pins` then reads the version from the `default` of that input.
+A step that uses that local action and sets the input must give the same version.
 
 `dependabot-uv bump` changes the version of uv in each of these places.
 

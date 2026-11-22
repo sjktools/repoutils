@@ -91,7 +91,12 @@ def test_bump_moves_prepare_publish_inputs_and_action_defaults(tmp_path: Path) -
     (root / ".github/workflows/publish.yml").write_text(PREPARE_PUBLISH)
     (root / ".github/actions/setup").mkdir(parents=True)
     (root / ".github/actions/setup/action.yml").write_text(ACTION)
+    caller = (
+        "jobs:\n  a:\n    steps:\n      - uses: $/.github/actions/setup\n        with:\n          uv-version: 0.13.6\n"
+    )
+    (root / ".github/workflows/caller.yml").write_text(caller)
     changed, _ = uv_bump.bump(root, "0.13.6", "0.13.7")
+    assert (root / ".github/workflows/caller.yml").read_text() == caller.replace("0.13.6", "0.13.7")
     assert root / ".github/workflows/publish.yml" in changed
     assert (root / ".github/workflows/publish.yml").read_text() == PREPARE_PUBLISH.replace(
         'uv-version: "0.13.6"', 'uv-version: "0.13.7"'

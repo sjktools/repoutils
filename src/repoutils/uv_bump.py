@@ -102,6 +102,8 @@ def bump(root: Path, old: str, new: str, lock_file: Path | None = None) -> tuple
     if dockerfile.is_file():
         texts[dockerfile] = dockerfile.read_text()
 
+    workflows = {path: text for path, text in texts.items() if path not in (pyproject, dockerfile)}
+    uv_pins = check_pins.PINS[check_pins.UV] + check_pins.local_inputs(root, workflows, check_pins.UV)
     changed: dict[Path, str] = {}
     for path, text in texts.items():
         if path == pyproject:
@@ -110,7 +112,7 @@ def bump(root: Path, old: str, new: str, lock_file: Path | None = None) -> tuple
             new_text = _dockerfile(text, new)
         else:
             new_text = text
-            for action, key in check_pins.PINS[check_pins.UV]:
+            for action, key in uv_pins:
                 new_text, _ = check_pins.set_pins(new_text, action, key, old, new)
         if new_text != text:
             changed[path] = new_text

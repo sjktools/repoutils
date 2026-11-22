@@ -3,7 +3,7 @@ or just pins the version the project requires: pyproject.toml's [tool.uv]
 required-version minimum and the justfile's minimum-version. That covers a
 step that uses repoutils' prepare-publish action, which installs both, and a
 local composite action's input that a step's version comes from, through its
-default. A Dockerfile's ghcr.io/astral-sh/uv stage, if there is one, must use
+default and any step that uses the action and sets the input. A Dockerfile's ghcr.io/astral-sh/uv stage, if there is one, must use
 that uv too.
 
 It also checks that the actions in .github/workflows/actions.lock from a
@@ -40,6 +40,8 @@ _STEP_RE = re.compile(r"^(?P<indent>\s*)- ")
 # A step's own `- ` marker, which YAML lets have more than one space.
 _ITEM_RE = re.compile(r"^\s*-\s+")
 _USES_RE = re.compile(r"^uses:\s*[\"']?(?P<action>[^@\s\"']+)@")
+# A local action, by its path in the repository, which takes no @ref.
+_LOCAL_USES_RE = re.compile(r"^uses:\s*[\"']?[.$]/(?P<path>[^@\s\"']+?)/?[\"']?\s*(?:#.*)?$")
 _WITH_RE = re.compile(r"^with:\s*(?:#.*)?$")
 # A value that's all of one of a composite action's inputs.
 _INPUT_REF_RE = re.compile(r"^\$\{\{\s*inputs\.(?P<name>[\w-]+)\s*\}\}$")
@@ -106,11 +108,14 @@ def _keys(lines: list[str]) -> list[tuple[int, str]]:
 
 
 def _uses(step: list[str]) -> str | None:
-    """The action a step uses, or None if it runs a script instead."""
+    """The action a step uses, or None if it runs a script instead. A local
+    action is `./` and its path, whether the step gives it with `./` or `$/`."""
     lines = [line for _, line in _code(step)]
     for _, key in _keys(lines):
         if match := _USES_RE.match(key):
             return match["action"]
+        if match := _LOCAL_USES_RE.match(key):
+            return "./" + match["path"]
     return None
 
 
@@ -260,6 +265,20 @@ def dockerfile_problems(root: Path, uv: str) -> list[str]:
     return [f"Dockerfile: FROM ghcr.io/astral-sh/uv:{tag}, not {uv}" for tag in tags if tag != uv]
 
 
+def local_inputs(root: Path, files: dict[Path, str], tool: tuple[str, str]) -> list[tuple[str, str]]:
+    """Each local action in files whose pin of tool takes its default from one
+    of the action's inputs, as `./<path>` and the input. A step that uses the
+    action and sets the input pins tool with it instead of the default."""
+    found = [
+        ("./" + path.parent.relative_to(root).as_posix(), pin.source)
+        for path, text in files.items()
+        for action, key in PINS[tool]
+        for pin in pin_lines(text, action, key)
+        if pin is not None and pin.source
+    ]
+    return list(dict.fromkeys(found))
+
+
 def problems(root: Path) -> tuple[list[str], dict[tuple[str, str], int]]:
     """Each pin that's missing or differs from the minimum, and how many steps
     pin uv's and just's versions, keyed by UV and JUST. No step pinning one is
@@ -268,8 +287,10 @@ def problems(root: Path) -> tuple[list[str], dict[tuple[str, str], int]]:
     want = minimums(root)
     found: list[str] = []
     counts = dict.fromkeys(want, 0)
-    for path in workflow_files(root):
-        text = path.read_text()
+    files = {path: path.read_text() for path in workflow_files(root)}
+    overrides = {tool: local_inputs(root, files, tool) for tool in want}
+    for path, text in files.items():
+        where = path.relative_to(root).as_posix()
         for tool, version in want.items():
             for action, key in PINS[tool]:
                 for pin in pin_lines(text, action, key):
@@ -282,7 +303,11 @@ def problems(root: Path) -> tuple[list[str], dict[tuple[str, str], int]]:
                         setting = f"{key} from input {pin.source}, whose default is {pin.value}"
                     else:
                         setting = f"{key}: {pin.value}"
-                    found.append(f"{path.relative_to(root).as_posix()}: a {action} step has {setting}, not {version}")
+                    found.append(f"{where}: a {action} step has {setting}, not {version}")
+            for action, key in overrides[tool]:
+                for pin in pin_lines(text, action, key):
+                    if pin is not None and pin.value != version:
+                        found.append(f"{where}: a {action} step has {key}: {pin.value}, not {version}")
     found += [f"no workflow or action has a {action} step" for (action, _), count in counts.items() if not count]
     found += dockerfile_problems(root, want[UV])
     return found, counts

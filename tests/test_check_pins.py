@@ -296,6 +296,26 @@ def test_main_checks_composite_action_input_defaults(repo: Path, capsys: pytest.
     ]
 
 
+def test_main_checks_callers_overriding_a_checked_input_default(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # A local caller that leaves the input out takes the checked default, and
+    # one that sets it must set the minimum too, given as $/ or ./.
+    (repo / ".github/actions/setup").mkdir(parents=True)
+    (repo / ".github/actions/setup/action.yml").write_text(
+        INPUT_ACTION.replace("'0.13.5'", "'0.13.6'").replace("${{ inputs.just-version }}", "1.58.0")
+    )
+    (repo / ".github/workflows/a.yml").write_text(
+        "jobs:\n  a:\n    steps:\n"
+        "      - uses: $/.github/actions/setup\n"
+        "      - uses: $/.github/actions/setup\n        with:\n          uv-version: 0.13.6\n"
+        "      - uses: './.github/actions/setup/'  # trailing slash\n        with:\n          uv-version: 0.13.5\n"
+        "      - uses: ./.github/actions/other\n        with:\n          uv-version: 0.13.5\n"
+    )
+    assert main(repo) == 1
+    assert capsys.readouterr().err.splitlines() == [
+        ".github/workflows/a.yml: a ./.github/actions/setup step has uv-version: 0.13.5, not 0.13.6",
+    ]
+
+
 PUBLISH_WORKFLOW = f"""\
 jobs:
   publish:

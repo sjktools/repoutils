@@ -1,0 +1,59 @@
+name: Finish a downstream test bump
+description: >-
+  Waits for the checks on a dev version's test pull request in a downstream
+  repository, and closes it without merging it, deleting its branch, if they
+  all pass, with `repoutils downstream finish`. Fails if any fails.
+
+# The finish job of a Bump downstream workflow's test run (see the README),
+# once for each downstream, in an environment that only main can deploy to,
+# which holds the token. It runs only repoutils, from this action's own
+# commit, with the runner's python3, installing nothing, and runs no code from
+# the downstream. It runs in the upstream's checkout, which gives the
+# package's name.
+inputs:
+  repository:
+    description: The downstream, as owner/name.
+    required: true
+  version:
+    description: The dev version on TestPyPI that the test pull request bumps to, such as 0.4.1.dev123.
+    required: true
+  token:
+    description: >-
+      A token with Contents and Pull requests write on the downstream, which
+      closes the pull request and deletes its branch.
+    required: true
+  package:
+    description: The package that was bumped (default, the [project] name in the upstream's pyproject.toml).
+    required: false
+    default: ""
+  timeout:
+    description: How many seconds to wait for the checks.
+    required: false
+    default: "3600"
+
+runs:
+  using: composite
+  steps:
+    - name: Check the token is set
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.token }}
+      run: |
+        if [ -z "$TOKEN" ]; then
+          echo "::error::The token input is empty: is the secret set in the job's environment?"
+          exit 1
+        fi
+
+    - name: Finish the test pull request
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        PACKAGE: ${{ inputs.package }}
+        REPOSITORY: ${{ inputs.repository }}
+        TIMEOUT: ${{ inputs.timeout }}
+        VERSION: ${{ inputs.version }}
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+        PYTHONSAFEPATH: "1"
+      run: |
+        python3 -m repoutils downstream finish --repo "$REPOSITORY" --version "$VERSION" \
+          --timeout "$TIMEOUT" ${PACKAGE:+--package "$PACKAGE"}

@@ -14,6 +14,8 @@ as its trusted publisher.
 Given a dev version, such as `0.4.1.dev123`, a test build on TestPyPI, `bump`
 checks TestPyPI's provenance instead, makes the downstream take the package
 from TestPyPI, and moves the actions to the commit the build came from.
+`finish` waits for the checks on such a bump's test pull request, and closes
+it without merging it if they all pass.
 Stdlib-only, like every repoutils module."""
 
 import argparse
@@ -28,11 +30,13 @@ from pathlib import Path
 from repoutils import (
     config,
     downstream_actions,
+    downstream_finish,
     downstream_pins,
     downstream_prs,
     github,
     pull_request,
     pypi_provenance,
+    workflow_summaries,
 )
 from repoutils.commands import check_pins
 from repoutils.docstrings import summary
@@ -356,7 +360,7 @@ def _follow_up(
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="repoutils downstream", description=summary(__doc__))
-    subparsers = parser.add_subparsers(dest="mode", required=True, metavar="{list,bump}")
+    subparsers = parser.add_subparsers(dest="mode", required=True, metavar="{list,bump,finish}")
     list_parser = subparsers.add_parser(
         "list",
         help="check the downstream repositories, and print them as JSON for a job matrix",
@@ -436,11 +440,46 @@ def main(argv: list[str]) -> int:
         "from that pull request",
     )
     bump_parser.add_argument("--repo", help="the downstream's owner/name, which --pr needs")
+    finish_parser = subparsers.add_parser(
+        "finish",
+        help="wait for the checks on a dev version's test pull request, and close it if they pass",
+        description="Run in the upstream's checkout. Find the open test pull request that `bump --pr` opened "
+        "for the dev version, and wait for the checks that the downstream's rulesets require on its base branch "
+        "to appear, and for at least one check, then for every check run and commit status on its head to "
+        "finish. If they all pass, close it without merging it, and delete its branch. If any fails, leave it "
+        "open, and exit 1. Fails if there's no such pull request, or the checks take over --timeout seconds.",
+        epilog="It uses $GITHUB_TOKEN, defaulting to `gh auth token`, which needs Contents and Pull requests write "
+        "on the downstream. It reads the rules and checks with the same token, which any token can read on a public "
+        "downstream; on a private one, it also needs Commit statuses read, and read access to its checks.",
+    )
+    finish_parser.add_argument("--repo", required=True, help="the downstream's owner/name")
+    finish_parser.add_argument("--version", required=True, help="the dev version that the bump was to")
+    finish_parser.add_argument(
+        "--package", help="the package (default: [project] name in the current directory's pyproject.toml)"
+    )
+    finish_parser.add_argument(
+        "--timeout",
+        type=workflow_summaries.positive,
+        default=3600,
+        help="seconds to wait for the checks (default: %(default)s)",
+    )
+    finish_parser.add_argument(
+        "--interval",
+        type=workflow_summaries.positive,
+        default=30,
+        help="seconds between reads of the checks (default: %(default)s)",
+    )
     args = parser.parse_args(argv)
 
     try:
         if args.mode == "list":
             return list_repositories(args.repositories)
+        if args.mode == "finish":
+            package = args.package or package_name(Path())
+            marker = config.marker(downstream_prs.marker_name(package, args.version))
+            token = os.environ.get("GITHUB_TOKEN") or github.gh_output("auth", "token")
+            found = downstream_finish.find(args.repo, token, package, args.version, marker)
+            return downstream_finish.finish(args.repo, token, found, interval=args.interval, timeout=args.timeout)
         if args.pr and not args.repo:
             parser.error("bump --pr needs --repo")
         # Read pyproject.toml first, so a bad setting fails before anything asks GitHub.

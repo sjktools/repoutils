@@ -11,6 +11,20 @@ name: Bump downstream
 # would never fire, as ci.yml's release job creates the release with its
 # GITHUB_TOKEN. Run it by hand from main, with a version, to bump again.
 #
+# It also makes a test run when a Publish run that someone started by hand on
+# main succeeds, which publishes a dev build of main to TestPyPI. The test run
+# bumps each downstream to that dev version, taking it from TestPyPI, and
+# moves its uses of this repository's actions to the commit the build came
+# from, as a dev version has no tag. Its pull requests are drafts titled
+# TEST PR. Its finish job then waits for each one's checks, closes it without
+# merging it if they all pass, and deletes its branch, but leaves it open and
+# fails if any fails, so the run succeeds only if it closed them all. It
+# makes no test run for a Publish run on another branch: the test pull
+# request comes from a branch of the downstream's own repository, so the
+# downstream's CI would run that branch's unreviewed code with the
+# downstream's secrets. Run it by hand with a dev version, and the commit its
+# build came from, to make a test run again.
+#
 # Three jobs, one composite action each, so the code that re-locks never runs
 # alongside a token that can push:
 #
@@ -27,6 +41,10 @@ name: Bump downstream
 #   uv.lock and actions.lock from bump as data, checking actions.lock with
 #   gh actions-lock --verify.
 #
+# - finish, in a test run only, closes each test pull request whose checks
+#   pass with DOWNSTREAM_TOKEN, in the downstream environment. Like push, it
+#   runs only main's repoutils, with the runner's python3.
+#
 # DOWNSTREAM_TOKEN needs Contents and Pull requests write on each downstream,
 # and Workflows write on each where the PR changes a file in
 # .github/workflows, such as a workflow or actions.lock that uses this
@@ -40,8 +58,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "The release to bump to, such as 0.4.0"
+        description: "The release to bump to, such as 0.4.0, or a dev version on TestPyPI for a test run"
         required: true
+      commit:
+        description: "For a dev version, the full hash of the commit on main that its build came from"
+        required: false
 
 concurrency:
   group: bump-downstream
@@ -52,8 +73,9 @@ jobs:
   plan:
     if: >-
       github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' &&
-      startsWith(github.event.workflow_run.head_branch, 'v')))
+      (github.event.workflow_run.conclusion == 'success' && (
+      (github.event.workflow_run.event == 'push' && startsWith(github.event.workflow_run.head_branch, 'v')) ||
+      (github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_branch == 'main'))))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -61,24 +83,72 @@ jobs:
     outputs:
       repositories: ${{ steps.plan.outputs.repositories }}
       version: ${{ steps.version.outputs.version }}
+      commit: ${{ steps.version.outputs.commit }}
+      test: ${{ steps.version.outputs.test }}
 
     steps:
       - name: Checkout repoutils' source
         uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+          # All of main's history, so a test run can check the commit is on main.
+          fetch-depth: 0
           sparse-checkout: |
             /.github/actions/downstream-plan/
             /src/repoutils/
           sparse-checkout-cone-mode: false
 
-      # A Publish run's head branch is the tag it ran on, v<version>.
+      # Keep version in step with pyproject.toml's [tool.uv] required-version.
+      - name: Install uv
+        if: github.event.workflow_run.event == 'workflow_dispatch'
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "0.13.6"
+          enable-cache: false
+
+      # A release's Publish run's head branch is the tag it ran on,
+      # v<version>. A Publish run started by hand published a dev version of
+      # the commit it ran on, numbered by its run ID.
       - name: Find the version
         id: version
         env:
           DISPATCHED: ${{ inputs.version }}
+          DISPATCHED_COMMIT: ${{ inputs.commit }}
+          EVENT: ${{ github.event.workflow_run.event }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
           TAG: ${{ github.event.workflow_run.head_branch }}
-        run: echo "version=${DISPATCHED:-${TAG#v}}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ "$EVENT" = workflow_dispatch ]; then
+            mkdir "$RUNNER_TEMP/published"
+            git show "$SHA:pyproject.toml" > "$RUNNER_TEMP/published/pyproject.toml"
+            # The same as publish-pypi.yml's Set dev version, so keep the two in step.
+            version=$(uv version --directory "$RUNNER_TEMP/published" --frozen --dry-run --short \
+              --bump patch --bump "dev=$RUN_ID")
+            commit=$SHA
+          elif [ -n "$DISPATCHED" ]; then
+            version=$DISPATCHED
+            commit=$DISPATCHED_COMMIT
+          else
+            version=${TAG#v}
+            commit=
+          fi
+          # The downstream's CI runs the actions at the commit, so it must be
+          # reviewed code. A Publish run on a tag named main would have main
+          # as its head branch too.
+          if [ -n "$commit" ] && ! git merge-base --is-ancestor "$commit" HEAD; then
+            echo "::error::$commit isn't a commit on main."
+            exit 1
+          fi
+          test=false
+          if [[ "$version" == *.dev* ]]; then
+            test=true
+          fi
+          {
+            echo "version=$version"
+            echo "commit=$commit"
+            echo "test=$test"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Plan
         id: plan
@@ -114,6 +184,7 @@ jobs:
         with:
           repository: ${{ matrix.repository }}
           version: ${{ needs.plan.outputs.version }}
+          commit: ${{ needs.plan.outputs.commit }}
 
   # Each downstream's push runs whether or not another's bump failed.
   push:
@@ -144,6 +215,42 @@ jobs:
 
       - name: Open the pull request in ${{ matrix.repository }}
         uses: $/.github/actions/downstream-push
+        with:
+          repository: ${{ matrix.repository }}
+          version: ${{ needs.plan.outputs.version }}
+          commit: ${{ needs.plan.outputs.commit }}
+          token: ${{ secrets.DOWNSTREAM_TOKEN }}
+
+  # A test run's only. Each downstream's finish runs whether or not another's
+  # push failed, and fails if its own did, as it then finds no pull request.
+  finish:
+    needs: [plan, push]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.test == 'true' }}
+    runs-on: ubuntu-latest
+    environment: downstream
+    # DOWNSTREAM_TOKEN does the writing.
+    permissions:
+      contents: read
+    # The action waits up to an hour for the checks.
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        repository: ${{ fromJSON(needs.plan.outputs.repositories) }}
+
+    steps:
+      - name: Checkout repoutils' source
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /.github/actions/downstream-finish/
+            /pyproject.toml
+            /src/repoutils/
+          sparse-checkout-cone-mode: false
+
+      - name: Finish the test pull request in ${{ matrix.repository }}
+        uses: $/.github/actions/downstream-finish
         with:
           repository: ${{ matrix.repository }}
           version: ${{ needs.plan.outputs.version }}

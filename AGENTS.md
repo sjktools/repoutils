@@ -47,6 +47,7 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
   It moves them to a dev version's commit instead, as a dev version has no tag.
   `src/repoutils/downstream_prs.py` finds the open PRs of earlier `downstream bump --pr` runs, and closes or comments on them once the new PR is open.
   A dev version's bump opens a draft test PR with its own marker and branch prefix, so a release's bump and a test bump never close or comment on each other's PRs.
+  `src/repoutils/downstream_finish.py` is `downstream finish`, which closes a test PR once all its checks pass.
   `src/repoutils/pypi_provenance.py` checks that PyPI's provenance for a release, or TestPyPI's for a dev version, names the upstream's repository as its trusted publisher.
 - `src/repoutils/release_pins.py` is the format of the pins file that `github-releases bump` writes, kept apart from the command for length.
 - `src/repoutils/workflows.py` reads the workflows in `.github/workflows` for the secrets and variables they use and each job's environment, without a YAML parser.
@@ -184,7 +185,7 @@ It needs Contents and Pull requests write, and Workflows write, as the PR change
 
 `bump-downstream.yml` runs when Publish succeeds on a `v*` tag.
 It opens a PR in each repository that the `DOWNSTREAM_REPOS` variable names, with `repoutils downstream bump --pr`.
-Each of its three jobs runs one composite action in `.github/actions/`: `downstream-plan`, `downstream-bump` or `downstream-push`.
+Each of its jobs runs one composite action in `.github/actions/`: `downstream-plan`, `downstream-bump`, `downstream-push` or, in a test run only, `downstream-finish`.
 The actions find repoutils' source relative to `${{ github.action_path }}`, so other projects can use them too.
 For the same reason, they run other files of this repository by that path, and never with `uses: ./`, which names the caller's repository.
 As in Bump uv, the `bump` job re-locks with no token that can write.
@@ -194,6 +195,18 @@ It moves the `uses:` again itself.
 Before it commits `actions.lock`, it checks the file with `gh actions-lock --verify`, and checks that no other action's commit changed.
 That secret lives in the main-only `downstream` environment, and needs Contents and Pull requests write on each downstream.
 It also needs Workflows write on each downstream where the PR changes a file in `.github/workflows`, such as a workflow or `actions.lock` that uses repoutils' actions.
+
+`bump-downstream.yml` also makes a test run when a Publish run that someone started by hand on `main` succeeds, with the dev version that the run published to TestPyPI.
+Its plan job works out that version with the same `uv version` command as Publish's `Set dev version` step, so keep the two in step.
+A test run moves each `uses:` of repoutils' actions to the commit that Publish ran on, and opens draft test PRs.
+It makes no test run for a Publish run on another branch, as the downstream's CI would run that branch's unreviewed code with the downstream's secrets.
+Its `finish` job runs the `downstream-finish` action, in the `downstream` environment, once for each downstream.
+The action runs `repoutils downstream finish`, which waits for the test PR's checks, then:
+
+- closes the PR and deletes its branch if they all pass.
+- leaves the PR open and fails if any fails.
+
+So a test run succeeds only if it closed every test PR.
 
 `claude.yml` and `claude-code-review.yml` run Claude Code when a comment starts with `@claude` (with the `CLAUDE_CODE_OAUTH_TOKEN` secret).
 Their `route` jobs run `repoutils claude-route` from a sparse checkout of `src/repoutils/` with the runner's `python3`, installing nothing.

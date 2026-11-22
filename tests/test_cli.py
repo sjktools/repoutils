@@ -131,7 +131,7 @@ def test_check_screenshots_dir(monkeypatch: pytest.MonkeyPatch, capsys: pytest.C
         (["dependabot-relock"], "base-ref"),
         (["dependabot-uv"], "{show,check,bump}"),
         (["github-releases"], "{check,bump}"),
-        (["downstream"], "{list,bump}"),
+        (["downstream"], "{list,bump,finish}"),
         (["requirements-min-versions", "neither"], "{check,fix}"),
         (["check-attestations", "a", "b"], "[dist]"),
         (["labels"], "{check,ensure,dump}"),

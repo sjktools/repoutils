@@ -16,7 +16,9 @@ name: Publish
 # patch release numbered by the run's ID, e.g. 0.2.1.dev41908943359, as
 # TestPyPI never accepts the same version twice. It never reaches the PyPI
 # jobs, even on a tag. On a PR from this repo, the owner can start one for the
-# PR's branch by commenting just "/testpypi" (testpypi-comment.yml).
+# PR's branch by commenting just "/testpypi" (testpypi-comment.yml). Once a
+# manual run on main succeeds, Bump downstream (bump-downstream.yml) makes a
+# test run with its dev version.
 #
 # TestPyPI and PyPI trusted publishing both name this file, so renaming it
 # means updating both trusted publishers.
@@ -70,6 +72,8 @@ jobs:
       # reuses its ID, so once its upload has succeeded, re-run only failed
       # jobs or start a new run rather than re-running all jobs.
       # --frozen leaves uv.lock alone; only the built package changes.
+      # bump-downstream.yml's plan job works out the same version, so keep
+      # the two in step.
       - name: Set dev version
         if: github.event_name == 'workflow_dispatch'
         run: uv version --frozen --bump patch --bump "dev=${GITHUB_RUN_ID}"

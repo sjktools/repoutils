@@ -111,9 +111,11 @@ def test_repo_checks(
     assert expected in capsys.readouterr().out
 
 
-def test_check_blame_ignore_revs(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    # This repo has no .git-blame-ignore-revs, which the check reports.
-    monkeypatch.chdir(ROOT)
+def test_check_blame_ignore_revs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The directory has no .git-blame-ignore-revs, which the check reports.
+    monkeypatch.chdir(tmp_path)
     assert cli.main(["check-blame-ignore-revs", "no-such-ref"]) == 1
     assert "Problems in .git-blame-ignore-revs" in capsys.readouterr().out
 

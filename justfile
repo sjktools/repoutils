@@ -142,6 +142,10 @@ sentence-per-line-check:
 prose-check:
     uv run repoutils check-prose
 
+# Check that .git-blame-ignore-revs lists only full hashes of commits in the target's history (default: $BLAME_IGNORE_REVS_TARGET, else HEAD; CI passes a PR's base, as a PR's own commits are lost when it's squash-merged)
+blame-ignore-revs-check target=env("BLAME_IGNORE_REVS_TARGET", "HEAD"):
+    uv run repoutils check-blame-ignore-revs {{ quote(target) }}
+
 # Check that every workflow and local action pins the uv version pyproject.toml requires and the just version the justfile requires
 check-pins:
     uv run repoutils check-pins
@@ -183,7 +187,7 @@ dependabot-relock base:
     {{ repoutils }} dependabot-relock {{ base }}
 
 # Run all checks, without fixing anything or running tests
-check: lint fmt-check just-fmt-check mypy pyright lint-workflows actions-lock-check whitespace-check sentence-per-line-check prose-check check-pins check-checkout-credentials secrets-workflows-check variables-workflows-check check-justfile lock-platforms-check requirements-check
+check: lint fmt-check just-fmt-check mypy pyright lint-workflows actions-lock-check whitespace-check sentence-per-line-check prose-check blame-ignore-revs-check check-pins check-checkout-credentials secrets-workflows-check variables-workflows-check check-justfile lock-platforms-check requirements-check
 
 # Check .github/workflows/actions.lock pins every action the workflows use, transitive ones included, to a commit that still verifies upstream (needs gh, logged in, with the github/gh-actions-lock extension)
 actions-lock-check:

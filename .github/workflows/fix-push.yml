@@ -70,6 +70,7 @@ jobs:
       conclusion: ${{ steps.read-run.outputs.conclusion }}
       url: ${{ steps.read-run.outputs.url }}
       number: ${{ steps.find-pr.outputs.number }}
+      base: ${{ steps.find-pr.outputs.base }}
       fixes: ${{ steps.check-pr.outputs.fixes }}
       already_pushed: ${{ steps.check-pr.outputs.already_pushed }}
 
@@ -155,8 +156,8 @@ jobs:
         run: |
           if [ -n "$PR_NUMBER" ]; then
             pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" \
-              --jq '"\(.state) \(.head.repo.full_name) \(.head.sha) \(.head.ref)"')
-            read -r state head_repository head_sha head_branch <<< "$pr"
+              --jq '"\(.state) \(.head.repo.full_name) \(.head.sha) \(.base.ref) \(.head.ref)"')
+            read -r state head_repository head_sha base head_branch <<< "$pr"
             if [ "$state" != open ]; then
               echo "::error::Pull request #$PR_NUMBER is not open."
               exit 1
@@ -172,7 +173,7 @@ jobs:
             # only PRs from this repository count, and every page is read.
             prs=$(gh api --method GET --paginate "repos/$GITHUB_REPOSITORY/pulls" \
               -f state=open -f head="$GITHUB_REPOSITORY_OWNER:$BRANCH" -F per_page=100 \
-              --jq '.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY) | "\(.number) \(.head.sha)"')
+              --jq '.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY) | "\(.number) \(.head.sha) \(.base.ref)"')
             count=$(grep -c . <<< "$prs" || true)
             if [ "$count" = 0 ]; then
               echo "::error::Branch $BRANCH has no open pull request in this repository."
@@ -182,11 +183,12 @@ jobs:
               echo "::error::Branch $BRANCH has $count open pull requests in this repository, and run $RUN_ID doesn't say which one it was for."
               exit 1
             fi
-            read -r number head_sha <<< "$prs"
+            read -r number head_sha base <<< "$prs"
           fi
           {
             echo "number=$number"
             echo "head_sha=$head_sha"
+            echo "base=$base"
           } >> "$GITHUB_OUTPUT"
 
       - name: Check the pull request and find the fixes
@@ -228,10 +230,14 @@ jobs:
           fi
           echo "fixes=$([ "$fixes" = 0 ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
 
-  # A fresh runner: it checks out the commit the fix run started from, fetches
-  # the bundled commits onto it and pushes them. AUTOFIX_TOKEN needs only
-  # contents write, without the workflows permission, so a bundle can't change
-  # the workflows either.
+  # A fresh runner: it checks out the commit the fix run started from, and
+  # push-bundle fetches the bundled commits onto it, checks them and pushes
+  # them. fix.yml merges the base branch and then commits what `just fix`
+  # changed, so the bundle may hold only a clean merge of the base and one
+  # commit, and that commit may change nothing in .github/workflows but
+  # actions.lock. AUTOFIX_TOKEN has Contents write, and Workflows write for
+  # actions.lock, so this check is what keeps a bundle from changing the
+  # workflows themselves.
   push:
     needs: resolve
     if: needs.resolve.outputs.fixes == 'true'
@@ -244,58 +250,31 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Check token configuration
-        env:
-          AUTOFIX_TOKEN: ${{ secrets.AUTOFIX_TOKEN }}
-        run: |
-          if [ -z "$AUTOFIX_TOKEN" ]; then
-            echo "::error::AUTOFIX_TOKEN secret is not set"
-            exit 1
-          fi
-
-      # Full history: the bundle holds what the merge brought in from the base
-      # branch, but assumes the commits where the two branches diverged, which
-      # may be far back in this branch's history. Nothing from the checkout
-      # runs.
+      # Full history and every branch: the bundle holds what the merge brought
+      # in from the base branch, but assumes the commits where the two branches
+      # diverged, which may be far back in this branch's history, and the clean
+      # merge check reads the base. Nothing from the checkout runs.
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ needs.resolve.outputs.start_sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Download the fixes
-        uses: actions/download-artifact@v8.0.2
-        with:
-          name: fixes
-          path: ${{ runner.temp }}/fixes
-          run-id: ${{ needs.resolve.outputs.run_id }}
-          github-token: ${{ github.token }}
-
       # Pushes with AUTOFIX_TOKEN, not GITHUB_TOKEN, so the push triggers CI.
       # The lease makes the push fail unless the branch is still at the commit
       # the fix run started from: a plain push would also succeed if the branch
       # had since been reset to an ancestor, and restore the commits removed.
-      # No hooks run, as core.hooksPath is empty.
       - name: Push the fixes
-        env:
-          AUTOFIX_TOKEN: ${{ secrets.AUTOFIX_TOKEN }}
-          BRANCH: ${{ needs.resolve.outputs.branch }}
-          START_SHA: ${{ needs.resolve.outputs.start_sha }}
-        run: |
-          bundle="$RUNNER_TEMP/fixes/fixes.bundle"
-          git bundle verify "$bundle"
-          git fetch --no-tags "$bundle" HEAD
-          head_sha=$(git rev-parse FETCH_HEAD)
-          # The lease makes the push a forced one, so check it only adds commits.
-          if [ "$head_sha" = "$START_SHA" ] || ! git merge-base --is-ancestor "$START_SHA" "$head_sha"; then
-            echo "::error::The bundle's head doesn't add commits to $START_SHA, where PR Fixes started."
-            exit 1
-          fi
-          git -c core.hooksPath=/dev/null push \
-            "--force-with-lease=refs/heads/${BRANCH}:${START_SHA}" \
-            "https://x-access-token:${AUTOFIX_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-            "${head_sha}:refs/heads/${BRANCH}"
-          echo "Pushed $head_sha to $BRANCH."
+        uses: $/.github/actions/push-bundle
+        with:
+          token: ${{ secrets.AUTOFIX_TOKEN }}
+          artifact: fixes
+          run-id: ${{ needs.resolve.outputs.run_id }}
+          branch: ${{ needs.resolve.outputs.branch }}
+          start: ${{ needs.resolve.outputs.start_sha }}
+          clean-merge-of: origin/${{ needs.resolve.outputs.base }}
+          deny-paths: .github/workflows
+          allow-paths: .github/workflows/actions.lock
 
   # Runs main's repoutils from a sparse checkout with the runner's python3,
   # installing nothing, like claude.yml's route job. It reports only when

@@ -1,0 +1,115 @@
+name: Push a Git bundle
+description: >-
+  Downloads a Git bundle that an earlier job uploaded as an artifact, checks its
+  commits with `repoutils push-bundle`, and pushes them to a branch with a lease.
+
+# A push job, which holds a write-capable token and runs no code from the branch
+# the bundle came from. It runs only repoutils, from this action's own commit,
+# with the runner's python3, installing nothing. Check out the commit the bundle
+# builds on first, with history enough for the bundle's prerequisites, and
+# without persisted credentials.
+inputs:
+  token:
+    description: >-
+      The token to push with. Pushing with a GITHUB_TOKEN would start no
+      workflow run, so use another token for a push that should trigger CI.
+    required: true
+  artifact:
+    description: The name of the artifact that holds the bundle.
+    required: true
+  run-id:
+    description: >-
+      The workflow run that uploaded the artifact (default, this run). The
+      job then needs actions read.
+    required: false
+    default: ""
+  bundle:
+    description: The bundle's file name in the artifact (default, the artifact's name with .bundle).
+    required: false
+    default: ""
+  branch:
+    description: The branch to push to.
+    required: true
+  start:
+    description: The commit the bundle builds on, where the branch must still be.
+    required: true
+  expected-head:
+    description: The commit the bundle's head must be.
+    required: false
+    default: ""
+  single-commit:
+    description: Set to true to require the bundle's head to be one commit on start.
+    required: false
+    default: "false"
+  clean-merge-of:
+    description: >-
+      Allow at most one clean merge of this base, such as origin/main, then at
+      most one other commit, to which the path rules then apply.
+    required: false
+    default: ""
+  allow-paths:
+    description: Paths the change may touch, one per line.
+    required: false
+    default: ""
+  deny-paths:
+    description: >-
+      Paths the change may not touch, one per line, except those under
+      allow-paths. With allow-paths and no deny-paths, every other path is denied.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Check the token is set
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.token }}
+      run: |
+        if [ -z "$TOKEN" ]; then
+          echo "::error::The token input is empty: is the secret set, and in the job's environment if it has one?"
+          exit 1
+        fi
+
+    # Without a run ID, no token, so the artifact comes from this run without
+    # the job needing actions read.
+    - name: Download the bundle
+      uses: actions/download-artifact@v8.0.2
+      with:
+        name: ${{ inputs.artifact }}
+        path: ${{ runner.temp }}/push-bundle
+        run-id: ${{ inputs.run-id || github.run_id }}
+        github-token: ${{ inputs.run-id && github.token || '' }}
+
+    - name: Push the bundle
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        ARTIFACT: ${{ inputs.artifact }}
+        BUNDLE: ${{ inputs.bundle }}
+        BRANCH: ${{ inputs.branch }}
+        START: ${{ inputs.start }}
+        EXPECTED_HEAD: ${{ inputs.expected-head }}
+        SINGLE_COMMIT: ${{ inputs.single-commit }}
+        CLEAN_MERGE_OF: ${{ inputs.clean-merge-of }}
+        ALLOW_PATHS: ${{ inputs.allow-paths }}
+        DENY_PATHS: ${{ inputs.deny-paths }}
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+        PYTHONSAFEPATH: "1"
+      run: |
+        args=()
+        [ -n "$EXPECTED_HEAD" ] && args+=(--expected-head "$EXPECTED_HEAD")
+        case "$SINGLE_COMMIT" in
+          true) args+=(--single-commit) ;;
+          false) ;;
+          *) echo "::error::single-commit must be true or false, not $SINGLE_COMMIT."; exit 1 ;;
+        esac
+        [ -n "$CLEAN_MERGE_OF" ] && args+=(--clean-merge-of "$CLEAN_MERGE_OF")
+        while IFS= read -r path; do
+          [ -n "$path" ] && args+=(--allow-path "$path")
+        done <<< "$ALLOW_PATHS"
+        while IFS= read -r path; do
+          [ -n "$path" ] && args+=(--deny-path "$path")
+        done <<< "$DENY_PATHS"
+        python3 -m repoutils push-bundle "$RUNNER_TEMP/push-bundle/${BUNDLE:-$ARTIFACT.bundle}" \
+          --branch "$BRANCH" --start "$START" "${args[@]}"

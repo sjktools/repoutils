@@ -145,6 +145,7 @@ On Dependabot PRs, the `dependabot-fix` job re-locks with our uv and syncs the d
 The `dependabot-push` job then pushes the result with the `DEPENDABOT_FIX_TOKEN` secret (a Dependabot secret with contents write), so the push triggers CI.
 A job that runs a branch's code never references a token that can push to the repository, as code from an earlier step could read it from a later one.
 It hands its commits, as a Git bundle artifact, to a separate push job that runs nothing from the branch (`/autofix` does the same).
+Both push jobs use the `push-bundle` action, which checks the bundle and pushes it with `repoutils push-bundle`.
 
 Releases are cut from `main`.
 The Bump Version workflow, run from `main`, opens a PR bumping `version` in `pyproject.toml` (with the `GH_ACTIONS_TOKEN` secret).
@@ -163,7 +164,8 @@ The commenter's author association must be `OWNER` or `MEMBER`, so outside colla
 `/testpypi` publishes a dev build of the PR's branch to TestPyPI only.
 `/autofix` runs `just fix` on the PR's branch and pushes the result (with the `AUTOFIX_TOKEN` secret).
 It dispatches `fix.yml` on the PR's branch, which runs `just fix` with no secrets and uploads its commits as a Git bundle.
-Then `fix-push.yml`, which always runs from `main`, checks that the bundle only adds commits to the branch, and pushes them.
+Then `fix-push.yml` checks that the bundle only adds commits to the branch, and pushes them from `main`, where it always runs.
+The bundle may hold only a clean merge of the PR's base and one commit that changes nothing in `.github/workflows` but `actions.lock`.
 `autofix-comment.yml` waits for the fix run and dispatches `fix-push.yml` itself, as a run dispatched with a `GITHUB_TOKEN` starts no `workflow_run` workflow.
 A `workflow_run` trigger covers a fix run that a person starts by hand.
 `autofix-comment.yml` passes the PR's number to `fix.yml`, which puts it in the run's name, as GitHub's API gives a run's name but not its inputs, and `fix-push.yml` reads it from there.
@@ -172,6 +174,8 @@ If either run fails, or either can't start, the PR gets one comment saying so, w
 The fix runs on the branch rather than on `main` because code in a run can write to the Actions cache of the run's branch.
 On `main`, that would reach the jobs that publish, tag or bump a release, which use no cache either, as a second line of defence.
 `AUTOFIX_TOKEN` lives in the `autofix` environment, which only `main` can deploy to, as with `release`.
+It needs Workflows write as well as Contents write, as a fix may change `actions.lock`.
+So only `fix-push.yml`'s path rule keeps a bundle from changing the workflows themselves.
 `repoutils autofix <PR>` starts a fix run as the comment does, for a client that can't post the comment, such as Claude Code on the web, whose comments get a footer.
 It finds the push run that GitHub starts by `fix-push.yml`'s run name, which names the fix run, so keep the command and the workflow in step.
 If the fix run was started by `github-actions[bot]`, or no push run appears within two minutes, the command starts `fix-push.yml` on `main` itself.

@@ -42,6 +42,7 @@ GROUPS: dict[str, list[Command]] = {
         Command("check-checkout-credentials", "check_checkout_credentials", "Check checkouts set persist-credentials"),
         Command("autofix", "autofix", "Run the PR Fixes workflow on a PR, and wait for its fixes to be pushed"),
         Command("claude-route", "claude_route", "Decide which Claude workflow a comment (on stdin) is for"),
+        Command("push-bundle", "push_bundle", "Check a Git bundle's commits, and push them to a branch with a lease"),
     ],
     "uv and Dependabot": [
         Command(

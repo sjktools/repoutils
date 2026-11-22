@@ -336,7 +336,10 @@ def test_release_with_a_wrong_version_line_and_a_failed_run_fails_at_once(
 ) -> None:
     runner = FakeRunner(probe(), (0, "my-pkg 1.2.0\n"), (1, ""))
     assert check_install.main(version="1.2.0", version_line=True, runs=["--help"], runner=runner, sleep=no_sleep) == 1
-    assert "Retrying" not in capsys.readouterr().err
+    out, err = capsys.readouterr()
+    assert "to print 'my-pkg 1.2.0 (0123456789ab)', got 'my-pkg 1.2.0'" in out
+    assert "--help` exited 1" in out
+    assert "Retrying" not in err
     assert len(runner.calls) == 3
 
 

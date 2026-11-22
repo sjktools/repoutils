@@ -37,6 +37,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `check-screenshots-dir` | Fails unless `.gitignore` is the only tracked file in the screenshots directory and ignores all other files in that directory. |
 | `git-config-setup` | Sets the local `blame.ignoreRevsFile` Git setting (idempotent, so a justfile can run it before every recipe). |
 | `long-files` | Lists the files over a line limit as Markdown (with changed files first), or posts that list to a pull request. |
+| `ruff-check` | Runs `ruff check --no-cache` with the arguments you give it, and fails if `ruff` fails or gives any warning, such as for an invalid `noqa` directive, which `ruff` only warns about. It runs the `ruff` on `PATH`, such as the one in the dev dependency group of the project under `uv run`. |
 | `check-pins` | Fails unless every `setup-uv` and `setup-just` workflow step pins the versions required by `pyproject.toml` and the justfile, and the actions that the project uses from the repository of a locked package that is installed come from the commit of that package, or only from the tag of its version if the package does not record its commit (see [Checking actions against a locked package](#checking-actions-against-a-locked-package)). |
 | `check-checkout-credentials` | Fails on any `actions/checkout` step that does not set `persist-credentials`. |
 | `autofix` | Starts the PR Fixes workflow on a pull request, waits for the workflow that pushes its fixes, and prints the new head commit of the branch. |

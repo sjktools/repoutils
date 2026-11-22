@@ -500,7 +500,7 @@ It installs nothing, so no cache runs alongside the token.
 - The command reads `[project] version` from `pyproject.toml`, which must be of the form X.Y.Z, and bumps the level that you give.
 - It changes the version in `pyproject.toml`, and the version in the entry of the project itself in `uv.lock`, if the project has a `uv.lock`.
   It edits both files as text and does not run `uv`, so no build backend runs alongside the token.
-- It fails, and changes nothing, unless the checkout is on the default branch of the repository.
+- With `--pr`, it fails, and changes nothing, unless the checkout is on the default branch of the repository.
 - It commits the change to a new branch, `release-version-<version>`, pushes the branch, and opens a pull request into the default branch.
   If a pull request from that branch is already open, it changes nothing.
 - With `--auto-merge <method>`, or the `auto-merge` input of the action, it then turns on auto-merge for the pull request, with that merge method.

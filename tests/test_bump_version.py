@@ -105,6 +105,23 @@ def test_bump_refuses(
     assert (cwd / "uv.lock").read_text() == (LOCK if lock is None else lock)
 
 
+def test_bump_puts_files_back_if_a_write_fails(
+    cwd: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write = bump_version._write
+
+    def fail_on_lock(path: Path, text: str) -> None:
+        if path.name == "uv.lock" and "1.2.4" in text:
+            raise OSError("disk full")
+        write(path, text)
+
+    monkeypatch.setattr(bump_version, "_write", fail_on_lock)
+    assert bump_version.run(["patch"]) == 1
+    assert "disk full" in capsys.readouterr().err
+    assert (cwd / "pyproject.toml").read_text() == PYPROJECT
+    assert (cwd / "uv.lock").read_text() == LOCK
+
+
 def test_auto_merge_needs_pr(cwd: Path, capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as raised:
         bump_version.run(["patch", "--auto-merge", "squash"])

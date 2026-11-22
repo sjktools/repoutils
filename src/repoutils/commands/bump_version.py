@@ -110,19 +110,28 @@ def _lock_text(text: str, name: str, old: str, new: str, path: Path) -> str:
 def bump(root: Path, level: str) -> tuple[str, str, list[str]]:
     """Bump root's version by level, in pyproject.toml and, if root has one,
     uv.lock. Return the old and new versions, and the files it changed,
-    relative to root. It writes nothing unless it can change them all."""
+    relative to root. It writes nothing unless it can change them all, and
+    puts both back if writing either fails."""
     path = root / PYPROJECT
     text = _read(path)
     pyproject = read_pyproject(path)
     name, old = _project(pyproject, path)
     new = bumped(old, level)
     pyproject["project"]["version"] = new
+    originals = {path: text}
     texts = {path: _replace_one(text, old, new, pyproject, f"{path}'s [project] version")}
     lockfile = root / LOCK_FILE
     if lockfile.is_file():
-        texts[lockfile] = _lock_text(_read(lockfile), name, old, new, lockfile)
-    for changed, new_text in texts.items():
-        _write(changed, new_text)
+        originals[lockfile] = _read(lockfile)
+        texts[lockfile] = _lock_text(originals[lockfile], name, old, new, lockfile)
+    try:
+        for changed, new_text in texts.items():
+            _write(changed, new_text)
+    except BaseException:
+        # So a failed write leaves the two files as they were, and in step.
+        for changed, original in originals.items():
+            _write(changed, original)
+        raise
     return old, new, [changed.relative_to(root).as_posix() for changed in texts]
 
 

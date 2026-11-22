@@ -50,9 +50,9 @@ class PushBundleTests(TestCase):
         self.git(self.root, "clone", "-q", str(self.remote), str(self.checkout))
         os.chdir(self.checkout)
 
-    def git(self, directory: Path, *args: str) -> str:
+    def git(self, directory: Path, *args: str, check: bool = True) -> str:
         git = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", *args]
-        result = subprocess.run(git, cwd=directory, check=True, capture_output=True, text=True, env=git_env())
+        result = subprocess.run(git, cwd=directory, check=check, capture_output=True, text=True, env=git_env())
         return result.stdout.strip()
 
     def write(self, path: str, content: str) -> None:
@@ -295,7 +295,7 @@ class PushBundleTests(TestCase):
         self.git(self.checkout, "fetch", "-q", "origin")
         self.start = topic_start
         # Resolve the conflict by hand, as no clean merge could.
-        subprocess.run(["git", "merge", "-q", "main-work"], cwd=self.maker, capture_output=True, env=git_env())
+        self.git(self.maker, "merge", "-q", "main-work", check=False)
         self.write("a.txt", "resolved\n")
         self.git(self.maker, "add", "-A")
         self.git(self.maker, "commit", "-q", "--no-edit")

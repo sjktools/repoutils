@@ -480,9 +480,10 @@ jobs:
 
   # Checks that the Export Secrets workflow's export still works, so a broken age pin,
   # a change to `secrets export` or a wrong or replaced SECRETS_EXPORT_KEY shows
-  # up here rather than in a backup run. It round-trips made-up secrets (never
-  # real ones) through the pinned age, encrypting to a throwaway age key and to
-  # the GitHub key SECRETS_EXPORT_KEY names. It references no secrets.
+  # up here rather than in a backup run. `secrets export --self-test` round-trips
+  # made-up secrets (never real ones) through the pinned age, encrypting to a
+  # throwaway age key and to the GitHub key SECRETS_EXPORT_KEY names. It
+  # references no secrets.
   secrets-export:
     runs-on: ubuntu-latest
     permissions:

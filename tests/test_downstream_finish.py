@@ -74,7 +74,10 @@ class FakeGitHub:
         # The polls after the first re-run, the second, and so on.
         self.after = after or []
         self.refuse = refuse
+        # The re-run requests, and the rounds of them.
         self.reruns = 0
+        self.rounds = 0
+        self.in_round = False
         self.stage = {"check-runs": 0, "status": 0}
         self.pulls = [pull()] if pulls is None else pulls
         self.heads = heads or ["a" * 40]
@@ -93,10 +96,11 @@ class FakeGitHub:
         self.now += seconds
 
     def _poll(self, kind: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        # After each re-run, the reads go on from the polls of the next stage.
-        polls = self.polls if not self.after else ([self.polls] + self.after)[min(self.reruns, len(self.after))]
-        if self.reruns != self.stage[kind]:
-            self.stage[kind], self.reads[kind] = self.reruns, 0
+        # After each round of re-runs, the reads go on from the polls of the next stage.
+        self.in_round = False
+        polls = self.polls if not self.after else ([self.polls] + self.after)[min(self.rounds, len(self.after))]
+        if self.rounds != self.stage[kind]:
+            self.stage[kind], self.reads[kind] = self.rounds, 0
         index = min(self.reads[kind], len(polls) - 1)
         self.reads[kind] += 1
         return polls[index]
@@ -110,8 +114,13 @@ class FakeGitHub:
                 raise urllib.error.HTTPError(url, 403, "Resource not accessible", Message(), io.BytesIO(b"{}"))
             if path.endswith("/rerun-failed-jobs"):
                 self.reruns += 1
+                # The re-runs between two reads of the checks are one round.
+                if not self.in_round:
+                    self.rounds, self.in_round = self.rounds + 1, True
             return None
         if path.startswith("/actions/jobs/"):
+            if path in self.refuse:
+                raise urllib.error.URLError("Connection reset")
             return {"run_id": 100 + int(path.removeprefix("/actions/jobs/")) // 10}
         if path.startswith("/pulls?"):
             return self.pulls if "page=1" in path else []
@@ -197,6 +206,7 @@ def test_reruns_failed_jobs_once(
     rerun: Poll = ([run("test", run_id=31), run("lint", run_id=32), run("e2e", run_id=33), run("docs", run_id=13)], [])
     fake = FakeGitHub(monkeypatch, [first], after=[[first, first, (rerun[0], [status("cov")])]])
     assert finish("--interval", "5") == 0
+    assert (fake.reruns, fake.rounds) == (2, 1)
     assert fake.changes[:2] == [
         ("POST", "/actions/runs/101/rerun-failed-jobs", None),
         ("POST", "/actions/runs/102/rerun-failed-jobs", None),
@@ -223,7 +233,7 @@ def test_reruns_as_many_times_as_retries(upstream: Path, monkeypatch: pytest.Mon
     fails: list[Poll] = [([run("test", conclusion="failure", run_id=n), run("lint")], []) for n in (11, 14, 15)]
     fake = FakeGitHub(monkeypatch, [fails[0]], after=[[fails[1]], [fails[2]], [PASSED]])
     assert finish("--retries", "2") == 1
-    assert fake.reruns == 2
+    assert fake.reruns == fake.rounds == 2
 
 
 def test_reruns_nothing_with_no_retries(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -259,8 +269,21 @@ def test_warns_if_github_refuses_the_rerun(
     assert finish() == 1
     assert fake.reruns == 0
     err = capsys.readouterr().err
-    assert "warning: couldn't re-run the failed jobs, which needs Actions write on d/down: HTTP Error 403" in err
+    assert "warning: couldn't re-run the failed jobs on d/down, which needs Actions write: HTTP Error 403" in err
     assert "Left https://github.com/d/down/pull/5 open" in err
+
+
+def test_warns_if_the_job_lookup_fails(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeGitHub(
+        monkeypatch, [([run("test", conclusion="failure", run_id=11), run("lint")], [])], refuse=("/actions/jobs/11",)
+    )
+    assert finish() == 1
+    assert fake.changes == []
+    assert "warning: couldn't re-run the failed jobs on d/down, which needs Actions write: <urlopen error" in (
+        capsys.readouterr().err
+    )
 
 
 def test_times_out_waiting_for_a_rerun(

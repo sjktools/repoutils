@@ -22,7 +22,8 @@ inputs:
     description: >-
       A token with Contents and Pull requests write on the downstream, which
       closes the pull request and deletes its branch, and Actions write, which
-      re-runs failed jobs.
+      re-runs failed jobs. On a private downstream, it also needs Commit
+      statuses read and Checks read, to read its checks.
     required: true
   package:
     description: The package that was bumped (default, the [project] name in the upstream's pyproject.toml).

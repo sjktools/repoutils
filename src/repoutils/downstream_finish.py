@@ -12,7 +12,6 @@ Stdlib-only, like every repoutils module."""
 
 import os
 import sys
-import urllib.error
 import urllib.parse
 from dataclasses import dataclass
 from time import monotonic, sleep
@@ -201,10 +200,11 @@ def rerun(repo: str, token: str, failed: list[Check]) -> bool:
         for run_id in runs:
             github.request("POST", f"{api}/runs/{run_id}/rerun-failed-jobs", token)
             print(f"Re-ran the failed jobs of https://github.com/{repo}/actions/runs/{run_id}")
-    except urllib.error.HTTPError as e:
+    # RuntimeError is github.request()'s error for too many redirects.
+    except (OSError, RuntimeError) as e:
         github.close_error(e)
         print(
-            f"warning: couldn't re-run the failed jobs, which needs Actions write on {repo}: {e}",
+            f"warning: couldn't re-run the failed jobs on {repo}, which needs Actions write: {e}",
             file=sys.stderr,
         )
         return False

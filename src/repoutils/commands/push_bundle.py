@@ -43,18 +43,12 @@ class Refused(Exception):
 
 def _run_git(*args: str, env: dict[str, str] | None = None, ok: tuple[int, ...] = (0,)) -> tuple[int, str]:
     """Git's exit code, which must be one of `ok`, and its output."""
-    result = subprocess.run(
-        ["git", *args],
-        env=git_env() if env is None else env,
-        stdout=subprocess.PIPE,
-        text=True,
-        # A path needn't be UTF-8; this keeps its bytes, which the path rules compare.
-        errors="surrogateescape",
-        check=False,
-    )
+    result = subprocess.run(["git", *args], env=git_env() if env is None else env, stdout=subprocess.PIPE, check=False)
     if result.returncode not in ok:
         raise Refused(f"`git {' '.join(args)}` exited with code {result.returncode}")
-    return result.returncode, result.stdout
+    # Decoded by hand, not in text mode, which would turn a \r in a path into \n.
+    # A path needn't be UTF-8, and surrogateescape keeps its bytes for the path rules.
+    return result.returncode, result.stdout.decode("utf-8", "surrogateescape")
 
 
 def _git(*args: str, env: dict[str, str] | None = None) -> str:

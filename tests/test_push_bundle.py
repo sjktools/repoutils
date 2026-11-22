@@ -220,6 +220,15 @@ class PushBundleTests(TestCase):
         self.assertEqual(result, 0)
         push.assert_called_once_with(head, "topic", self.start, str(self.remote), "secret")
 
+    def test_a_path_with_a_carriage_return_isnt_another_path(self) -> None:
+        # Into the index only, as not every file system allows such a name.
+        blob = self.git(self.maker, "hash-object", "-w", "--stdin", input="x\n")
+        info = f"100644 {blob}\tuv.lock\r\n".encode()
+        subprocess.run(["git", "update-index", "--index-info"], cwd=self.maker, input=info, check=True, env=git_env())
+        self.git(self.maker, "commit", "-qm", "carriage return")
+        self.make_bundle()
+        self.assertEqual(self.push(allow_paths=["uv.lock\n"]), 1)
+
     def test_a_file_moved_out_of_a_denied_path_is_denied(self) -> None:
         self.git(self.maker, "mv", "a.txt", "b.txt")
         self.commit_and_bundle()

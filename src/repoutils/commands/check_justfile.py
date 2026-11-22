@@ -57,33 +57,33 @@ class Justfile:
     aliases: dict[str, str]
     variables: frozenset[str]
 
-    def resolve(self, name: str) -> str | None:
-        """The recipe that name is, or is an alias of, or None if there's neither."""
+    def resolve(self, name: str) -> frozenset[str]:
+        """The recipes that name may be, as a recipe or an alias, which is none if it's neither.
+
+        just gives an alias's target as only the recipe's own name, without its
+        module's path, so an alias may be any recipe of that name, at the top
+        or in a module. The check counts it as each of them, rather than fail
+        a justfile for an alias it can't place.
+        """
         if name in self.recipes:
-            return name
+            return frozenset({name})
         target = self.aliases.get(name)
-        if target is None or target in self.recipes:
-            return target
-        # just gives an alias of a module's recipe only that recipe's own name,
-        # so take the least nested module recipe of that name.
-        paths = sorted((path.count("::"), path) for path in self.recipes if path.endswith(f"::{target}"))
-        return paths[0][1] if paths else None
+        if target is None:
+            return frozenset()
+        return frozenset(path for path in self.recipes if path == target or path.endswith(f"::{target}"))
 
     def reached(self, name: str) -> set[str]:
         """The recipes that the recipe name runs first or after, directly or through others."""
         seen: set[str] = set()
-        start = self.resolve(name)
-        todo = list(self.recipes[start]) if start else []
+        todo = [dependency for start in self.resolve(name) for dependency in self.recipes[start]]
         while todo:
-            recipe = self.resolve(todo.pop())
-            if recipe is not None and recipe not in seen:
+            for recipe in self.resolve(todo.pop()) - seen:
                 seen.add(recipe)
                 todo.extend(self.recipes[recipe])
         return seen
 
     def reaches(self, name: str, dependency: str) -> bool:
-        target = self.resolve(dependency)
-        return target is not None and target in self.reached(name)
+        return bool(self.resolve(dependency) & self.reached(name))
 
 
 def _table(dump: dict[str, Any], key: str, default: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -209,18 +209,18 @@ def problems(justfile: Justfile, settings: Settings) -> tuple[list[str], list[Re
     missing: list[Recipe] = []
     standard = settings.standard()
     for recipe in standard:
-        if justfile.resolve(recipe.name) is None:
+        if not justfile.resolve(recipe.name):
             found.append(f"There's no `{recipe.name}` recipe or alias.")
             missing.append(recipe)
     unreached: set[tuple[str, str]] = set()
     for recipe in standard:
-        if justfile.resolve(recipe.name) is None:
+        if not justfile.resolve(recipe.name):
             continue
         for dependency in settings.dependencies(recipe):
             if not justfile.reaches(recipe.name, dependency):
                 found.append(f"`{recipe.name}` doesn't reach `{dependency}`.")
                 unreached.add((recipe.name, dependency))
-    if justfile.resolve("fix") is not None and justfile.resolve("check") is not None:
+    if justfile.resolve("fix") and justfile.resolve("check"):
         for fixer, checker in FIX_CHECK_PAIRS:
             if (
                 justfile.reaches("fix", fixer)

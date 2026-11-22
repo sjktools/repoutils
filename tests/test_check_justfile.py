@@ -107,9 +107,21 @@ def test_alias_to_a_module_recipe(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     (tmp_path / "tools.just").write_text("list: other\n    echo\n\nother:\n    echo\n\nmod deeper\n")
     (tmp_path / "deeper.just").write_text("list:\n    echo\n")
     justfile = read_justfile("just")
-    assert justfile.resolve("default") == "tools::list"
+    # The dump doesn't say which list the alias means, so it may be either.
+    assert justfile.resolve("default") == {"tools::list", "tools::deeper::list"}
     assert justfile.reached("check") == {"tools::list", "tools::other"}
-    assert "tools::deeper::list" in justfile.recipes
+    assert justfile.reaches("check", "default")
+
+
+def test_alias_whose_target_name_is_also_at_the_top() -> None:
+    # alias fmt-check := tools::list, with a top-level list too: check reaches fmt-check
+    # through tools::list, and lint-only reaches it through list.
+    recipes = {"list": (), "tools::list": (), "check": ("tools::list",), "lint-only": ("list",), "other": ()}
+    justfile = Justfile(recipes, {"fmt-check": "list"}, frozenset())
+    assert justfile.resolve("fmt-check") == {"list", "tools::list"}
+    assert justfile.reaches("check", "fmt-check")
+    assert justfile.reaches("lint-only", "fmt-check")
+    assert not justfile.reaches("other", "fmt-check")
 
 
 def test_alias_to_nothing_is_missing() -> None:
@@ -131,6 +143,7 @@ def test_dependencies_are_reached_through_other_recipes() -> None:
 def test_dependency_through_an_alias() -> None:
     justfile = Justfile({"a": ("x",), "b": ()}, {"x": "b"}, frozenset())
     assert justfile.reached("a") == {"b"}
+    assert justfile.resolve("missing") == frozenset()
     assert justfile.reaches("a", "x")
     assert not justfile.reaches("missing", "b")
 

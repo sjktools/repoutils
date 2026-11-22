@@ -93,6 +93,8 @@ def test_bump_dev(cwd: Path, capsys: pytest.CaptureFixture[str]) -> None:
     [
         (["patch", "--dev", "-1"], "isn't a dev number"),
         (["patch", "--dev", "x"], "isn't a dev number"),
+        # Arabic-Indic digits, which int() would take.
+        (["patch", "--dev", "\u0661\u0662"], "isn't a dev number"),
         (["patch", "--dev", "1", "--pr"], "--dev can't be used with --pr"),
     ],
 )

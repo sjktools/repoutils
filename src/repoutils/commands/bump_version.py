@@ -206,7 +206,7 @@ def bump_pr(root: Path, repo: str, token: str, level: str, auto_merge: str | Non
 
 
 def _dev_number(text: str) -> int:
-    if not text.isdigit():
+    if not text.isascii() or not text.isdigit():
         raise argparse.ArgumentTypeError(f"{text!r} isn't a dev number of decimal digits")
     return int(text)
 

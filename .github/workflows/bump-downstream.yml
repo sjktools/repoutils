@@ -102,8 +102,8 @@ jobs:
       # A release's Publish run's head branch is the tag it ran on,
       # v<version>. A Publish run started by hand published a dev version of
       # the next patch release of the commit it ran on, numbered by its run
-      # ID, with `repoutils bump-version patch --dev`, which the action works
-      # out with the same code.
+      # ID, with `repoutils bump-version patch --dev <run ID>`, which the
+      # action works out with the same code.
       - name: Plan
         id: plan
         uses: $/.github/actions/downstream-plan

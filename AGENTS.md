@@ -214,7 +214,7 @@ That secret lives in the main-only `downstream` environment, and needs Contents 
 It also needs Workflows write on each downstream where the PR changes a file in `.github/workflows`, such as a workflow or `actions.lock` that uses repoutils' actions.
 
 `bump-downstream.yml` also makes a test run when a Publish run that someone started by hand on `main` succeeds, with the dev version that the run published to TestPyPI.
-Its plan job works out that version with `repoutils downstream plan`, which shares its code with the `repoutils bump-version patch --dev` that Publish's `Set dev version` step runs.
+Its plan job works out that version with `repoutils downstream plan`, which shares its code with the `repoutils bump-version patch --dev <run ID>` that Publish's `Set dev version` step runs.
 A test run moves each `uses:` of repoutils' actions to the commit that Publish ran on, and opens draft test PRs.
 It makes no test run for a Publish run on another branch, as the downstream's CI would run that branch's unreviewed code with the downstream's secrets.
 Its `finish` job runs the `downstream-finish` action, in the `downstream` environment, once for each downstream.

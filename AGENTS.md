@@ -214,6 +214,7 @@ It moves the `uses:` again itself.
 Before it commits `actions.lock`, it checks the file with `gh actions-lock --verify`, and checks that no other action's commit changed.
 That secret lives in the main-only `downstream` environment, and needs Contents and Pull requests write on each downstream.
 It also needs Workflows write on each downstream where the PR changes a file in `.github/workflows`, such as a workflow or `actions.lock` that uses repoutils' actions.
+For test runs, it also needs Actions write, so that `downstream finish` can re-run failed jobs.
 
 `bump-downstream.yml` also makes a test run when a Publish run that someone started by hand on `main` succeeds, with the dev version that the run published to TestPyPI.
 Its plan job works out that version with `repoutils downstream plan`, which shares its code with the `repoutils bump-version patch --dev <run ID>` that Publish's `Set dev version` step runs.
@@ -223,7 +224,8 @@ Its `finish` job runs the `downstream-finish` action, in the `downstream` enviro
 The action runs `repoutils downstream finish`, which waits for the test PR's checks, then:
 
 - closes the PR and deletes its branch if they all pass.
-- leaves the PR open and fails if any fails.
+- re-runs the failed jobs up to `--retries` times (default `1`) and waits again, if only GitHub Actions jobs failed and time is left of the `--timeout` that the re-runs share with the first wait.
+- leaves the PR open and fails if any still fails.
 
 So a test run succeeds only if it closed every test PR.
 

@@ -229,7 +229,7 @@ That run publishes a dev version of `main` to TestPyPI.
 - The test run bumps each downstream project to that dev version, with the same `plan`, `bump` and `push` jobs, and opens a draft test pull request.
   It moves the `uses:` of the actions of this repository to the commit that Publish ran on.
 - The `finish` job then runs the `downstream-finish` action once for each downstream project, in the same environment as the `push` job.
-  The action runs `downstream finish`, which closes the test pull request if all its checks pass, and leaves it open if any check fails.
+  The action runs `downstream finish`, which closes the test pull request if all its checks pass, and leaves it open if any check still fails after a re-run.
 - The test run succeeds only if it closes every test pull request.
 - The workflow makes no test run for a Publish run on another branch.
   The test pull request comes from a branch of the downstream repository, so the CI of the downstream project would run the unreviewed code of that branch with the secrets of the downstream project.
@@ -247,10 +247,15 @@ That run publishes a dev version of `main` to TestPyPI.
   It decides only when two reads in a row find the same finished checks, because a workflow can add its check after the checks of another workflow finish.
 - A required check that names an app counts only as a check run from that app, because the API does not say which app posted a commit status.
 - If all the checks pass, it comments on the pull request, closes it without merging it, and deletes its branch.
-- If any check fails, it leaves the pull request open, lists the checks that failed, and exits with code `1`.
+- If only GitHub Actions jobs fail, it re-runs the failed jobs of their workflow runs, and waits for the checks again.
+  It does this once, or `--retries` times (from `0` to `9`), because a check can fail for a short-lived reason, such as a TestPyPI server that does not yet list the dev version.
+  It re-runs nothing if a commit status or a check run of another app fails, because the pull request cannot pass then.
+  The re-runs count toward the same `--timeout`, so a re-run gets only the time that is left, and it re-runs nothing once no time is left.
+- If any check still fails, it leaves the pull request open, lists the checks that failed, and exits with code `1`.
 - It fails if the checks do not finish within `--timeout` seconds (default `3600`).
   It reads the checks every `--interval` seconds (default `30`).
 - Its token needs the Contents `write` and Pull requests `write` permissions on the downstream repository.
+  To re-run failed jobs, it also needs the Actions `write` permission, and without it the command prints a warning and leaves the pull request open.
   It reads the checks and the rules with the same token, so the downstream repository must be public, or the token must also be able to read them.
 
 `downstream bump` runs in a checkout of the upstream project, and changes the downstream checkout that `--directory` names:
@@ -324,6 +329,7 @@ To set up the same workflow for another package:
 4. Set the `DOWNSTREAM_REPOS` variable.
 5. Create a `downstream` environment that only the default branch can deploy to, and store the `DOWNSTREAM_TOKEN` secret in it.
    The token needs the Contents `write` and Pull requests `write` permissions on each downstream repository.
+   For a test run, it also needs the Actions `write` permission, so that `downstream finish` can re-run failed jobs.
    It also needs the Workflows `write` permission on each downstream repository where the pull request changes a file in `.github/workflows`, such as a workflow or `actions.lock` that uses the actions of the package.
    A fine-grained token has one resource owner, so downstream repositories of a second owner need a second token.
    For each owner, use a copy of the workflow with its own variable, environment and token.

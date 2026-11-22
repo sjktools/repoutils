@@ -1,0 +1,72 @@
+name: Resolve a PR Fixes run
+description: >-
+  Checks a finished PR Fixes run and finds its pull request, with
+  `repoutils autofix resolve`, for the resolve job of a PR Fixes Push workflow.
+
+# Runs repoutils from this action's own commit, with the runner's python3,
+# installing nothing, so the job needs no checkout. Run it on the default
+# branch, in a job with actions read and pull-requests read. The fix workflow
+# must be fix.yml, with the run-name "PR Fixes #<number>" or "PR Fixes", and
+# the push workflow fix-push.yml, with the run-name "PR Fixes Push for run
+# <fix run ID>" and the job that pushes named push.
+#
+# Each output is set as soon as it's known, so a check that fails keeps the
+# outputs before it, for a report job to say which pull request failed.
+inputs:
+  run-id:
+    description: The ID of the PR Fixes run.
+    required: true
+  token:
+    description: The token to read the run and the pull request with.
+    required: false
+    default: ${{ github.token }}
+outputs:
+  run_id:
+    description: The fix run's ID.
+    value: ${{ steps.resolve.outputs.run_id }}
+  pr_number:
+    description: The pull request number the fix run's name gives, or empty if it gives none.
+    value: ${{ steps.resolve.outputs.pr_number }}
+  branch:
+    description: The branch the fix run ran on.
+    value: ${{ steps.resolve.outputs.branch }}
+  start_sha:
+    description: The commit the fix run started from.
+    value: ${{ steps.resolve.outputs.start_sha }}
+  conclusion:
+    description: The fix run's conclusion.
+    value: ${{ steps.resolve.outputs.conclusion }}
+  url:
+    description: The fix run's page.
+    value: ${{ steps.resolve.outputs.url }}
+  number:
+    description: The pull request's number.
+    value: ${{ steps.resolve.outputs.number }}
+  head_sha:
+    description: The pull request's head commit.
+    value: ${{ steps.resolve.outputs.head_sha }}
+  base:
+    description: The pull request's base branch.
+    value: ${{ steps.resolve.outputs.base }}
+  fixes:
+    description: >-
+      true if the fix run succeeded and uploaded a bundle to push, false if it
+      found nothing to push or another push run already pushed it, and empty if
+      the fix run didn't succeed.
+    value: ${{ steps.resolve.outputs.fixes }}
+  already_pushed:
+    description: true if another push run already pushed the fixes, false if not, and empty if the fix run didn't succeed.
+    value: ${{ steps.resolve.outputs.already_pushed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the fix run
+      id: resolve
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        RUN_ID: ${{ inputs.run-id }}
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+        PYTHONSAFEPATH: "1"
+      run: python3 -m repoutils autofix resolve --run-id "$RUN_ID" >> "$GITHUB_OUTPUT"

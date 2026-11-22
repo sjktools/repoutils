@@ -1,0 +1,43 @@
+name: Check a PR Fixes run's branch
+description: >-
+  Checks that a PR Fixes run is on a pull request's branch, at the expected
+  commit, and gives the pull request's base branch, with
+  `repoutils autofix check-branch`.
+
+# The first step of a PR Fixes workflow's job. It runs repoutils from this
+# action's own commit, with the runner's python3, installing nothing, so it
+# needs no checkout. The job needs pull-requests read. The push workflow
+# checks the run again and trusts nothing it does, so this only fails early,
+# with a clearer message.
+inputs:
+  head-sha:
+    description: The commit the branch must be at (optional).
+    required: false
+    default: ""
+  pr-number:
+    description: The pull request (optional), needed only when the branch has more than one open pull request.
+    required: false
+    default: ""
+  token:
+    description: The token to read the pull request with.
+    required: false
+    default: ${{ github.token }}
+outputs:
+  base_branch:
+    description: The pull request's base branch.
+    value: ${{ steps.check.outputs.base_branch }}
+
+runs:
+  using: composite
+  steps:
+    - name: Find the branch's pull request
+      id: check
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+        PYTHONSAFEPATH: "1"
+      run: |
+        python3 -m repoutils autofix check-branch --head-sha "$HEAD_SHA" --pr-number "$PR_NUMBER" >> "$GITHUB_OUTPUT"

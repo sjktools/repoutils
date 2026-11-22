@@ -40,6 +40,8 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
 - `src/repoutils/uv_bump.py` is `dependabot-uv bump`'s changes to the files that `check-pins` checks, and its re-lock of `uv.lock`, kept apart from the command for length.
   It changes them only if `check-pins` passes, before and after, and puts them back if re-locking fails.
 - `src/repoutils/locked_actions.py` is `check-pins`' check that the actions in `actions.lock` from a locked package's repository are at the commit in that package's `build_info.json`, kept apart from the command for length.
+- `src/repoutils/autofix_runs.py` is `autofix resolve` and `autofix check-branch`, the checks that `fix-push.yml` and `fix.yml` make of a fix run and its PR, kept apart from the command for length.
+  The `autofix-resolve` and `autofix-check` actions run them.
 - `src/repoutils/pull_request.py` commits a change to a new branch, pushes it and opens a PR, for `bump --pr` in `dependabot-uv`, `downstream` and `github-releases`.
 - `src/repoutils/downstream_pins.py` holds `downstream bump`'s changes to a downstream's pins and its re-lock, kept apart from the command for length.
   It also adds a `[tool.uv.sources]` entry that takes a dev version (a test build) from TestPyPI.
@@ -176,6 +178,7 @@ On `main`, that would reach the jobs that publish, tag or bump a release, which 
 `AUTOFIX_TOKEN` lives in the `autofix` environment, which only `main` can deploy to, as with `release`.
 It needs Workflows write as well as Contents write, as a fix may change `actions.lock`.
 So only `fix-push.yml`'s path rule keeps a bundle from changing the workflows themselves.
+`fix.yml` checks its own run with the `autofix-check` action, and `fix-push.yml`'s `resolve` job checks the fix run with the `autofix-resolve` action.
 `repoutils autofix <PR>` starts a fix run as the comment does, for a client that can't post the comment, such as Claude Code on the web, whose comments get a footer.
 It finds the push run that GitHub starts by `fix-push.yml`'s run name, which names the fix run, so keep the command and the workflow in step.
 If the fix run was started by `github-actions[bot]`, or no push run appears within two minutes, the command starts `fix-push.yml` on `main` itself.

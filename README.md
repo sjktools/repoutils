@@ -40,7 +40,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `ruff-check` | Runs `ruff check --no-cache` with the arguments you give it, and fails if `ruff` fails or gives any warning, such as for an invalid `noqa` directive, which `ruff` only warns about. It runs the `ruff` on `PATH`, such as the one in the dev dependency group of the project under `uv run`. |
 | `check-pins` | Fails unless every `setup-uv` and `setup-just` workflow step pins the versions required by `pyproject.toml` and the justfile, and the actions that the project uses from the repository of a locked package that is installed come from the commit of that package, or only from the tag of its version if the package does not record its commit (see [Checking actions against a locked package](#checking-actions-against-a-locked-package)). |
 | `check-checkout-credentials` | Fails on any `actions/checkout` step that does not set `persist-credentials`. |
-| `autofix` | Starts the PR Fixes workflow on a pull request, waits for the workflow that pushes its fixes, and prints the new head commit of the branch. |
+| `autofix` | Starts the PR Fixes workflow on a pull request, waits for the workflow that pushes its fixes, and prints the new head commit of the branch. `autofix resolve` and `autofix check-branch` make the checks of the two workflows (see [Running PR Fixes with a command](#running-pr-fixes-with-a-command)). |
 | `push-bundle` | Fetches the head of a Git bundle, checks that it adds commits to a start commit and, optionally, that it changes only the paths you allow, and pushes it to a branch with a lease on the start commit (see [Pushing a Git bundle](#pushing-a-git-bundle)). |
 | `claude-route` | Reads a comment from standard input and prints `review`, `other` or `none` to route between the Claude workflows. |
 | `requirements-min-versions` | Checks or updates the `>=` minimum versions in `pyproject.toml` to match the versions in `uv.lock`. |
@@ -344,6 +344,30 @@ For example, Claude Code on the web adds a footer to each comment that it posts.
 The command does not push, so its token needs only the Actions `write` and Pull requests `read` permissions.
 `--workflow` and `--push-workflow` name other workflow files, which must work as these two do.
 The command fails if either run fails, or if the fixes are not pushed within `--timeout` minutes (default `45`).
+
+The two workflows check the fix run and its pull request with two subcommands, which the `autofix-check` and `autofix-resolve` composite actions run from their own commit with the `python3` of the runner:
+
+- `repoutils autofix check-branch` is the first step of `fix.yml`.
+  It fails unless the run is on a branch other than the default branch, at `--head-sha` if given.
+  It then finds the pull request, with `--pr-number` if given, and prints its base branch as `base_branch`.
+- `repoutils autofix resolve --run-id <run ID>` is the `resolve` job of `fix-push.yml`.
+  It fails unless the run is a finished `workflow_dispatch` run of `fix.yml` on a branch of the repository other than the default branch.
+  It finds the pull request, even if the run failed, so that the `report` job can comment on it.
+  If the run succeeded, it fails if the branch moved on from the commit where the run started, unless another `fix-push.yml` run for the same fix run already pushed the fixes.
+  It prints `run_id`, `pr_number`, `branch`, `start_sha`, `conclusion`, `url`, `number`, `head_sha` and `base`.
+  If the run succeeded, it also prints `fixes` and `already_pushed`.
+
+Both subcommands print their outputs as `name=value` lines, for `$GITHUB_OUTPUT`.
+Both find the pull request in the same way.
+With a pull request number, the pull request must be open, and come from the branch in the same repository.
+Without a number, the branch must have exactly one open pull request from the same repository, counted over every page of results.
+
+A project that uses these actions must keep these names:
+
+- The workflow files are `fix.yml` and `fix-push.yml`, and their workflow names are `PR Fixes` and `PR Fixes Push`.
+- The run name of `fix.yml` is `PR Fixes #<number>`, or `PR Fixes` without a number.
+- The run name of `fix-push.yml` is `PR Fixes Push for run <fix run ID>`, and its job that pushes the fixes is `push`.
+- The artifact that holds the bundle is `fixes`.
 
 ### Pushing a Git bundle
 

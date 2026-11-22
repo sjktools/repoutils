@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from repoutils import github, workflow_summaries
+from repoutils import autofix_runs, github, workflow_summaries
 from repoutils.commands import autofix
 
 API = github.API_URL
@@ -196,7 +196,7 @@ def test_failed_push_run(
 def test_find_push_run_reads_every_page_since_the_fix_run(monkeypatch: pytest.MonkeyPatch) -> None:
     since = f"{REPO}/actions/workflows/fix-push.yml/runs?per_page=100&created=%3E%3D2026-11-20T22%3A00%3A00Z"
     pages = {
-        f"{since}&page=1": [{"id": n, "display_title": "other"} for n in range(autofix.PER_PAGE)],
+        f"{since}&page=1": [{"id": n, "display_title": "other"} for n in range(autofix_runs.PER_PAGE)],
         f"{since}&page=2": [_push_run()],
     }
 
@@ -229,7 +229,7 @@ def test_times_out(monkeypatch: pytest.MonkeyPatch, slept: list[float]) -> None:
 @pytest.mark.parametrize(
     ("pr", "message"),
     [
-        (_pr(state="closed"), "pull request #5 is not open"),
+        (_pr(state="closed"), "Pull request #5 is not open"),
         (_pr(head={"ref": "feature", "sha": "aaa", "repo": {"id": 2}}), "is from a fork"),
         (_pr(head={"ref": "feature", "sha": "aaa", "repo": None}), "is from a fork"),
         (_pr(head={"ref": "main", "sha": "aaa", "repo": {"id": 1}}), "branch is main"),

@@ -198,8 +198,12 @@ def autofix(
         )
     except OSError:
         # A failed poll or a timeout says nothing about the report job, which
-        # may have commented already.
-        progress.reported = report_succeeded(repo, push_run_id, token)
+        # may have commented already. If this fails too, the wait's error is
+        # still the one to show.
+        try:
+            progress.reported = report_succeeded(repo, push_run_id, token)
+        except OSError:
+            pass
         raise
     pushed = push_run.get("conclusion") == "success"
     if not fixed or not pushed:

@@ -48,7 +48,6 @@ from repoutils.docstrings import summary
 
 FIX_WORKFLOW = autofix_runs.FIX_WORKFLOW
 PUSH_WORKFLOW = autofix_runs.PUSH_WORKFLOW
-FIXES_ARTIFACT = autofix_runs.FIXES_ARTIFACT
 push_run_name = autofix_runs.push_run_name
 # How long to wait for GitHub to start the push run before starting it here.
 PUSH_GRACE = 120.0
@@ -257,8 +256,7 @@ def push_relock(
         print(f"Relocking actions.lock didn't succeed: {progress.relock_url}", file=sys.stderr)
         progress.relock = f"/autofix tried to relock `actions.lock` first, but [that failed]({progress.relock_url}).\n"
         return
-    artifacts = workflow_summaries.artifacts(repo, relock_run, token, FIXES_ARTIFACT)
-    if not any(artifact["name"] == FIXES_ARTIFACT for artifact in artifacts):
+    if autofix_runs.relock_artifact(repo, relock_run, token) is None:
         print(f"Relocking actions.lock changed nothing: {progress.relock_url}", file=sys.stderr)
         progress.relock = (
             f"/autofix tried to relock `actions.lock` first, but [that changed nothing]({progress.relock_url}).\n"
@@ -413,14 +411,16 @@ def _resolve_parser() -> argparse.ArgumentParser:
         "for the PR Fixes Push workflow.",
         epilog="Prints kind (fix or relock), run_id, pr_number, branch, start_sha, conclusion, url, number, "
         "head_sha and base, "
-        "then, if the run succeeded, fixes and already_pushed, as name=value lines for $GITHUB_OUTPUT. "
+        "then, if the run succeeded, fixes, already_pushed and artifact (the bundle's artifact, if any), "
+        "as name=value lines for $GITHUB_OUTPUT. "
         "Each is printed once known, so a failed check keeps the lines before it. "
         "Fails if the run isn't a finished workflow_dispatch run of the fix workflow on a branch of this "
         "repository other than the default, if its pull request can't be found, "
         "or if the run succeeded but the branch has moved on and no other push run pushed its fixes. "
         "A relock run is an issue_comment run of the relock workflow on the default branch, "
         "named 'Comment on #<pull request>', whose relock job has finished. "
-        "Its start_sha is the pull request's head, as the push checks the bundle builds on it. "
+        "Its start_sha is the commit its artifact's name gives, fixes-<commit>, "
+        "or without an artifact, the pull request's head. "
         "Run it on the default branch: it fails if $GITHUB_REF is another ref. "
         "Uses $GITHUB_TOKEN, defaulting to `gh auth token`, which needs Actions read and Pull requests read.",
     )
@@ -470,7 +470,8 @@ def _autofix_parser() -> argparse.ArgumentParser:
         "the push workflow's run-name must be 'PR Fixes Push for run <fix run ID>'. "
         "With --relock, it exits 0 if GitHub refuses to start the fix workflow for actions.lock, "
         "and a later job's --relocked pushes the relock: "
-        "the relock job must be named relock, and upload its commit as a bundle in the artifact fixes. "
+        "the relock job must be named relock, and upload its commit as fixes.bundle in the artifact "
+        "fixes-<the commit it relocked>. "
         "`repoutils autofix resolve` and `repoutils autofix check-branch` are the checks the two workflows make "
         "(see their --help).",
     )

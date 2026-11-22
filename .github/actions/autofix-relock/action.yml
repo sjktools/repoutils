@@ -14,8 +14,11 @@ description: >-
 # commit, and restores no cache.
 #
 # The bundle holds one commit on head-sha that changes only actions.lock, which
-# fix-push.yml checks before it pushes. If gh actions-lock changes nothing, it
-# uploads nothing, and the relocked output is false.
+# fix-push.yml checks before it pushes. Its artifact is named
+# fixes-<head-sha>, which is where fix-push.yml reads the commit the bundle
+# builds on, as the run's own commit is the default branch's. If
+# gh actions-lock changes nothing, it uploads nothing, and the relocked output
+# is false.
 inputs:
   head-sha:
     description: The pull request's head commit, to relock.
@@ -51,6 +54,10 @@ runs:
       env:
         HEAD_SHA: ${{ inputs.head-sha }}
       run: |
+        if [[ ! $HEAD_SHA =~ ^[0-9a-f]{40}$ ]]; then
+          echo "::error::head-sha must be a full commit hash, not $HEAD_SHA."
+          exit 1
+        fi
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add .github/workflows/actions.lock
@@ -67,7 +74,7 @@ runs:
       if: steps.commit.outputs.relocked == 'true'
       uses: actions/upload-artifact@v7.0.2
       with:
-        name: fixes
+        name: fixes-${{ inputs.head-sha }}
         path: ${{ runner.temp }}/fixes.bundle
         retention-days: 1
         if-no-files-found: error

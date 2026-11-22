@@ -395,7 +395,7 @@ In `autofix-comment.yml`, the `dispatch` job runs the command with `--relock`.
 If GitHub refuses to start `fix.yml` for this error, the `relock` job runs the `autofix-relock` composite action:
 
 - The action checks out the head commit of the pull request, and runs `gh actions-lock` with the read-only `GITHUB_TOKEN` of the job.
-- It commits `actions.lock`, and uploads the commit as a Git bundle in the `fixes` artifact.
+- It commits `actions.lock`, and uploads the commit as a Git bundle in the `fixes-<head commit>` artifact.
 - The job has no secrets and only the Contents `read` permission, and runs no code from the branch.
   `gh actions-lock` only reads the workflow files, and reads the actions that they use through the API.
 
@@ -423,10 +423,12 @@ The two workflows check the fix run and its pull request with two subcommands, w
   It finds the pull request, even if the run failed, so that the `report` job can comment on it.
   If the run succeeded, it fails if the branch moved on from the commit where the run started, unless another `fix-push.yml` run for the same fix run already pushed the fixes.
   It prints `kind` (`fix` or `relock`), `run_id`, `pr_number`, `branch`, `start_sha`, `conclusion`, `url`, `number`, `head_sha` and `base`.
-  If the run succeeded, it also prints `fixes` and `already_pushed`.
+  If the run succeeded, it also prints `fixes`, `already_pushed` and `artifact`, the name of the artifact with the bundle to push.
 - A relock run is an `issue_comment` run of `autofix-comment.yml` (`--relock-workflow`) on the default branch, with the run name `Comment on #<pull request>`.
   Its `relock` job must have finished, though the run itself has not.
-  Its `conclusion` and `url` are those of the `relock` job, and its `start_sha` is the head commit of the pull request.
+  Its `conclusion` and `url` are those of the `relock` job.
+  Its `start_sha` is the commit in the name of its `fixes-<commit>` artifact, because the head commit of the run is on the default branch.
+  Without that artifact, it is the head commit of the pull request.
 
 Both subcommands print their outputs as `name=value` lines, for `$GITHUB_OUTPUT`.
 Both find the pull request in the same way.

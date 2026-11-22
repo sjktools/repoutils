@@ -12,6 +12,8 @@ FIX_WORKFLOW = f"{REPO}/actions/workflows/fix.yml"
 RELOCK_WORKFLOW = f"{REPO}/actions/workflows/autofix-comment.yml"
 JOBS = f"{RUN}/jobs?per_page=100"
 JOB_PAGE = "https://github.com/o/r/actions/runs/7/job/70"
+RELOCKED = "c" * 40
+RELOCK_ARTIFACT = f"fixes-{RELOCKED}"
 PUSH_RUNS = f"{REPO}/actions/workflows/fix-push.yml/runs?per_page=100&created=%3E%3D2026-11-22T06%3A00%3A00Z&page=1"
 ARTIFACTS = f"{RUN}/artifacts?per_page=100&page=1"
 OPEN_PRS = f"{REPO}/pulls?state=open&head=o%3Afeature&per_page=100&page=1"
@@ -116,7 +118,7 @@ def test_resolve_finds_the_fixes(monkeypatch: pytest.MonkeyPatch, outputs: list[
         {RUN: _run(), f"{REPO}/pulls/5": _pr(), ARTIFACTS: {"artifacts": [{"name": "fixes", "expired": False}]}},
     )
     _resolve(outputs)
-    assert outputs == [*RUN_OUTPUTS, *PR_OUTPUTS, ("fixes", "true"), ("already_pushed", "false")]
+    assert outputs == [*RUN_OUTPUTS, *PR_OUTPUTS, ("fixes", "true"), ("already_pushed", "false"), ("artifact", "fixes")]
 
 
 def test_resolve_finds_nothing_to_push(
@@ -124,7 +126,7 @@ def test_resolve_finds_nothing_to_push(
 ) -> None:
     _install(monkeypatch, {RUN: _run(), f"{REPO}/pulls/5": _pr(), ARTIFACTS: {"artifacts": []}})
     _resolve(outputs)
-    assert outputs[-2:] == [("fixes", "false"), ("already_pushed", "false")]
+    assert outputs[-3:] == [("fixes", "false"), ("already_pushed", "false"), ("artifact", "")]
     assert capsys.readouterr().err == "PR Fixes found nothing to push to feature.\n"
 
 
@@ -183,7 +185,7 @@ def test_resolve_finds_another_run_pushed(
         },
     )
     _resolve(outputs)
-    assert outputs[-2:] == [("fixes", "false"), ("already_pushed", "true")]
+    assert outputs[-3:] == [("fixes", "false"), ("already_pushed", "true"), ("artifact", "")]
     assert capsys.readouterr().err == "Run 12 already pushed PR Fixes run 7's fixes to feature.\n"
 
 
@@ -252,16 +254,25 @@ def _relock_jobs(conclusion: str | None = "success", status: str = "completed") 
     }
 
 
-RELOCK_OUTPUTS = [
-    ("kind", "relock"),
-    ("run_id", "7"),
-    ("pr_number", "5"),
-    ("branch", "feature"),
-    ("start_sha", "aaa"),
-    ("conclusion", "success"),
-    ("url", JOB_PAGE),
-    *PR_OUTPUTS,
-]
+def _relock_outputs(
+    start_sha: str = RELOCKED, head_sha: str = RELOCKED, conclusion: str = "success"
+) -> list[tuple[str, str]]:
+    return [
+        ("kind", "relock"),
+        ("run_id", "7"),
+        ("pr_number", "5"),
+        ("branch", "feature"),
+        ("start_sha", start_sha),
+        ("conclusion", conclusion),
+        ("url", JOB_PAGE),
+        ("number", "5"),
+        ("head_sha", head_sha),
+        ("base", "main"),
+    ]
+
+
+def _at(sha: str) -> dict[str, Any]:
+    return _pr(head={"ref": "feature", "sha": sha, "repo": {"id": 1}})
 
 
 def test_resolve_finds_a_relock(monkeypatch: pytest.MonkeyPatch, outputs: list[tuple[str, str]]) -> None:
@@ -270,12 +281,78 @@ def test_resolve_finds_a_relock(monkeypatch: pytest.MonkeyPatch, outputs: list[t
         {
             RUN: _relock_run(),
             JOBS: _relock_jobs(),
-            f"{REPO}/pulls/5": _pr(),
-            ARTIFACTS: {"artifacts": [{"name": "fixes", "expired": False}]},
+            f"{REPO}/pulls/5": _at(RELOCKED),
+            ARTIFACTS: {"artifacts": [{"name": RELOCK_ARTIFACT, "expired": False}]},
         },
     )
     _resolve(outputs)
-    assert outputs == [*RELOCK_OUTPUTS, ("fixes", "true"), ("already_pushed", "false")]
+    assert outputs == [
+        *_relock_outputs(),
+        ("fixes", "true"),
+        ("already_pushed", "false"),
+        ("artifact", RELOCK_ARTIFACT),
+    ]
+
+
+def test_resolve_refuses_a_relock_the_branch_moved_on_from(
+    monkeypatch: pytest.MonkeyPatch, outputs: list[tuple[str, str]]
+) -> None:
+    _install(
+        monkeypatch,
+        {
+            RUN: _relock_run(),
+            JOBS: _relock_jobs(),
+            f"{REPO}/pulls/5": _at("bbb"),
+            ARTIFACTS: {"artifacts": [{"name": RELOCK_ARTIFACT}]},
+            PUSH_RUNS: {"workflow_runs": []},
+        },
+    )
+    with pytest.raises(ValueError, match=f"Branch feature is at bbb, not {RELOCKED}, where relock started"):
+        _resolve(outputs)
+    assert outputs == _relock_outputs(head_sha="bbb")
+
+
+def test_resolve_finds_another_run_pushed_the_relock(
+    monkeypatch: pytest.MonkeyPatch, outputs: list[tuple[str, str]], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _install(
+        monkeypatch,
+        {
+            RUN: _relock_run(),
+            JOBS: _relock_jobs(),
+            f"{REPO}/pulls/5": _at("rrr"),
+            ARTIFACTS: {"artifacts": [{"name": RELOCK_ARTIFACT}]},
+            PUSH_RUNS: {"workflow_runs": [{"id": 12, "display_title": autofix_runs.push_run_name(7)}]},
+            f"{REPO}/actions/runs/12/jobs?per_page=100": {"jobs": [{"name": "push", "conclusion": "success"}]},
+        },
+    )
+    _resolve(outputs)
+    assert outputs[-3:] == [("fixes", "false"), ("already_pushed", "true"), ("artifact", "")]
+    assert capsys.readouterr().err == "Run 12 already pushed relock run 7's fixes to feature.\n"
+
+
+@pytest.mark.parametrize(
+    ("names", "message"),
+    [
+        ([RELOCK_ARTIFACT, f"fixes-{'d' * 40}"], "Run 7 has 2 artifacts named fixes-\\*, not one"),
+        (["fixes-main"], "Run 7's artifact fixes-main doesn't name a commit"),
+        ([f"fixes-{'C' * 40}"], "doesn't name a commit"),
+    ],
+)
+def test_resolve_refuses_a_relock_artifact(
+    monkeypatch: pytest.MonkeyPatch, outputs: list[tuple[str, str]], names: list[str], message: str
+) -> None:
+    _install(
+        monkeypatch,
+        {
+            RUN: _relock_run(),
+            JOBS: _relock_jobs(),
+            f"{REPO}/pulls/5": _at(RELOCKED),
+            ARTIFACTS: {"artifacts": [{"name": name} for name in names]},
+        },
+    )
+    with pytest.raises(ValueError, match=message):
+        _resolve(outputs)
 
 
 def test_resolve_finds_a_relock_that_changed_nothing(
@@ -286,7 +363,12 @@ def test_resolve_finds_a_relock_that_changed_nothing(
         {RUN: _relock_run(), JOBS: _relock_jobs(), f"{REPO}/pulls/5": _pr(), ARTIFACTS: {"artifacts": []}},
     )
     _resolve(outputs)
-    assert outputs[-2:] == [("fixes", "false"), ("already_pushed", "false")]
+    assert outputs == [
+        *_relock_outputs("aaa", "aaa"),
+        ("fixes", "false"),
+        ("already_pushed", "false"),
+        ("artifact", ""),
+    ]
     assert capsys.readouterr().err == "Relocking actions.lock found nothing to push to feature.\n"
 
 
@@ -295,7 +377,7 @@ def test_resolve_of_a_failed_relock_only_finds_the_pr(
 ) -> None:
     _install(monkeypatch, {RUN: _relock_run(), JOBS: _relock_jobs("failure"), f"{REPO}/pulls/5": _pr()})
     _resolve(outputs)
-    assert outputs == [(name, "failure" if name == "conclusion" else value) for name, value in RELOCK_OUTPUTS]
+    assert outputs == _relock_outputs("aaa", "aaa", "failure")
 
 
 @pytest.mark.parametrize(

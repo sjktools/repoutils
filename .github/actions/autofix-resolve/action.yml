@@ -59,6 +59,9 @@ outputs:
       found nothing to push or another push run already pushed it, and empty if
       the fix run didn't succeed.
     value: ${{ steps.resolve.outputs.fixes }}
+  artifact:
+    description: The artifact that holds the bundle to push (fixes, or a relock run's fixes-<commit>), or empty if there's none.
+    value: ${{ steps.resolve.outputs.artifact }}
   already_pushed:
     description: true if another push run already pushed the fixes, false if not, and empty if the fix run didn't succeed.
     value: ${{ steps.resolve.outputs.already_pushed }}

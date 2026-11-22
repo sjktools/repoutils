@@ -29,8 +29,12 @@ _FIX_RUN_NAME_WITH_NUMBER = re.compile(r"PR Fixes #([0-9]+)")
 _RELOCK_RUN_NAME = re.compile(r"Comment on #([0-9]+)")
 # autofix-comment.yml's job that relocks actions.lock.
 RELOCK_JOB = "relock"
-# The artifact that holds the bundle, from fix.yml or the relock job.
+# fix.yml's artifact, which holds the bundle.
 FIXES_ARTIFACT = "fixes"
+# The relock job's artifact is this and the commit it relocked: the run is on
+# the default branch, so its own head commit isn't the one the bundle builds on.
+RELOCK_ARTIFACT_PREFIX = "fixes-"
+_COMMIT = re.compile(r"[0-9a-f]{40}")
 # fix-push.yml's job that pushes the bundle.
 PUSH_JOB = "push"
 PER_PAGE = 100
@@ -195,7 +199,15 @@ def resolve(
     if (run.get("head_repository") or {}).get("id") != run["repository"]["id"]:
         raise ValueError(f"Run {run_id} ran on {(run.get('head_repository') or {}).get('full_name')}, not {repo}.")
     if kind == "relock":
-        _resolve_relock(repo, run, token, default_branch=default_branch, output=output)
+        _resolve_relock(
+            repo,
+            run,
+            token,
+            default_branch=default_branch,
+            this_run=this_run,
+            push_workflow=push_workflow,
+            output=output,
+        )
     else:
         _resolve_fix(
             repo,
@@ -255,28 +267,76 @@ def _resolve_fix(
     if conclusion != "success":
         return
 
-    if head_sha != start_sha:
-        # Another push run for this fix run may have pushed its fixes already.
-        # That's not a failure, and the other run reports it.
-        other = _already_pushed(repo, push_workflow, run, this_run, token)
-        if other is None:
-            raise ValueError(
-                f"Branch {branch} is at {head_sha}, not {start_sha}, where PR Fixes started; "
-                "it has moved on, so run PR Fixes again."
-            )
-        print(f"Run {other} already pushed PR Fixes run {run_id}'s fixes to {branch}.", file=sys.stderr)
-        output("fixes", "false")
-        output("already_pushed", "true")
+    if _moved_on(
+        repo,
+        run,
+        token,
+        branch=branch,
+        start_sha=start_sha,
+        head_sha=head_sha,
+        what="PR Fixes",
+        this_run=this_run,
+        push_workflow=push_workflow,
+        output=output,
+    ):
         return
-    _output_fixes(repo, run_id, token, f"PR Fixes found nothing to push to {branch}.", output)
+    artifacts = workflow_summaries.artifacts(repo, run_id, token, FIXES_ARTIFACT)
+    if any(artifact["name"] == FIXES_ARTIFACT for artifact in artifacts):
+        _output_fixes(FIXES_ARTIFACT, output)
+    else:
+        print(f"PR Fixes found nothing to push to {branch}.", file=sys.stderr)
+        _output_fixes("", output)
 
 
-def _resolve_relock(repo: str, run: dict[str, Any], token: str, *, default_branch: str, output: Output) -> None:
+def _moved_on(
+    repo: str,
+    run: dict[str, Any],
+    token: str,
+    *,
+    branch: str,
+    start_sha: str,
+    head_sha: str,
+    what: str,
+    this_run: str | None,
+    push_workflow: str,
+    output: Output,
+) -> bool:
+    """Whether another push run already pushed what run made, which
+    started from start_sha, as the branch is now at head_sha. Outputs that
+    if so. Raises ValueError if the branch has moved on and nothing pushed."""
+    if head_sha == start_sha:
+        return False
+    # Another push run for this run may have pushed already. That's not a
+    # failure, and the other run reports it.
+    other = _already_pushed(repo, push_workflow, run, this_run, token)
+    if other is None:
+        raise ValueError(
+            f"Branch {branch} is at {head_sha}, not {start_sha}, where {what} started; "
+            "it has moved on, so run PR Fixes again."
+        )
+    print(f"Run {other} already pushed {what} run {run['id']}'s fixes to {branch}.", file=sys.stderr)
+    output("fixes", "false")
+    output("already_pushed", "true")
+    output("artifact", "")
+    return True
+
+
+def _resolve_relock(
+    repo: str,
+    run: dict[str, Any],
+    token: str,
+    *,
+    default_branch: str,
+    this_run: str | None,
+    push_workflow: str,
+    output: Output,
+) -> None:
     """resolve() for a relock run, whose relock job has finished, though the
     run hasn't. The run is on the default branch, so its pull request comes
-    from its name, and the commit the relock started from is the pull
-    request's head: the push checks the bundle builds on it, and the lease
-    that the branch is still there."""
+    from its name, and the commit the relock started from from its
+    artifact's name, which the default branch's relock job sets. Without
+    an artifact, there's nothing to push, and start_sha is the pull
+    request's head."""
     run_id = int(run["id"])
     if run["event"] != "issue_comment":
         raise ValueError(f"Run {run_id} was started by {run['event']}, not issue_comment.")
@@ -299,24 +359,54 @@ def _resolve_relock(repo: str, run: dict[str, Any], token: str, *, default_branc
     _check_branch_name(branch)
     head_sha = str(pr["head"]["sha"])
     output("branch", branch)
-    output("start_sha", head_sha)
+    artifact = relock_artifact(repo, run_id, token) if conclusion == "success" else None
+    start_sha = head_sha if artifact is None else artifact.removeprefix(RELOCK_ARTIFACT_PREFIX)
+    output("start_sha", start_sha)
     output("conclusion", conclusion)
     output("url", str(job["html_url"]))
     output("number", str(pr_number))
     output("head_sha", head_sha)
     output("base", str(pr["base"]["ref"]))
-    if conclusion == "success":
-        _output_fixes(repo, run_id, token, f"Relocking actions.lock found nothing to push to {branch}.", output)
+    if conclusion != "success":
+        return
+    if artifact is None:
+        print(f"Relocking actions.lock found nothing to push to {branch}.", file=sys.stderr)
+        _output_fixes("", output)
+        return
+    if not _moved_on(
+        repo,
+        run,
+        token,
+        branch=branch,
+        start_sha=start_sha,
+        head_sha=head_sha,
+        what="relock",
+        this_run=this_run,
+        push_workflow=push_workflow,
+        output=output,
+    ):
+        _output_fixes(artifact, output)
 
 
-def _output_fixes(repo: str, run_id: int, token: str, nothing: str, output: Output) -> None:
-    """Output whether run run_id uploaded a bundle to push, printing nothing if it didn't."""
-    artifacts = workflow_summaries.artifacts(repo, run_id, token, FIXES_ARTIFACT)
-    fixes = any(artifact["name"] == FIXES_ARTIFACT for artifact in artifacts)
-    if not fixes:
-        print(nothing, file=sys.stderr)
-    output("fixes", str(fixes).lower())
+def relock_artifact(repo: str, run_id: int, token: str) -> str | None:
+    """The name of the relock job's artifact in run run_id, fixes-<commit>,
+    or None if it uploaded none. Raises ValueError if there's more than one,
+    or the name doesn't end in a full commit hash."""
+    names = [str(a["name"]) for a in workflow_summaries.artifacts(repo, run_id, token, RELOCK_ARTIFACT_PREFIX)]
+    if len(names) > 1:
+        raise ValueError(f"Run {run_id} has {len(names)} artifacts named {RELOCK_ARTIFACT_PREFIX}*, not one.")
+    if not names:
+        return None
+    if not _COMMIT.fullmatch(names[0].removeprefix(RELOCK_ARTIFACT_PREFIX)):
+        raise ValueError(f"Run {run_id}'s artifact {names[0]} doesn't name a commit.")
+    return names[0]
+
+
+def _output_fixes(artifact: str, output: Output) -> None:
+    """Output that there's artifact to push, or nothing if it's empty."""
+    output("fixes", str(bool(artifact)).lower())
     output("already_pushed", "false")
+    output("artifact", artifact)
 
 
 def check_branch(

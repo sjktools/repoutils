@@ -83,6 +83,7 @@ jobs:
       base: ${{ steps.resolve.outputs.base }}
       fixes: ${{ steps.resolve.outputs.fixes }}
       already_pushed: ${{ steps.resolve.outputs.already_pushed }}
+      artifact: ${{ steps.resolve.outputs.artifact }}
 
     steps:
       # Everything about the run comes from the API, which GitHub sets, rather
@@ -137,7 +138,8 @@ jobs:
         uses: $/.github/actions/push-bundle
         with:
           token: ${{ secrets.AUTOFIX_TOKEN }}
-          artifact: fixes
+          artifact: ${{ needs.resolve.outputs.artifact }}
+          bundle: fixes.bundle
           run-id: ${{ needs.resolve.outputs.run_id }}
           branch: ${{ needs.resolve.outputs.branch }}
           start: ${{ needs.resolve.outputs.start_sha }}

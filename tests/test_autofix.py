@@ -627,7 +627,7 @@ def _relocked(
     fake.answers[RELOCK_JOBS] = [
         {"jobs": [{"name": "relock", "status": "completed", "conclusion": conclusion, "html_url": RELOCK_PAGE}]}
     ]
-    fake.answers[RELOCK_ARTIFACTS] = [{"artifacts": [{"name": "fixes"}] if fixes else []}]
+    fake.answers[RELOCK_ARTIFACTS] = [{"artifacts": [{"name": f"fixes-{'a' * 40}"}] if fixes else []}]
     fake.answers[RELOCK_PUSH_RUN] = [_done(6, push)]
     fake.answers[RELOCK_PUSH_JOBS] = [{"jobs": [{"name": "report", "conclusion": report}]}]
     return fake

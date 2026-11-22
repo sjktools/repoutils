@@ -7,13 +7,9 @@ where ``name`` is ``--name`` and ``comment-prefix`` comes from
 default the next run edits that comment in place; with ``--hide-previous`` it
 posts a new comment and hides the earlier ones as outdated instead, which suits
 reports whose history is worth keeping, such as exolot's findings. With
-``--update-only`` it edits the newest earlier comment but never posts a first
-one, so a run can mark a problem an earlier run reported as resolved without
-adding a comment where there was none. Without ``--hide-previous``, it deletes
-any older ones. With it, it edits the newest one that isn't hidden, and hides
-the older ones instead. So a report can post a new
-comment for a problem, which notifies the PR's subscribers as an edit doesn't,
-and edit that comment once the problem is gone, as ``/autofix``'s does.
+``--update-only`` it edits the newest earlier comment, deleting any older
+ones, but never posts a first one, so a run can mark a problem an earlier run
+reported as resolved without adding a comment where there was none.
 
 CI runs this in a job with a write-capable token that runs nothing else, so it
 uses only the standard library."""
@@ -49,20 +45,6 @@ def _post(args: argparse.Namespace, marker: str) -> str:
         head = github_comments.pr_head(repo, args.pr, token)
         if not head.startswith(args.commit):
             return f"Not posting: the report is for {args.commit}, but PR #{args.pr}'s head is now {head}."
-    if args.hide_previous and args.update_only:
-        # The newest one still showing, as someone may have hidden a newer one.
-        shown = [c for c in github_comments.own_comments(repo, args.pr, marker, token) if not c["isMinimized"]]
-        if not shown:
-            return f"Not posting: PR #{args.pr} has no earlier comment to update."
-        newest = shown[-1]
-        github_comments.request(
-            "PATCH",
-            f"{github_comments.API_URL}/repos/{repo}/issues/comments/{newest['databaseId']}",
-            token,
-            json_body={"body": body},
-        )
-        hidden = github_comments.hide_comments(repo, args.pr, marker, token, keep=newest["id"])
-        return f"Posted {args.body} to PR #{args.pr} in its latest comment, and hid {hidden} earlier comment(s)."
     if args.hide_previous:
         # Post first, so a failure leaves the old report showing rather than none.
         posted = github_comments.request(
@@ -93,8 +75,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--update-only",
         action="store_true",
-        help="edit the newest earlier comment, but post nothing if there's none "
-        "(with --hide-previous, hide the older ones rather than delete them)",
+        help="edit the newest earlier comment, but post nothing if there's none",
     )
     parser.add_argument(
         "--repo",
@@ -112,6 +93,8 @@ def main(argv: list[str]) -> int:
         "not used with --hide-previous, which asks GitHub which comments the token's user posted)",
     )
     args = parser.parse_args(argv)
+    if args.update_only and args.hide_previous:
+        parser.error("--update-only edits the earlier comment, so it can't go with --hide-previous")
     try:
         print(_post(args, config.marker(args.name)))
     except subprocess.CalledProcessError as e:

@@ -204,7 +204,7 @@ query($owner: String!, $name: String!, $pr: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $pr) {
       comments(first: 100, after: $cursor) {
-        nodes { id databaseId isMinimized viewerDidAuthor body }
+        nodes { id isMinimized viewerDidAuthor body }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -219,9 +219,9 @@ mutation($id: ID!) {
 
 def own_comments(repo: str, pr: int, marker: str, token: str) -> Iterator[dict[str, Any]]:
     """The comments on pr that token's user posted whose body starts with
-    marker, oldest first, as GraphQL nodes with id, databaseId and
-    isMinimized. Matching the author means nobody else's comment is picked up
-    by copying the marker."""
+    marker, oldest first, as GraphQL nodes with id and isMinimized. Matching
+    the author means nobody else's comment is picked up by copying the
+    marker."""
     owner, name = repo.split("/", 1)
     cursor = None
     while True:

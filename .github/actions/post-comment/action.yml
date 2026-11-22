@@ -18,10 +18,7 @@ inputs:
     description: Names the comment's marker, <!-- <comment-prefix>-<name> -->.
     required: true
   update-only:
-    description: >-
-      Set to true to edit the newest earlier comment, but post nothing if
-      there's none. With hide-previous, the older ones are hidden rather than
-      deleted.
+    description: Set to true to edit the newest earlier comment, but post nothing if there's none.
     required: false
     default: "false"
   hide-previous:

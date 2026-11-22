@@ -21,10 +21,9 @@ name: PR Fixes Push
 # there), or else the branch's only open PR. A branch can rename its own runs,
 # but only to another PR from the same branch, which this checks.
 #
-# Its report job then tells the PR how it went (see post-comment). A failure
-# posts a new comment, which notifies the PR's subscribers as an edit doesn't,
-# and hides the earlier ones as outdated. A success only edits the newest one,
-# so a PR that never failed gets no comment.
+# Its report job then tells the PR how it went, success or failure, in a new
+# comment (see post-comment), which notifies the PR's subscribers as an edit
+# doesn't, and hides the earlier ones as outdated.
 on:
   workflow_dispatch:
     inputs:
@@ -180,7 +179,6 @@ jobs:
             exit 1
           fi
           body="$RUNNER_TEMP/autofix.md"
-          update_only=false
           # Push is skipped only when resolve found no bundle; any other result
           # means the fixes weren't pushed, whether a check refused them (the
           # branch moved on, say) or something failed.
@@ -188,17 +186,12 @@ jobs:
             echo "PR Fixes [failed]($FIX_URL) on $START_SHA, so nothing was pushed." > "$body"
           elif [ "$RESOLVE_RESULT" = success ] && [ "$PUSH_RESULT" = success ]; then
             echo "PR Fixes [pushed its fixes]($RUN_URL) on top of $START_SHA." > "$body"
-            update_only=true
           elif [ "$RESOLVE_RESULT" = success ] && [ "$PUSH_RESULT" = skipped ]; then
             echo "PR Fixes [found nothing to fix]($FIX_URL) on $START_SHA." > "$body"
-            update_only=true
           else
             echo "PR Fixes ran on $START_SHA, but [didn't push its fixes]($RUN_URL)." > "$body"
           fi
-          {
-            echo "body=$body"
-            echo "update_only=$update_only"
-          } >> "$GITHUB_OUTPUT"
+          echo "body=$body" >> "$GITHUB_OUTPUT"
 
       - name: Report on the pull request
         uses: $/.github/actions/post-comment
@@ -206,5 +199,4 @@ jobs:
           pr: ${{ needs.resolve.outputs.number }}
           body: ${{ steps.write.outputs.body }}
           name: autofix
-          update-only: ${{ steps.write.outputs.update_only }}
           hide-previous: "true"

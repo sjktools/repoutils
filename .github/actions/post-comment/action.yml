@@ -1,7 +1,7 @@
 name: Post a pull request comment
 description: >-
   Posts a Markdown file to a pull request as a comment, editing the one an
-  earlier run posted, with `repoutils post-comment`.
+  earlier run posted, or hiding it, with `repoutils post-comment`.
 
 # Runs repoutils from this action's own commit, with the runner's python3,
 # installing nothing. The job needs pull-requests write. Check out
@@ -19,6 +19,10 @@ inputs:
     required: true
   update-only:
     description: Set to true to edit the earlier comment, but post nothing if there's none.
+    required: false
+    default: "false"
+  hide-previous:
+    description: Set to true to post a new comment and hide the earlier ones as outdated, rather than edit the earlier one.
     required: false
     default: "false"
   token:
@@ -41,6 +45,7 @@ runs:
         BODY: ${{ inputs.body }}
         NAME: ${{ inputs.name }}
         UPDATE_ONLY: ${{ inputs.update-only }}
+        HIDE_PREVIOUS: ${{ inputs.hide-previous }}
         AUTHOR: ${{ inputs.author }}
         PYTHONPATH: ${{ github.action_path }}/../../../src
         PYTHONSAFEPATH: "1"
@@ -50,5 +55,10 @@ runs:
           true) args+=(--update-only) ;;
           false) ;;
           *) echo "::error::update-only must be true or false, not $UPDATE_ONLY."; exit 1 ;;
+        esac
+        case "$HIDE_PREVIOUS" in
+          true) args+=(--hide-previous) ;;
+          false) ;;
+          *) echo "::error::hide-previous must be true or false, not $HIDE_PREVIOUS."; exit 1 ;;
         esac
         python3 -m repoutils post-comment "$PR" "$BODY" --name "$NAME" --author "$AUTHOR" "${args[@]}"

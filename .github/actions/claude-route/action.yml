@@ -1,0 +1,32 @@
+name: Route a request to the Claude workflows
+description: >-
+  Decides whether a comment, review or issue's body is a request to @claude,
+  and whether it asks for "@claude review", with `repoutils claude-route`.
+
+# Runs repoutils from this action's own commit, with the runner's python3,
+# installing nothing, so it needs no checkout. Workflow expressions have no
+# regex, hence an action. The request must start the text, so quoting
+# "@claude" mid-sentence never counts.
+inputs:
+  text:
+    description: The comment, review or issue's body. An issue's title never counts.
+    required: true
+
+outputs:
+  kind:
+    description: review if the text asks for "@claude review", other for any other request to @claude, or none.
+    value: ${{ steps.route.outputs.kind }}
+
+runs:
+  using: composite
+  steps:
+    - name: Route
+      id: route
+      shell: bash
+      env:
+        TEXT: ${{ inputs.text }}
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+        PYTHONSAFEPATH: "1"
+      run: |
+        kind=$(printf '%s' "$TEXT" | python3 -m repoutils claude-route)
+        echo "kind=$kind" >> "$GITHUB_OUTPUT"

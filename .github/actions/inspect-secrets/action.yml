@@ -1,0 +1,61 @@
+name: Inspect the job's secrets
+description: >-
+  Reports what each secret the job gets is, to the step summary, with
+  `repoutils secrets inspect`: each GitHub token's type, owner, expiry and the
+  start of its SHA-256 hash, and each SSH key's fingerprint. It never shows a
+  value. Uploads the step summary as the artifact step-summaries-<job>.
+
+# Runs repoutils from this action's own commit, with the runner's python3,
+# installing nothing. It checks out only the caller's pyproject.toml, which
+# lists the secrets, into the workspace, so make it the job's only step. The
+# job needs contents read. A composite action can't read the secrets context,
+# so the caller passes toJSON(secrets) as secrets-json.
+inputs:
+  secrets-json:
+    description: The job's secrets, as the expression toJSON(secrets) gives them.
+    required: true
+  environment:
+    description: The environment the job deploys to, whose secrets pyproject.toml lists. Empty for the repository's.
+    required: false
+    default: ""
+  secret-names:
+    description: >-
+      The secret names set at each level, as JSON, which `repoutils secrets
+      inspect-remote` passes the workflow. With them, an environment's job can
+      tell its own secrets from those it inherits.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout pyproject.toml
+      uses: actions/checkout@v7.0.1
+      with:
+        persist-credentials: false
+        sparse-checkout: /pyproject.toml
+        sparse-checkout-cone-mode: false
+
+    - name: Inspect the secrets
+      shell: bash
+      env:
+        SECRETS_JSON: ${{ inputs.secrets-json }}
+        SECRET_NAMES: ${{ inputs.secret-names }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+        PYTHONSAFEPATH: "1"
+      run: |
+        trap 'mkdir -p "$RUNNER_TEMP/step-summaries" && cp "$GITHUB_STEP_SUMMARY" "$RUNNER_TEMP/step-summaries/inspect.md"' EXIT
+        args=()
+        [ -n "$ENVIRONMENT" ] && args+=(--environment "$ENVIRONMENT")
+        python3 -m repoutils secrets inspect "${args[@]}"
+
+    # GitHub's API doesn't serve step summaries, so this keeps the one the
+    # step above copied as an artifact.
+    - name: Upload the step summaries
+      if: always()
+      uses: actions/upload-artifact@v7.0.2
+      with:
+        name: step-summaries-${{ github.job }}
+        path: ${{ runner.temp }}/step-summaries/
+        if-no-files-found: ignore

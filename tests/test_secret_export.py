@@ -459,11 +459,12 @@ def test_self_test_takes_no_output(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     shutil.which("age") is None or shutil.which("age-keygen") is None or shutil.which("ssh-keygen") is None,
     reason="needs age, age-keygen and ssh-keygen",
 )
+@pytest.mark.parametrize("kind", ["ed25519", "rsa"])
 def test_self_test_with_age(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], kind: str
 ) -> None:
-    key = tmp_path / "id_ed25519"
-    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
+    key = tmp_path / f"id_{kind}"
+    subprocess.run(["ssh-keygen", "-q", "-t", kind, "-N", "", "-f", str(key)], check=True)
     public = key.with_suffix(".pub").read_text()
     fingerprint = secret_inspect.fingerprint(base64.b64decode(public.split()[1]))
     (tmp_path / "project").mkdir()

@@ -280,8 +280,10 @@ def self_test(
         )
         armored = output.read_text()
         header = armored_header(armored)
-        # age's header names each SSH recipient in a ``-> TYPE TAG ...`` line.
-        missing = [key for key in ssh_keys if f"\n-> {ssh_tag(key)} ".encode() not in header]
+        # age's header names each SSH recipient in a ``-> TYPE TAG`` line, which
+        # an ssh-ed25519 recipient's line follows with more arguments.
+        named = {" ".join(line.split()[1:3]) for line in header.decode(errors="replace").splitlines()}
+        missing = [key for key in ssh_keys if ssh_tag(key) not in named]
         if missing:
             raise RuntimeError(f"the export isn't encrypted to these SSH keys: {', '.join(missing)}")
         plaintext = secret_export_remote.decrypt(age, [identity], armored.encode())

@@ -6,17 +6,34 @@ from pathlib import Path
 import pytest
 
 from repoutils import config
-from repoutils.commands.check_justfile import Justfile, Settings, main, parse_dump, problems, read_justfile
-from repoutils.justfile_standard import BY_NAME, FIX_CHECK_PAIRS, RECIPES
+from repoutils.commands.check_justfile import (
+    Justfile,
+    Settings,
+    main,
+    parse_dump,
+    problems,
+    read_justfile,
+    runs_setup,
+    setup_problems,
+)
+from repoutils.justfile_standard import BY_NAME, FIX_CHECK_PAIRS, RECIPES, SETUP
 
 ROOT = Path(__file__).resolve().parent.parent
 ALL_FEATURES = Settings(features=frozenset(config.FEATURES))
+# How just --dump gives the standard eager assignment's value.
+SETUP_VALUE = ["call", "shell", ["concatenate", ["variable", "repoutils"], " git-config-setup"]]
 
 
 def dump(
-    recipes: dict[str, list[str]], aliases: dict[str, str] | None = None, variables: tuple[str, ...] = ("repoutils",)
+    recipes: dict[str, list[str]],
+    aliases: dict[str, str] | None = None,
+    variables: tuple[str, ...] = ("repoutils",),
+    eager: tuple[object, ...] = (SETUP_VALUE,),
+    source: Path = ROOT / "justfile",
 ) -> str:
     """JSON shaped like the parts of `just --dump --dump-format json` the command reads."""
+    assignments: dict[str, object] = {name: {"name": name, "eager": False} for name in variables}
+    assignments.update({f"_{index}": {"eager": True, "value": value} for index, value in enumerate(eager)})
     return json.dumps(
         {
             "recipes": {
@@ -24,7 +41,8 @@ def dump(
                 for name, deps in recipes.items()
             },
             "aliases": {name: {"name": name, "target": target} for name, target in (aliases or {}).items()},
-            "assignments": {name: {"name": name} for name in variables},
+            "assignments": assignments,
+            "source": str(source),
         }
     )
 
@@ -78,6 +96,13 @@ def test_repoutils_justfile_has_the_standard_text() -> None:
             assert any(block.startswith(text.rstrip("\n") + " ") for block in blocks)
         else:
             assert text in blocks, recipe.name
+
+
+def test_repoutils_justfile_has_the_standard_setup() -> None:
+    text = (ROOT / "justfile").read_text(encoding="utf-8")
+    assert f"\n\n{SETUP}\n" in text
+    justfile = read_justfile("just", str(ROOT / "justfile"))
+    assert setup_problems(justfile, Settings.from_config(ROOT)) == ([], False)
 
 
 def test_recipe_blocks() -> None:
@@ -245,6 +270,77 @@ def test_missing_variable() -> None:
     assert problems(justfile, ALL_FEATURES)[0] == ["There's no `repoutils` variable."]
 
 
+@pytest.mark.parametrize(
+    ("value", "runs"),
+    [
+        (SETUP_VALUE, True),
+        # Options may follow, in the same string or another.
+        (["call", "shell", ["concatenate", ["variable", "repoutils"], " git-config-setup --x"]], True),
+        (
+            [
+                "call",
+                "shell",
+                ["concatenate", ["concatenate", ["variable", "repoutils"], " git-config-setup"], " --x"],
+                "arg",
+            ],
+            True,
+        ),
+        (
+            [
+                "call",
+                "shell",
+                ["concatenate", "cd x && ", ["concatenate", ["variable", "repoutils"], "  git-config-setup"]],
+            ],
+            True,
+        ),
+        (["call", "shell", "uv run repoutils git-config-setup"], True),
+        (["call", "shell", "uv run --only-group repoutils repoutils git-config-setup\n"], True),
+        (["call", "shell", ["concatenate", ["variable", "repoutils"], " git-config-setups"]], False),
+        (["call", "shell", ["concatenate", ["variable", "other"], " git-config-setup"]], False),
+        (["call", "shell", ["concatenate", " git-config-setup", ["variable", "repoutils"]]], False),
+        (["call", "shell", "uv run repoutils check-whitespace"], False),
+        (["call", "env", "uv run repoutils git-config-setup"], False),
+        (["call", "shell"], False),
+        ("uv run repoutils git-config-setup", False),
+        (None, False),
+    ],
+)
+def test_runs_setup(value: object, runs: bool) -> None:
+    assert runs_setup(value) is runs
+
+
+def test_setup_problems(tmp_path: Path) -> None:
+    justfile = parse_dump(dump(standard_recipes(), eager=(["call", "shell", "true"],), source=tmp_path / "justfile"))
+    assert setup_problems(justfile, ALL_FEATURES) == (
+        [
+            "There's no `eager` assignment that runs `repoutils git-config-setup`.",
+            "There's no `.git-blame-ignore-revs` next to the justfile: create an empty one,"
+            " which `check-blame-ignore-revs` accepts.",
+        ],
+        True,
+    )
+    # An empty file is enough.
+    (tmp_path / ".git-blame-ignore-revs").write_text("")
+    assert setup_problems(justfile, ALL_FEATURES)[0] == [
+        "There's no `eager` assignment that runs `repoutils git-config-setup`."
+    ]
+    # Omitting the recipe that checks the file skips both checks.
+    (tmp_path / ".git-blame-ignore-revs").unlink()
+    assert setup_problems(justfile, Settings(omit=frozenset({"blame-ignore-revs-check"}))) == ([], False)
+
+
+def test_setup_ignores_lazy_assignments() -> None:
+    text = json.dumps(
+        {
+            "recipes": {},
+            "aliases": {},
+            "assignments": {"_": {"eager": False, "value": SETUP_VALUE}, "x": "not an object"},
+            "source": str(ROOT / "justfile"),
+        }
+    )
+    assert setup_problems(parse_dump(text), ALL_FEATURES)[1]
+
+
 def test_text() -> None:
     settings = Settings(default_branch="master")
     header = "patch-coverage base='origin/master': coverage (diff-cover base)\n"
@@ -281,6 +377,8 @@ def test_text_quotes_the_branch(tmp_path: Path, branch: str) -> None:
         ('{"recipes": {}, "aliases": {}, "assignments": []}', "'assignments' isn't an object"),
         ('{"recipes": {}, "modules": {"m": 1}}', "module 'm' isn't an object"),
         ('{"recipes": {}, "modules": {"m": {"recipes": {"a": {}}}}}', "recipe 'm::a' has no list of dependencies"),
+        ('{"recipes": {}, "aliases": {}, "assignments": {}}', "'source' isn't a string"),
+        ('{"recipes": {}, "aliases": {}, "assignments": {}, "source": 1}', "'source' isn't a string"),
     ],
 )
 def test_parse_dump_rejects(text: str, message: str) -> None:
@@ -349,6 +447,19 @@ def test_main_reports_and_prints_missing_text(
     assert "- There's no `sync` recipe or alias.\n" in out
     assert "\n# Sync dependencies (including dev group)\nsync:\n    uv sync --group dev\n" in out
     assert "omit-dependencies" in out
+    assert "eager" not in out
+
+
+def test_main_prints_the_missing_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "dump.json").write_text(dump(standard_recipes(), eager=()))
+    assert main(fake_just(tmp_path, f"cat {tmp_path / 'dump.json'}")) == 1
+    out = capsys.readouterr().out
+    assert "- There's no `eager` assignment that runs `repoutils git-config-setup`.\n" in out
+    assert f"\nThe standard eager assignment, to paste into the justfile:\n\n{SETUP}\nList " in out
+    assert "missing recipes" not in out
 
 
 @pytest.mark.parametrize("exit_zero", [False, True])
@@ -404,7 +515,14 @@ def test_main_checks_the_justfile_given(
     (tmp_path / "other").mkdir()
     (tmp_path / "other" / "my.just").write_text("repoutils := 'x'\n\ndefault:\n    echo\n")
     monkeypatch.chdir(tmp_path)
+    # Not next to the justfile, so it doesn't count.
+    (tmp_path / ".git-blame-ignore-revs").write_text("")
     assert main(justfile_path=str(tmp_path / "other" / "my.just"), exit_zero=True) == 0
     out = capsys.readouterr().out
     assert "There's no `default`" not in out
     assert "There's no `sync` recipe or alias." in out
+    # .git-blame-ignore-revs must be next to the justfile, not in the current directory.
+    assert "There's no `.git-blame-ignore-revs` next to the justfile" in out
+    (tmp_path / "other" / ".git-blame-ignore-revs").write_text("")
+    assert main(justfile_path=str(tmp_path / "other" / "my.just"), exit_zero=True) == 0
+    assert "next to the justfile" not in capsys.readouterr().out

@@ -9,8 +9,12 @@ recipe's text has no header line: the command writes
 ``<name><parameters>: <dependencies>`` after it, with only the dependencies the
 project's features and settings ask for.
 
-A test checks that repoutils' own justfile has every recipe's text, so the
-standard and that justfile stay in step.
+``SETUP`` is the standard text of the eager assignment that runs
+``repoutils git-config-setup``, which the command prints if the justfile has no
+such assignment.
+
+A test checks that repoutils' own justfile has every recipe's text, and
+``SETUP``, so the standard and that justfile stay in step.
 """
 
 from dataclasses import dataclass
@@ -284,6 +288,14 @@ prose-check:
 """,
     ),
     _recipe(
+        "blame-ignore-revs-check",
+        """
+# Check that .git-blame-ignore-revs lists only full hashes of commits in the target's history (default: $BLAME_IGNORE_REVS_TARGET, else HEAD; CI passes a PR's base, as a PR's own commits are lost when it's squash-merged)
+blame-ignore-revs-check target=env("BLAME_IGNORE_REVS_TARGET", "HEAD"):
+    uv run repoutils check-blame-ignore-revs {{ quote(target) }}
+""",
+    ),
+    _recipe(
         "check-pins",
         """
 # Check that every workflow and local action pins the uv version pyproject.toml requires and the just version the justfile requires
@@ -367,8 +379,8 @@ dependabot-relock base:
         "check",
         "# Run all checks, without fixing anything or running tests",
         "lint fmt-check just-fmt-check mypy pyright lint-workflows actions-lock-check whitespace-check"
-        " sentence-per-line-check prose-check check-pins check-checkout-credentials secrets-workflows-check"
-        " variables-workflows-check check-justfile lock-platforms-check requirements-check",
+        " sentence-per-line-check prose-check blame-ignore-revs-check check-pins check-checkout-credentials"
+        " secrets-workflows-check variables-workflows-check check-justfile lock-platforms-check requirements-check",
     ),
     _recipe(
         "actions-lock-check",
@@ -411,3 +423,15 @@ FIX_CHECK_PAIRS = (
 
 # The variable that the standard recipes run repoutils with.
 VARIABLE = "repoutils"
+
+# The file that the blame-ignore-revs-check recipe checks, and that
+# `repoutils git-config-setup` points `git blame` at.
+IGNORE_REVS = ".git-blame-ignore-revs"
+
+# The standard eager assignment that runs `repoutils git-config-setup` before every recipe.
+SETUP = """\
+# Dummy assignment, so every recipe run sets up the repo's local Git config
+# (see `repoutils git-config-setup`). `eager` makes just evaluate it even though
+# nothing uses it, whether or not `set lazy` is on (casey/just#3759).
+eager _ := shell(repoutils + ' git-config-setup')
+"""

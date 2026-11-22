@@ -17,15 +17,21 @@ fixes, and needs a token this command never sees.
 
 The ``autofix-start`` action runs it for a ``/autofix`` comment, with
 ``--comment-id`` to react to the comment and ``--report`` to say on the PR
-what went wrong when the push run couldn't.
+what went wrong when the push run couldn't. If GitHub refuses to start a run,
+the report gives GitHub's reason. When the reason is an ``actions.lock`` that
+doesn't list every action ``fix.yml`` uses, the report also says how to fix
+it, as PR Fixes, which would relock it, can't start until it does.
 
 ``autofix resolve`` and ``autofix check-branch`` are the checks the two
 workflows make of the fix run and its PR (see ``repoutils.autofix_runs``).
 Stdlib-only, like every repoutils module."""
 
 import argparse
+import json
 import os
+import re
 import sys
+import urllib.error
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic, sleep
@@ -54,6 +60,8 @@ class Progress:
     push_url: str | None = None
     # Whether the push run's report job commented on the PR.
     reported: bool = False
+    # Why GitHub refused to start a run, as its API said.
+    refused: str | None = None
 
 
 def _run_page(repo: str, run_id: int) -> str:
@@ -75,15 +83,74 @@ def report_succeeded(repo: str, run_id: int, token: str) -> bool:
     return any(job.get("name") == REPORT_JOB and job.get("conclusion") == "success" for job in jobs)
 
 
+def _api_message(detail: str) -> str:
+    """The message in an API error's body, or else the whole body."""
+    try:
+        message = json.loads(detail).get("message")
+    except (ValueError, AttributeError):
+        message = None
+    return message if isinstance(message, str) and message else detail.strip()
+
+
+def lockfile_refused(reason: str) -> bool:
+    """Whether GitHub refused to start a workflow because actions.lock
+    doesn't list every action it uses."""
+    return "Invalid dependency lockfile" in reason or "not present in the lockfile" in reason
+
+
+LOCKFILE_FIX = (
+    "GitHub won't start a workflow until `.github/workflows/actions.lock` lists every action it uses, "
+    "so /autofix can't relock it. "
+    "Run `gh actions-lock` (the github/gh-actions-lock extension) on the branch, "
+    "wherever `gh` is logged in to GitHub, then commit and push `actions.lock`.\n"
+)
+
+
+def dispatch(repo: str, workflow: str, ref: str, token: str, inputs: dict[str, str], progress: Progress) -> int:
+    """workflow_summaries.dispatch, recording why in progress and raising
+    RuntimeError if GitHub refuses to start the run."""
+    try:
+        return workflow_summaries.dispatch(repo, workflow, ref, token, inputs)
+    except urllib.error.HTTPError as e:
+        with e:
+            detail = e.read().decode(errors="replace")
+        reason = f"HTTP {e.code}: {_api_message(detail)}"
+        progress.refused = reason
+        message = f"GitHub refused to start {workflow} on {ref}: {reason}"
+        if lockfile_refused(reason):
+            message += f"\n{LOCKFILE_FIX}"
+        raise RuntimeError(message) from None
+
+
+def _fenced(text: str) -> str:
+    """text as a Markdown code block, whatever backticks it holds."""
+    longest = max((len(run) for run in re.findall("`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}\n{text}\n{fence}\n"
+
+
+def _refusal(progress: Progress) -> str:
+    """The end of the report's first sentence, and GitHub's reason for refusing a run, if it gave one."""
+    if progress.refused is None:
+        return ".\n"
+    text = ", as GitHub refused:\n\n" + _fenced(progress.refused)
+    if lockfile_refused(progress.refused):
+        text += "\n" + LOCKFILE_FIX
+    return text
+
+
 def report(progress: Progress, run_url: str) -> str | None:
     """The Markdown to post on the PR for a run that failed, or None if the
     push run's report job already said how it went."""
     if progress.reported:
         return None
     if progress.fix_url is None:
-        return f"/autofix [couldn't start PR Fixes]({run_url}).\n"
+        return f"/autofix [couldn't start PR Fixes]({run_url})" + _refusal(progress)
     if progress.push_url is None:
-        return f"/autofix started [PR Fixes]({progress.fix_url}), but [couldn't start pushing its fixes]({run_url}).\n"
+        return (
+            f"/autofix started [PR Fixes]({progress.fix_url}), but [couldn't start pushing its fixes]({run_url})"
+            + _refusal(progress)
+        )
     return (
         f"/autofix started [PR Fixes]({progress.fix_url}), "
         f"but [PR Fixes Push]({progress.push_url}) didn't report whether it pushed the fixes.\n"
@@ -106,6 +173,7 @@ def start_push(
     *,
     interval: float,
     deadline: float,
+    progress: Progress,
 ) -> int:
     """The ID of the push run for fix_run: the one GitHub started, or else one this starts."""
     fix_run_id = int(fix_run["id"])
@@ -124,7 +192,7 @@ def start_push(
     if monotonic() >= deadline:
         raise TimeoutError(f"Gave up before starting {push_workflow} for run {fix_run_id}")
     default_branch = workflow_summaries.default_branch(repo, token)
-    return workflow_summaries.dispatch(repo, push_workflow, default_branch, token, {"run-id": str(fix_run_id)})
+    return dispatch(repo, push_workflow, default_branch, token, {"run-id": str(fix_run_id)}, progress)
 
 
 def autofix(
@@ -148,7 +216,7 @@ def autofix(
     # The head commit makes the run fail if the branch moves on before it
     # starts, and the number goes into its name, where fix-push.yml reads it.
     inputs = {"head-sha": head_sha, "pr-number": str(pr)}
-    fix_run_id = workflow_summaries.dispatch(repo, workflow, branch, token, inputs)
+    fix_run_id = dispatch(repo, workflow, branch, token, inputs, progress)
     progress.fix_url = _run_page(repo, fix_run_id)
     print(f"Started {workflow} on {branch}: {progress.fix_url}", file=sys.stderr)
     if comment_id is not None:
@@ -164,7 +232,9 @@ def autofix(
             file=sys.stderr,
         )
     # Even a failed fix run, as the push run reports it on the PR.
-    push_run_id = start_push(repo, push_workflow, fix_run, token, interval=interval, deadline=deadline)
+    push_run_id = start_push(
+        repo, push_workflow, fix_run, token, interval=interval, deadline=deadline, progress=progress
+    )
     progress.push_url = _run_page(repo, push_run_id)
     print(f"Waiting for {push_workflow}: {progress.push_url}", file=sys.stderr)
     try:
@@ -313,7 +383,8 @@ def _autofix_parser() -> argparse.ArgumentParser:
         type=Path,
         metavar="FILE",
         help="if this fails and the push workflow didn't comment on the pull request, "
-        "write the Markdown to post there to FILE, linking to this run (for a GitHub Actions job)",
+        "write the Markdown to post there to FILE, linking to this run, "
+        "with GitHub's reason if it refused to start a run (for a GitHub Actions job)",
     )
     return parser
 

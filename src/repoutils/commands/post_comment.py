@@ -7,9 +7,12 @@ where ``name`` is ``--name`` and ``comment-prefix`` comes from
 default the next run edits that comment in place; with ``--hide-previous`` it
 posts a new comment and hides the earlier ones as outdated instead, which suits
 reports whose history is worth keeping, such as exolot's findings. With
-``--update-only`` it edits the earlier comment but never posts a first one, so
-a run can mark a problem an earlier run reported as resolved without adding a
-comment where there was none.
+``--update-only`` it edits the newest earlier comment but never posts a first
+one, so a run can mark a problem an earlier run reported as resolved without
+adding a comment where there was none. Without ``--hide-previous``, it deletes
+any older ones, and with it, it hides them instead. So a report can post a new
+comment for a problem, which notifies the PR's subscribers as an edit doesn't,
+and edit that comment once the problem is gone, as ``/autofix``'s does.
 
 CI runs this in a job with a write-capable token that runs nothing else, so it
 uses only the standard library."""
@@ -26,6 +29,14 @@ from repoutils import github as github_comments
 from repoutils.docstrings import summary
 
 
+def _author(args: argparse.Namespace, token: str) -> str:
+    """The login the token comments as, to find the earlier comment by."""
+    if args.author:
+        return str(args.author)
+    login: str = github_comments.request("GET", f"{github_comments.API_URL}/user", token)["login"]
+    return login
+
+
 def _post(args: argparse.Namespace, marker: str) -> str:
     """Posts the comment, returning what it did."""
     body = f"{marker}\n{args.body.read_text()}"
@@ -37,6 +48,19 @@ def _post(args: argparse.Namespace, marker: str) -> str:
         head = github_comments.pr_head(repo, args.pr, token)
         if not head.startswith(args.commit):
             return f"Not posting: the report is for {args.commit}, but PR #{args.pr}'s head is now {head}."
+    if args.hide_previous and args.update_only:
+        previous = github_comments.marked_comments(repo, args.pr, _author(args, token), marker, token)
+        if not previous:
+            return f"Not posting: PR #{args.pr} has no earlier comment to update."
+        newest = previous[-1]
+        github_comments.request(
+            "PATCH",
+            f"{github_comments.API_URL}/repos/{repo}/issues/comments/{newest['id']}",
+            token,
+            json_body={"body": body},
+        )
+        hidden = github_comments.hide_comments(repo, args.pr, marker, token, keep=newest["node_id"])
+        return f"Posted {args.body} to PR #{args.pr} in its latest comment, and hid {hidden} earlier comment(s)."
     if args.hide_previous:
         # Post first, so a failure leaves the old report showing rather than none.
         posted = github_comments.request(
@@ -44,7 +68,7 @@ def _post(args: argparse.Namespace, marker: str) -> str:
         )
         hidden = github_comments.hide_comments(repo, args.pr, marker, token, keep=posted["node_id"])
         return f"Posted {args.body} to PR #{args.pr}, and hid {hidden} earlier comment(s)."
-    author = args.author or github_comments.request("GET", f"{github_comments.API_URL}/user", token)["login"]
+    author = _author(args, token)
     if not github_comments.upsert_comment(repo, args.pr, author, marker, body, token, create=not args.update_only):
         return f"Not posting: PR #{args.pr} has no earlier comment to update."
     return f"Posted {args.body} to PR #{args.pr}."
@@ -67,7 +91,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--update-only",
         action="store_true",
-        help="edit the earlier comment, but post nothing if there's none",
+        help="edit the newest earlier comment, but post nothing if there's none "
+        "(with --hide-previous, hide the older ones rather than delete them)",
     )
     parser.add_argument(
         "--repo",
@@ -84,9 +109,6 @@ def main(argv: list[str]) -> int:
         "(default: looked up, which only works for a user token)",
     )
     args = parser.parse_args(argv)
-    if args.update_only and args.hide_previous:
-        parser.error("--update-only edits the earlier comment, so it can't go with --hide-previous")
-
     try:
         print(_post(args, config.marker(args.name)))
     except subprocess.CalledProcessError as e:

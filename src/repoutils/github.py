@@ -170,16 +170,17 @@ def marked_comments(repo: str, pr: int, author: str | None, marker: str, token: 
 
 
 def upsert_comment(repo: str, pr: int, author: str, marker: str, body: str, token: str, *, create: bool = True) -> bool:
-    """Edit author's comment on pr starting with marker to have body, or post
-    one if there's none and create is true. body should start with marker, so
-    the next run finds it. Returns whether it edited or posted one."""
+    """Edit author's newest comment on pr starting with marker to have body,
+    or post one if there's none and create is true. body should start with
+    marker, so the next run finds it. Returns whether it edited or posted one."""
     previous = marked_comments(repo, pr, author, marker, token)
     comments_url = f"{API_URL}/repos/{repo}/issues/comments"
     if previous:
         # Edit in place, so the comment keeps its place in the conversation.
-        request("PATCH", f"{comments_url}/{previous[0]['id']}", token, json_body={"body": body})
+        # The newest, as a run with --hide-previous may have posted it.
+        request("PATCH", f"{comments_url}/{previous[-1]['id']}", token, json_body={"body": body})
         # Keep only one, should a failed or raced run have left another.
-        for comment in previous[1:]:
+        for comment in previous[:-1]:
             request("DELETE", f"{comments_url}/{comment['id']}", token)
     elif create:
         request("POST", f"{API_URL}/repos/{repo}/issues/{pr}/comments", token, json_body={"body": body})

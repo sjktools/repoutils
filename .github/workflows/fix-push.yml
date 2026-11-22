@@ -21,9 +21,10 @@ name: PR Fixes Push
 # there), or else the branch's only open PR. A branch can rename its own runs,
 # but only to another PR from the same branch, which this checks.
 #
-# Its report job then tells the PR how it went, in one comment that each run
-# edits (see post-comment). A failure posts it; a success only edits one an
-# earlier failure posted, so a PR that never failed gets no comment.
+# Its report job then tells the PR how it went (see post-comment). A failure
+# posts a new comment, which notifies the PR's subscribers as an edit doesn't,
+# and hides the earlier ones as outdated. A success only edits the newest one,
+# so a PR that never failed gets no comment.
 on:
   workflow_dispatch:
     inputs:
@@ -206,3 +207,4 @@ jobs:
           body: ${{ steps.write.outputs.body }}
           name: autofix
           update-only: ${{ steps.write.outputs.update_only }}
+          hide-previous: "true"

@@ -219,8 +219,98 @@ class PostCommentEditTests(TestCase):
         self.assertEqual(writes, [])
         self.assertIn("no earlier comment to update", out)
 
-    def test_update_only_rejects_hide_previous(self) -> None:
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
-            post_comment_main(["7", "r.md", "--name", "x", "--update-only", "--hide-previous"])
-        self.assertIn("can't go with --hide-previous", err.getvalue())
+    def test_update_only_edits_the_newest_and_deletes_the_rest(self) -> None:
+        code, _, writes = self._update_only(
+            [
+                {"id": 5, "user": {"login": "bot"}, "body": "<!-- repoutils-autofix -->\nfailed"},
+                {"id": 6, "user": {"login": "bot"}, "body": "<!-- repoutils-autofix -->\nfailed again"},
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            writes,
+            [
+                (
+                    "PATCH",
+                    "https://api.github.com/repos/o/r/issues/comments/6",
+                    {"body": "<!-- repoutils-autofix -->\nfixed\n"},
+                ),
+                ("DELETE", "https://api.github.com/repos/o/r/issues/comments/5", None),
+            ],
+        )
+
+
+class PostCommentUpdateHiddenTests(TestCase):
+    """With --update-only and --hide-previous, the newest comment is edited and the rest hidden, not deleted."""
+
+    def _run(self, existing: list[dict[str, Any]]) -> tuple[int, str, FakeGitHub]:
+        gh = FakeGitHub([_exolot_comment(str(c["node_id"]), body=str(c["body"])) for c in existing])
+
+        def request(method: str, url: str, token: str, *, json_body: Any = None, **kwargs: object) -> Any:
+            if method == "GET" and url.endswith("/comments?per_page=100&page=1"):
+                gh.calls.append((method, url, json_body))
+                return existing
+            if method == "PATCH":
+                gh.calls.append((method, url, json_body))
+                return {}
+            return gh(method, url, token, json_body=json_body)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "r.md"
+            report.write_text("fixed\n")
+            out = io.StringIO()
+            argv = ["7", str(report), "--repo", "o/r", "--name", "exolot-findings", "--author", "bot"]
+            with (
+                contextlib.chdir(tmp),
+                mock.patch.dict("os.environ", {"GITHUB_TOKEN": "tok"}),
+                mock.patch.object(github_comments, "request", request),
+                contextlib.redirect_stdout(out),
+            ):
+                code = post_comment_main([*argv, "--update-only", "--hide-previous"])
+        return code, out.getvalue(), gh
+
+    def test_edits_the_newest_and_hides_the_rest(self) -> None:
+        existing = [
+            {"id": 5, "node_id": "OLD", "user": {"login": "bot"}, "body": EXOLOT_MARKER + "\nfailed"},
+            {"id": 6, "node_id": "NEWEST", "user": {"login": "bot"}, "body": EXOLOT_MARKER + "\nfailed again"},
+        ]
+        code, out, gh = self._run(existing)
+        self.assertEqual(code, 0)
+        writes = [(m, u, b) for m, u, b in gh.calls if m in ("PATCH", "DELETE", "POST") and not u.endswith("/graphql")]
+        self.assertEqual(
+            writes,
+            [("PATCH", "https://api.github.com/repos/o/r/issues/comments/6", {"body": EXOLOT_MARKER + "\nfixed\n"})],
+        )
+        self.assertEqual(gh.hidden(), ["OLD"])
+        self.assertIn("in its latest comment, and hid 1 earlier comment(s)", out)
+
+    def test_posts_nothing_without_an_earlier_comment(self) -> None:
+        code, out, gh = self._run([])
+        self.assertEqual(code, 0)
+        self.assertEqual([m for m, _, _ in gh.calls], ["GET"])
+        self.assertIn("no earlier comment to update", out)
+
+
+class PostCommentAuthorTests(TestCase):
+    def test_looks_up_the_author_when_not_given(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "r.md"
+            report.write_text("new\n")
+            calls: list[tuple[str, str]] = []
+
+            def request(method: str, url: str, token: str, **kwargs: object) -> Any:
+                calls.append((method, url))
+                if url.endswith("/user"):
+                    return {"login": "me"}
+                return [{"id": 5, "user": {"login": "me"}, "body": "<!-- repoutils-notes -->\nold"}]
+
+            with (
+                contextlib.chdir(tmp),
+                mock.patch.dict("os.environ", {"GITHUB_TOKEN": "tok"}),
+                mock.patch.object(github_comments, "request", request),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                code = post_comment_main(["7", str(report), "--repo", "o/r", "--name", "notes"])
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[0], ("GET", "https://api.github.com/user"))
+        self.assertIn(("PATCH", "https://api.github.com/repos/o/r/issues/comments/5"), calls)

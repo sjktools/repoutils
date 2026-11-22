@@ -146,14 +146,14 @@ class PostScreenshotsTests(TestCase):
             {"id": 1, "user": {"login": "me"}, "body": MARKER + "\nold"},
             {"id": 2, "user": {"login": "me"}, "body": "a review reply"},
             {"id": 3, "user": {"login": "someone"}, "body": MARKER + "\ntheirs"},
-            {"id": 4, "user": {"login": "me"}, "body": MARKER + "\nduplicate"},
+            {"id": 4, "user": {"login": "me"}, "body": MARKER + "\nnewer"},
         ]
         code, _, requests = self._run(["index.png"], comments=comments)
         self.assertEqual(code, 0)
         comments_url = "https://api.github.com/repos/o/r/issues/comments"
         self.assertEqual(
             [r[:2] for r in self._writes(requests)[1:]],
-            [("PATCH", f"{comments_url}/1"), ("DELETE", f"{comments_url}/4")],
+            [("PATCH", f"{comments_url}/4"), ("DELETE", f"{comments_url}/1")],
         )
 
     def test_paginates_comments(self) -> None:

@@ -53,7 +53,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `dependabot-uv` | `show` prints the `uv` version from the newest successful Dependabot `uv` update run, `check` fails unless the minimum in `[tool.uv] required-version` is that version, and `bump` changes the project to that `uv` version (with `--pr`, in a new pull request, unless one for that version is already open). |
 | `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `plan` also works out the version that a run of the workflow bumps to, from the event that started the run. `bump` changes the pins of a downstream project to a release of this package, or to a dev version on TestPyPI, and re-locks it, and moves its uses of the actions of this package to the tag of the release, or for a dev version, to the commit that `--commit` names. With `--pr`, it opens a pull request (for a dev version, a draft test pull request), unless one for that release or a newer one is already open, and closes or comments on open pull requests for earlier versions of the same kind (releases, or dev versions), unless one for a newer version of that kind is open. `finish` waits for the checks on the pull request, and re-runs failed jobs. It closes the test pull request of a dev version if all its checks pass, and leaves the pull request of a release open. |
 | `github-releases` | `check` fails if a project whose release assets this project pins has a newer release, and `bump` pins the assets of that release (with `--pr`, in a new pull request, unless one for that release is already open). |
-| `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment (posting nothing with `--update-only` when none exists) or hides it when you pass `--hide-previous`. |
+| `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment (posting nothing with `--update-only` when none exists) or hides it when you pass `--hide-previous`. With both options, it edits the newest previous comment and hides the older ones. |
 | `added-strings` | Lists the added lines in a pull request that match strings configured in `pyproject.toml` (such as `# noqa:`), or posts the list to the pull request. |
 | `post-patch-coverage` | Formats the Markdown patch coverage report from `diff-cover`, adds the project coverage and the change from the base commit, posts the report to a pull request, and warns when coverage drops or falls below a limit. |
 | `post-coverage-status` | Posts the project and patch coverage of a commit as GitHub commit statuses for information only. |
@@ -375,13 +375,22 @@ Two options are for a workflow that runs the command for a `/autofix` comment:
   If the reaction fails, the command only warns.
 - `--report <file>` writes the Markdown for a comment on the pull request when the command fails, unless the `report` job of the `fix-push.yml` run succeeded.
   The comment says how far the command got, and links to the run of the workflow, which the command reads from `$GITHUB_SERVER_URL`, `$GITHUB_REPOSITORY` and `$GITHUB_RUN_ID`.
+  If GitHub refused to start a run, the comment gives the reason from GitHub.
+
+GitHub does not start a workflow whose `uses:` are not all in `.github/workflows/actions.lock`.
+So a branch that changes the `uses:` of `fix.yml`, for example to move to a new release of the actions of repoutils, can stop `/autofix` from starting.
+`/autofix` cannot then update `actions.lock` itself.
+The command and the comment of `--report` recognise this error, and say how to fix it: run `gh actions-lock` on the branch where `gh` is logged in to GitHub, then commit and push `actions.lock`.
 
 In GitHub Actions, the command prints its errors and warnings as annotations.
 
 The `autofix-start` composite action is the job of `autofix-comment.yml`.
 It does nothing unless the comment is `/autofix`, ignoring whitespace.
-It runs `repoutils autofix` with both options, and posts the report with `repoutils post-comment`, in the comment that the `report` job of `fix-push.yml` posts.
+It runs `repoutils autofix` with both options, and posts the report with `repoutils post-comment`, with the marker of the comment that the `report` job of `fix-push.yml` posts.
 The `post-comment` composite action runs `repoutils post-comment`, and is the last step of that `report` job.
+Each report of a failure is a new comment, because GitHub notifies the subscribers of the pull request about a new comment but not about an edit.
+The report hides the earlier comments as outdated.
+A report of a success only edits the newest comment, so a pull request that never had a failure gets no comment.
 
 The two workflows check the fix run and its pull request with two subcommands, which the `autofix-check` and `autofix-resolve` composite actions run from their own commit with the `python3` of the runner:
 

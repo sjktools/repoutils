@@ -3,8 +3,9 @@ or just pins the version the project requires: pyproject.toml's [tool.uv]
 required-version minimum and the justfile's minimum-version. That covers a
 step that uses repoutils' prepare-publish action, which installs both, and a
 local composite action's input that a step's version comes from, through its
-default and any step that uses the action and sets the input. A Dockerfile's ghcr.io/astral-sh/uv stage, if there is one, must use
-that uv too.
+default and any step that uses the action and sets the input. A
+Dockerfile's ghcr.io/astral-sh/uv stage, if there is one, must use that uv
+too.
 
 It also checks that the actions in .github/workflows/actions.lock from a
 package's GitHub repository are at the commit that uv.lock's version of that

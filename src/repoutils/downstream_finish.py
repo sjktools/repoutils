@@ -40,6 +40,8 @@ class Check:
     # Its status or conclusion, as GitHub gives it.
     detail: str
     url: str
+    # The check run's or status's own ID, which a rerun's new check run doesn't share.
+    id: int
 
 
 def required_checks(repo: str, token: str, branch: str) -> list[Required]:
@@ -83,11 +85,13 @@ def checks(repo: str, token: str, sha: str) -> list[Check]:
         else:
             state, detail = ("passed" if conclusion in _PASSING else "failed"), str(conclusion)
         app = (run.get("app") or {}).get("id")
-        found.append(Check(run["name"], app, state, detail, run.get("html_url") or ""))
+        found.append(Check(run["name"], app, state, detail, run.get("html_url") or "", run["id"]))
     # The combined status holds only the latest status of each context.
     for status in _pages(f"{commit}/status", token, "statuses"):
         state = {"success": "passed", "pending": "pending"}.get(status["state"], "failed")
-        found.append(Check(status["context"], None, state, status["state"], status.get("target_url") or ""))
+        found.append(
+            Check(status["context"], None, state, status["state"], status.get("target_url") or "", status["id"])
+        )
     return found
 
 
@@ -149,7 +153,7 @@ def wait(
         sha: str = _pull(repo, token, bump)["head"]["sha"]
         found = checks(repo, token, sha)
         waiting = [r.context for r in missing(required, found)] + [c.name for c in found if c.state == "pending"]
-        # Each check's URL too, so that a check run replaced by another of the same name counts as a change.
+        # Whole checks, IDs included, so that a check run replaced by another of the same name counts as a change.
         done = (sha, set(found)) if found and not waiting else None
         # Read the head again, so that it closes only the commit whose checks it read.
         if done is not None and done == settled and _pull(repo, token, bump)["head"]["sha"] == sha:

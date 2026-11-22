@@ -22,8 +22,11 @@ RULES = [
 ]
 
 
-def run(name: str, status: str = "completed", conclusion: str | None = "success", app: int = 15368) -> dict[str, Any]:
+def run(
+    name: str, status: str = "completed", conclusion: str | None = "success", app: int = 15368, run_id: int = 1
+) -> dict[str, Any]:
     return {
+        "id": run_id,
         "name": name,
         "status": status,
         "conclusion": conclusion if status == "completed" else None,
@@ -33,7 +36,7 @@ def run(name: str, status: str = "completed", conclusion: str | None = "success"
 
 
 def status(context: str, state: str = "success") -> dict[str, Any]:
-    return {"context": context, "state": state, "target_url": None}
+    return {"id": 2, "context": context, "state": state, "target_url": None}
 
 
 def pull(number: int = 5, branch: str = BRANCH, body: str = MARKER + "\nBumps") -> dict[str, Any]:
@@ -202,7 +205,8 @@ def test_waits_for_any_check(
 
 def test_waits_again_for_a_replaced_check_run(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # A rerun of test replaced its run with another of the same name.
-    rerun = dict(run("test"), html_url="https://github.com/d/down/runs/test-2")
+    # Its URL can be null, so the ID tells the two apart.
+    rerun = dict(run("test", run_id=3), html_url=None)
     fake = FakeGitHub(monkeypatch, [PASSED, ([rerun, *PASSED[0][1:]], PASSED[1])])
     assert finish("--interval", "5") == 0
     assert fake.slept == [5, 5]
@@ -265,9 +269,9 @@ def test_reads_every_page(monkeypatch: pytest.MonkeyPatch) -> None:
     found = downstream_finish.checks("d/down", "tok", "c")
     assert len(found) == 102
     assert found[100] == downstream_finish.Check(
-        "test", 15368, "pending", "queued", "https://github.com/d/down/runs/test"
+        "test", 15368, "pending", "queued", "https://github.com/d/down/runs/test", 1
     )
-    assert found[101] == downstream_finish.Check("cov", None, "failed", "failure", "")
+    assert found[101] == downstream_finish.Check("cov", None, "failed", "failure", "", 2)
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "nan"])

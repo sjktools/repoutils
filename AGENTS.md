@@ -127,6 +127,7 @@ Fix its cause, or assert it with `pytest.warns` around the call that raises it.
 
 CI pins its tools, and `just check-pins` fails if a pin differs.
 Every `setup-uv` step sets `version` to the minimum in `pyproject.toml`'s `[tool.uv] required-version`, and every `setup-just` step sets `just-version` to the justfile's `minimum-version`.
+The `prepare-publish` action takes both versions as inputs, so its steps use `${{ inputs.uv-version }}` and `${{ inputs.just-version }}`, and `check-pins` checks the inputs' defaults instead.
 `.github/workflows/actions.lock` pins every action the workflows use to a commit.
 After changing any `uses:`, regenerate it with `just fix` or `just actions-lock`, which run `gh actions-lock` (the [github/gh-actions-lock](https://github.com/github/gh-actions-lock) extension), and never edit it by hand.
 `just actions-lock-check`, part of `just check`, verifies it.

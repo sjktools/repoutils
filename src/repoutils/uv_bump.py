@@ -109,7 +109,9 @@ def bump(root: Path, old: str, new: str, lock_file: Path | None = None) -> tuple
         elif path == dockerfile:
             new_text = _dockerfile(text, new)
         else:
-            new_text, _ = check_pins.set_pins(text, *check_pins.UV, old, new)
+            new_text = text
+            for action, key in check_pins.PINS[check_pins.UV]:
+                new_text, _ = check_pins.set_pins(new_text, action, key, old, new)
         if new_text != text:
             changed[path] = new_text
 

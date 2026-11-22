@@ -61,6 +61,45 @@ def test_bump(tmp_path: Path) -> None:
     assert (root / "Dockerfile").read_text() == DOCKERFILE.replace("uv:0.13.6", "uv:0.13.7")
 
 
+PREPARE_PUBLISH = """\
+jobs:
+  publish:
+    steps:
+      - uses: sjktools/repoutils/.github/actions/prepare-publish@v1.0.0
+        with:
+          uv-version: "0.13.6"
+          just-version: "1.58.0"
+"""
+ACTION = """\
+inputs:
+  uv-version:
+    default: "0.13.6"
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v7
+      with:
+        version: ${{ inputs.uv-version }}
+    - uses: astral-sh/setup-uv@v7
+      with:
+        version: ${{ inputs.uv-version }}
+"""
+
+
+def test_bump_moves_prepare_publish_inputs_and_action_defaults(tmp_path: Path) -> None:
+    root = make_project(tmp_path, dockerfile=None)
+    (root / ".github/workflows/publish.yml").write_text(PREPARE_PUBLISH)
+    (root / ".github/actions/setup").mkdir(parents=True)
+    (root / ".github/actions/setup/action.yml").write_text(ACTION)
+    changed, _ = uv_bump.bump(root, "0.13.6", "0.13.7")
+    assert root / ".github/workflows/publish.yml" in changed
+    assert (root / ".github/workflows/publish.yml").read_text() == PREPARE_PUBLISH.replace(
+        'uv-version: "0.13.6"', 'uv-version: "0.13.7"'
+    )
+    # The default changes once, though two steps take it.
+    assert (root / ".github/actions/setup/action.yml").read_text() == ACTION.replace("0.13.6", "0.13.7")
+
+
 def test_bump_without_dockerfile(tmp_path: Path) -> None:
     root = make_project(tmp_path, dockerfile=None)
     assert root / "Dockerfile" not in uv_bump.bump(root, "0.13.6", "0.13.7")[0]

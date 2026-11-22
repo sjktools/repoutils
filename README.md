@@ -39,7 +39,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `long-files` | Lists the files over a line limit as Markdown (with changed files first), or posts that list to a pull request. |
 | `check-justfile` | Fails unless the justfile has the standard recipes for the features of the project, and `check`, `fix`, `ci` and `patch-coverage` run the standard recipes that they depend on (see [Justfile](#justfile)). |
 | `ruff-check` | Runs `ruff check --no-cache` with the arguments you give it, and fails if `ruff` fails or gives any warning, such as for an invalid `noqa` directive, which `ruff` only warns about. It runs the `ruff` on `PATH`, such as the one in the dev dependency group of the project under `uv run`. |
-| `check-pins` | Fails unless every `setup-uv` and `setup-just` workflow step pins the versions required by `pyproject.toml` and the justfile, and the actions that the project uses from the repository of a locked package that is installed come from the commit of that package, or only from the tag of its version if the package does not record its commit (see [Checking actions against a locked package](#checking-actions-against-a-locked-package)). |
+| `check-pins` | Fails unless every `setup-uv` and `setup-just` workflow step pins the versions required by `pyproject.toml` and the justfile (see [Pinning uv and just](#pinning-uv-and-just)), and the actions that the project uses from the repository of a locked package that is installed come from the commit of that package, or only from the tag of its version if the package does not record its commit (see [Checking actions against a locked package](#checking-actions-against-a-locked-package)). |
 | `check-checkout-credentials` | Fails on any `actions/checkout` step that does not set `persist-credentials`. |
 | `autofix` | Starts the PR Fixes workflow on a pull request, waits for the workflow that pushes its fixes, and prints the new head commit of the branch. `autofix resolve` and `autofix check-branch` make the checks of the two workflows (see [Running PR Fixes with a command](#running-pr-fixes-with-a-command)). |
 | `testpypi` | Starts the Publish workflow on the branch of a pull request, which publishes a dev version of the branch to TestPyPI, and prints the link to the run (see [Starting a TestPyPI release with a command](#starting-a-testpypi-release-with-a-command)). |
@@ -1505,6 +1505,26 @@ current = "4.20.0"
 - Each `releases` table maps the name of each asset of a release to its SHA-256 digest, in the form that the GitHub API gives.
 - The file keeps the earlier releases, newest first, so that the project can go back to one.
 - An asset of a release downloads from `https://github.com/<repo>/releases/download/<tag>/<name>`.
+
+## Pinning uv and just
+
+`check-pins` finds the version of uv and just that each step in `.github/workflows` and in the composite actions in `.github/actions` installs.
+It fails unless each version is the minimum that the project requires:
+
+- For uv, the minimum is the lower bound of `required-version` in the `[tool.uv]` table of `pyproject.toml`.
+- For just, the minimum is the `minimum-version` setting of the justfile.
+
+It reads the version from these steps:
+
+- A step that uses `astral-sh/setup-uv` gives the version of uv as its `version` input.
+- A step that uses `extractions/setup-just` gives the version of just as its `just-version` input.
+- A step that uses the `prepare-publish` action of this repository gives the version of uv as its `uv-version` input, and the version of just as its `just-version` input.
+  If the step does not set an input, the action installs the version that repoutils pins, and `check-pins` fails.
+
+In a composite action, a step can take the version from an input of the action, as `${{ inputs.<name> }}`.
+`check-pins` then reads the version from the `default` of that input.
+
+`dependabot-uv bump` changes the version of uv in each of these places.
 
 ## Recording the commit in a build
 

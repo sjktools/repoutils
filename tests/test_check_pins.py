@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from repoutils.commands.check_pins import UV, main, minimums, pins, set_pins, steps
+from repoutils.commands.check_pins import PREPARE_PUBLISH, UV, main, minimums, pins, set_pins, steps
 from repoutils.config import ConfigError
 
 WORKFLOW = """\
@@ -235,3 +235,94 @@ def test_set_pins_keeps_line_endings_and_plain_values() -> None:
     )
     text, changed = set_pins(workflow, *UV, "0.13.6", "0.13.7")
     assert (text, changed) == (workflow.replace("0.13.6", "0.13.7"), 1)
+
+
+INPUT_ACTION = """\
+name: Setup
+inputs:
+  # The uv to install.
+  uv-version:
+    description: >-
+      default: "9.9.9"
+    required: false
+
+    default: '0.13.5'  # keep in step
+  just-version:
+    required: true
+  default:
+    description: Not the default of any input.
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v7
+      with:
+        version: ${{ inputs.uv-version }}
+    - uses: astral-sh/setup-uv@v7
+      with:
+        version: ${{inputs.uv-version}}
+    - uses: extractions/setup-just@v3
+      with:
+        just-version: ${{ inputs.just-version }}
+"""
+
+
+def test_pins_reads_a_composite_actions_input_default() -> None:
+    # Both steps take uv-version's own default, not the line in its
+    # description; just-version has none, so its value is read as written.
+    assert pins(INPUT_ACTION, *UV) == ["0.13.5", "0.13.5"]
+    assert pins(INPUT_ACTION, "extractions/setup-just", "just-version") == ["${{ inputs.just-version }}"]
+    # A workflow's steps have no top-level inputs: to take a default from.
+    assert pins("steps:\n  - uses: astral-sh/setup-uv@v7\n    with:\n      version: ${{ inputs.v }}\n", *UV) == [
+        "${{ inputs.v }}"
+    ]
+
+
+def test_set_pins_changes_an_input_default_once() -> None:
+    text, changed = set_pins(INPUT_ACTION, *UV, "0.13.5", "0.13.6")
+    assert (text, changed) == (INPUT_ACTION.replace("'0.13.5'", "'0.13.6'"), 1)
+    assert set_pins(INPUT_ACTION, *UV, "0.13.4", "0.13.6") == (INPUT_ACTION, 0)
+
+
+def test_main_checks_composite_action_input_defaults(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (repo / ".github/actions/setup").mkdir(parents=True)
+    (repo / ".github/actions/setup/action.yml").write_text(INPUT_ACTION)
+    assert main(repo) == 1
+    assert capsys.readouterr().err.splitlines() == [
+        ".github/actions/setup/action.yml: a astral-sh/setup-uv step has version from input uv-version,"
+        " whose default is 0.13.5, not 0.13.6",
+    ] * 2 + [
+        ".github/actions/setup/action.yml: a extractions/setup-just step has"
+        " just-version: ${{ inputs.just-version }}, not 1.58.0",
+    ]
+
+
+PUBLISH_WORKFLOW = f"""\
+jobs:
+  publish:
+    steps:
+      - uses: {PREPARE_PUBLISH}@v1.0.0
+        with:
+          uv-version: "0.13.6"
+          just-version: "1.58.0"
+      - uses: {PREPARE_PUBLISH}@v1.0.0
+        with:
+          just-version: "1.57.0"
+      - uses: other/repo/.github/actions/prepare-publish@v1.0.0
+"""
+
+
+def test_main_checks_prepare_publish_inputs(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # Its inputs count as steps pinning uv and just, so a project with no
+    # setup-uv or setup-just step of its own passes.
+    passing = "\n".join(PUBLISH_WORKFLOW.splitlines()[:7]) + "\n"
+    (repo / ".github/workflows/publish.yml").write_text(passing)
+    assert main(repo) == 0
+    assert capsys.readouterr().out.startswith(
+        "workflows and actions pin uv 0.13.6 in 1 steps and just 1.58.0 in 1 steps"
+    )
+    (repo / ".github/workflows/publish.yml").write_text(PUBLISH_WORKFLOW)
+    assert main(repo) == 1
+    assert capsys.readouterr().err.splitlines() == [
+        f".github/workflows/publish.yml: a {PREPARE_PUBLISH} step has no uv-version, not 0.13.6",
+        f".github/workflows/publish.yml: a {PREPARE_PUBLISH} step has just-version: 1.57.0, not 1.58.0",
+    ]

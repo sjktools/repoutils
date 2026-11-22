@@ -13,22 +13,37 @@ description: >-
 # workflow's, so attest-action signs with the calling workflow's identity:
 # the OIDC token's workflow_ref is still publish-pypi.yml, which the trusted
 # publishers name. The calling job needs id-token: write.
+#
+# Another project that uses this action passes its own pins as uv-version and
+# just-version, which its `repoutils check-pins` checks as it checks its
+# setup-uv and setup-just steps.
+inputs:
+  uv-version:
+    description: The uv to install, the minimum in the project's [tool.uv] required-version.
+    required: false
+    # Keep in step with pyproject.toml's [tool.uv] required-version, which
+    # check-pins checks.
+    default: "0.13.6"
+  just-version:
+    description: The just to install, the project's justfile's minimum-version.
+    required: false
+    # Keep in step with the justfile's minimum-version, which check-pins checks.
+    default: "1.58.0"
+
 runs:
   using: composite
   steps:
-    # Keep version in step with pyproject.toml's [tool.uv] required-version.
     # No cache, so nothing a cache entry holds can reach what this publishes.
     - name: Install uv
       uses: astral-sh/setup-uv@v10.3.3
       with:
-        version: "0.13.6"
+        version: ${{ inputs.uv-version }}
         enable-cache: false
 
-    # Keep just-version in step with the justfile's minimum-version.
     - name: Install just
       uses: extractions/setup-just@v4.0.0
       with:
-        just-version: "1.58.0"
+        just-version: ${{ inputs.just-version }}
 
     - name: Download distributions
       uses: actions/download-artifact@v8.0.2

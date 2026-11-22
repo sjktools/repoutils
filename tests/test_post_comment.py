@@ -320,3 +320,12 @@ class PostCommentAuthorTests(TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(calls[0], ("GET", "https://api.github.com/user"))
         self.assertIn(("PATCH", "https://api.github.com/repos/o/r/issues/comments/5"), calls)
+
+
+class HideCommentsTests(TestCase):
+    def test_without_keep_hides_every_shown_report(self) -> None:
+        gh = FakeGitHub([_exolot_comment("A"), _exolot_comment("B", minimized=True), _exolot_comment("C")], pages=2)
+        with mock.patch.object(github_comments, "request", gh):
+            hidden = github_comments.hide_comments("o/r", 7, EXOLOT_MARKER, "tok")
+        self.assertEqual(hidden, 2)
+        self.assertEqual(gh.hidden(), ["A", "C"])

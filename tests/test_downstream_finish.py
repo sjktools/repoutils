@@ -1,3 +1,6 @@
+import io
+import urllib.error
+from email.message import Message
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +10,8 @@ from repoutils import downstream_finish, github
 from repoutils.commands import downstream
 
 API = f"{github.API_URL}/repos/d/down"
+# The check runs and the commit statuses that one read of a commit's checks finds.
+Poll = tuple[list[dict[str, Any]], list[dict[str, Any]]]
 VERSION = "0.4.1.dev7"
 BRANCH = f"downstream-test/pkg-{VERSION}"
 MARKER = "<!-- up-downstream-test-pkg -->"
@@ -62,8 +67,18 @@ class FakeGitHub:
         heads: list[str] | None = None,
         rules: list[dict[str, Any]] | None = None,
         state: str = "open",
+        after: list[list[Poll]] | None = None,
+        refuse: tuple[str, ...] = (),
     ) -> None:
         self.polls = polls
+        # The polls after the first re-run, the second, and so on.
+        self.after = after or []
+        self.refuse = refuse
+        # The re-run requests, and the rounds of them.
+        self.reruns = 0
+        self.rounds = 0
+        self.in_round = False
+        self.stage = {"check-runs": 0, "status": 0}
         self.pulls = [pull()] if pulls is None else pulls
         self.heads = heads or ["a" * 40]
         self.rules = RULES if rules is None else rules
@@ -81,16 +96,32 @@ class FakeGitHub:
         self.now += seconds
 
     def _poll(self, kind: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        index = min(self.reads[kind], len(self.polls) - 1)
+        # After each round of re-runs, the reads go on from the polls of the next stage.
+        self.in_round = False
+        polls = self.polls if not self.after else ([self.polls] + self.after)[min(self.rounds, len(self.after))]
+        if self.rounds != self.stage[kind]:
+            self.stage[kind], self.reads[kind] = self.rounds, 0
+        index = min(self.reads[kind], len(polls) - 1)
         self.reads[kind] += 1
-        return self.polls[index]
+        return polls[index]
 
     def request(self, method: str, url: str, token: str, *, json_body: object = None) -> Any:
         assert token == "tok"
         path = url.removeprefix(API)
         if method != "GET":
             self.changes.append((method, path, json_body))
+            if path in self.refuse:
+                raise urllib.error.HTTPError(url, 403, "Resource not accessible", Message(), io.BytesIO(b"{}"))
+            if path.endswith("/rerun-failed-jobs"):
+                self.reruns += 1
+                # The re-runs between two reads of the checks are one round.
+                if not self.in_round:
+                    self.rounds, self.in_round = self.rounds + 1, True
             return None
+        if path.startswith("/actions/jobs/"):
+            if path in self.refuse:
+                raise urllib.error.URLError("Connection reset")
+            return {"run_id": 100 + int(path.removeprefix("/actions/jobs/")) // 10}
         if path.startswith("/pulls?"):
             return self.pulls if "page=1" in path else []
         if path == "/pulls/5":
@@ -165,6 +196,120 @@ def test_leaves_a_pull_request_open_if_a_check_fails(
     assert "- test: failure https://github.com/d/down/runs/test\n- cov: error\n" in err
 
 
+def test_reruns_failed_jobs_once(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Two failed jobs of one workflow run (jobs 11 and 12 are in run 101), and one of another (run 102).
+    failed = [run("test", conclusion="failure", run_id=11), run("lint", conclusion="failure", run_id=12)]
+    first = ([*failed, run("e2e", conclusion="failure", run_id=21), run("docs", run_id=13)], [status("cov")])
+    # Right after the re-run, GitHub still gives the old check runs, which mustn't count.
+    rerun: Poll = ([run("test", run_id=31), run("lint", run_id=32), run("e2e", run_id=33), run("docs", run_id=13)], [])
+    fake = FakeGitHub(monkeypatch, [first], after=[[first, first, (rerun[0], [status("cov")])]])
+    assert finish("--interval", "5") == 0
+    assert (fake.reruns, fake.rounds) == (2, 1)
+    assert fake.changes[:2] == [
+        ("POST", "/actions/runs/101/rerun-failed-jobs", None),
+        ("POST", "/actions/runs/102/rerun-failed-jobs", None),
+    ]
+    assert fake.changes[2][:2] == ("POST", "/issues/5/comments")
+    out = capsys.readouterr().out
+    assert "Re-ran the failed jobs of https://github.com/d/down/actions/runs/101\n" in out
+    assert f"closed https://github.com/d/down/pull/5 and deleted its branch {BRANCH}" in out
+
+
+def test_leaves_it_open_if_a_rerun_fails_too(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    first: Poll = ([run("test", conclusion="failure", run_id=11), run("lint")], [])
+    second: Poll = ([run("test", conclusion="failure", run_id=14), run("lint")], [])
+    fake = FakeGitHub(monkeypatch, [first], after=[[second]])
+    assert finish() == 1
+    # Only once.
+    assert fake.changes == [("POST", "/actions/runs/101/rerun-failed-jobs", None)]
+    assert "- test: failure" in capsys.readouterr().err
+
+
+def test_reruns_as_many_times_as_retries(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fails: list[Poll] = [([run("test", conclusion="failure", run_id=n), run("lint")], []) for n in (11, 14, 15)]
+    fake = FakeGitHub(monkeypatch, [fails[0]], after=[[fails[1]], [fails[2]], [PASSED]])
+    assert finish("--retries", "2") == 1
+    assert fake.reruns == fake.rounds == 2
+
+
+def test_reruns_nothing_with_no_retries(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeGitHub(monkeypatch, [([run("test", conclusion="failure", run_id=11), run("lint")], [])])
+    assert finish("--retries", "0") == 1
+    assert fake.changes == []
+
+
+# A commit status, or another app's check run, can't be re-run.
+OUTSIDE_ACTIONS: list[Poll] = [
+    ([run("test", conclusion="failure", run_id=11), run("lint")], [status("cov", "failure")]),
+    ([run("test", conclusion="failure", run_id=11), run("lint"), run("scan", conclusion="failure", app=7)], []),
+]
+
+
+@pytest.mark.parametrize("poll", OUTSIDE_ACTIONS)
+def test_reruns_nothing_if_a_check_outside_actions_fails(
+    poll: Poll, upstream: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeGitHub(monkeypatch, [poll])
+    assert finish() == 1
+    assert fake.changes == []
+
+
+def test_warns_if_github_refuses_the_rerun(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeGitHub(
+        monkeypatch,
+        [([run("test", conclusion="failure", run_id=11), run("lint")], [])],
+        refuse=("/actions/runs/101/rerun-failed-jobs",),
+    )
+    assert finish() == 1
+    assert fake.reruns == 0
+    err = capsys.readouterr().err
+    assert "warning: couldn't re-run the failed jobs on d/down, which needs Actions write: HTTP Error 403" in err
+    assert "Left https://github.com/d/down/pull/5 open" in err
+
+
+def test_warns_if_the_job_lookup_fails(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeGitHub(
+        monkeypatch, [([run("test", conclusion="failure", run_id=11), run("lint")], [])], refuse=("/actions/jobs/11",)
+    )
+    assert finish() == 1
+    assert fake.changes == []
+    assert "warning: couldn't re-run the failed jobs on d/down, which needs Actions write: <urlopen error" in (
+        capsys.readouterr().err
+    )
+
+
+def test_reruns_nothing_once_the_time_is_up(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The second read, which settles the checks, comes as the timeout ends.
+    fake = FakeGitHub(monkeypatch, [([run("test", conclusion="failure", run_id=11), run("lint")], [])])
+    assert finish("--timeout", "30", "--interval", "30") == 1
+    assert fake.changes == []
+
+
+def test_times_out_waiting_for_a_rerun(
+    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The re-run never replaces the failed check run.
+    first: Poll = ([run("test", conclusion="failure", run_id=11), run("lint")], [])
+    FakeGitHub(monkeypatch, [first])
+    assert finish("--timeout", "60") == 1
+    err = capsys.readouterr().err
+    assert "Gave up after 60 seconds waiting for test on https://github.com/d/down/pull/5, so it stays open" in err
+
+
+@pytest.mark.parametrize("value", ["-1", "10", "x"])
+def test_refuses_bad_retries(value: str, upstream: Path) -> None:
+    with pytest.raises(SystemExit):
+        finish("--retries", value)
+
+
 def test_waits_for_a_check_from_the_required_app(
     upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -189,7 +334,7 @@ def test_waits_for_a_check_that_appears_late(upstream: Path, monkeypatch: pytest
     # Every check had finished, but another workflow then added one.
     late = (PASSED[0] + [run("e2e", status="queued")], PASSED[1])
     fake = FakeGitHub(monkeypatch, [PASSED, late, (PASSED[0] + [run("e2e", conclusion="failure")], PASSED[1])])
-    assert finish() == 1
+    assert finish("--retries", "0") == 1
     assert fake.changes == []
 
 

@@ -138,7 +138,8 @@ def normalize_version(version: str) -> str | None:
     if parts["dev_l"] is not None:
         text += f".dev{int(parts['dev_n'] or 0)}"
     if parts["local"] is not None:
-        text += "+" + re.sub(r"[-_]", ".", parts["local"].lower())
+        local = re.split(r"[-_.]", parts["local"].lower())
+        text += "+" + ".".join(str(int(part)) if part.isdigit() else part for part in local)
     return text
 
 
@@ -180,7 +181,7 @@ def shown(url: str) -> str:
 
 
 def _shown_args(args: list[str]) -> str:
-    return shlex.join([shown(arg) if arg.startswith(("http://", "https://")) else arg for arg in args])
+    return shlex.join([shown(arg) if arg.lower().startswith(("http://", "https://")) else arg for arg in args])
 
 
 def _failed(args: list[str], result: subprocess.CompletedProcess[str]) -> str:

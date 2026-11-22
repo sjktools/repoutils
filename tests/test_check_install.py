@@ -118,6 +118,9 @@ def test_version_line_that_fails(project: Path, capsys: pytest.CaptureFixture[st
         (probe(files=0), "expected one build_info.json in my-pkg from dist/"),
         (probe(files=2), "found my_pkg/build_info.json, my_pkg/build_info1.json (see --build-info)"),
         (probe(commit=None, dirty=None), "records no commit, as its build had no Git checkout"),
+        (probe(commit=None, dirty=False), "records no commit"),
+        (probe(dirty=None), "records no commit"),
+        (probe(commit=COMMIT[:12]), "records no commit"),
         ((0, json.dumps({"version": "1", "files": {"a.json": "[]"}})), "a.json in dist/"),
     ],
 )
@@ -181,6 +184,7 @@ def test_another_name_ignores_the_project_version(project: Path) -> None:
         ("1.0.DEV", "1.0.dev0"),
         ("0!1.0", "1.0"),
         ("2!1.0+Ubuntu-1", "2!1.0+ubuntu.1"),
+        ("1.0+ABC.01", "1.0+abc.1"),
         ("latest", None),
     ],
 )
@@ -191,6 +195,9 @@ def test_normalize_version(version: str, normalized: str | None) -> None:
 def test_shown_hides_credentials() -> None:
     assert check_install.shown("https://user:secret@example.com/simple/") == "https://***@example.com/simple/"
     assert check_install.shown(INDEX) == INDEX
+    assert check_install._shown_args(["--default-index", "HTTPS://u:secret@example.com/"]) == (
+        "--default-index 'https://***@example.com/'"
+    )
 
 
 def test_index_credentials_are_not_printed(project: Path, capsys: pytest.CaptureFixture[str]) -> None:

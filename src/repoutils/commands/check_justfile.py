@@ -72,18 +72,26 @@ class Justfile:
             return frozenset()
         return frozenset(path for path in self.recipes if path == target or path.endswith(f"::{target}"))
 
-    def reached(self, name: str) -> set[str]:
-        """The recipes that the recipe name runs first or after, directly or through others."""
+    def _resolve(self, name: str, definite: bool) -> frozenset[str]:
+        """As resolve, but none for an alias that may be more than one recipe if definite."""
+        recipes = self.resolve(name)
+        return frozenset() if definite and len(recipes) > 1 else recipes
+
+    def reached(self, name: str, definite: bool = False) -> set[str]:
+        """The recipes that the recipe name runs first or after, directly or through others.
+
+        If definite, only those it surely runs, not through an alias that may be more than one recipe.
+        """
         seen: set[str] = set()
-        todo = [dependency for start in self.resolve(name) for dependency in self.recipes[start]]
+        todo = [dependency for start in self._resolve(name, definite) for dependency in self.recipes[start]]
         while todo:
-            for recipe in self.resolve(todo.pop()) - seen:
+            for recipe in self._resolve(todo.pop(), definite) - seen:
                 seen.add(recipe)
                 todo.extend(self.recipes[recipe])
         return seen
 
-    def reaches(self, name: str, dependency: str) -> bool:
-        return bool(self.resolve(dependency) & self.reached(name))
+    def reaches(self, name: str, dependency: str, definite: bool = False) -> bool:
+        return bool(self._resolve(dependency, definite) & self.reached(name, definite))
 
 
 def _table(dump: dict[str, Any], key: str, default: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -223,7 +231,9 @@ def problems(justfile: Justfile, settings: Settings) -> tuple[list[str], list[Re
     if justfile.resolve("fix") and justfile.resolve("check"):
         for fixer, checker in FIX_CHECK_PAIRS:
             if (
-                justfile.reaches("fix", fixer)
+                # A pair is only required when fix surely runs the fixer, so
+                # an alias that just can't place never adds a requirement.
+                justfile.reaches("fix", fixer, definite=True)
                 and ("check", checker) not in unreached
                 and not justfile.reaches("check", checker)
             ):

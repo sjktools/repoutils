@@ -122,6 +122,28 @@ def test_alias_whose_target_name_is_also_at_the_top() -> None:
     assert justfile.reaches("check", "fmt-check")
     assert justfile.reaches("lint-only", "fmt-check")
     assert not justfile.reaches("other", "fmt-check")
+    assert not justfile.reaches("check", "fmt-check", definite=True)
+    assert justfile.reaches("check", "tools::list", definite=True)
+
+
+def test_pair_rule_needs_fix_to_surely_run_the_fixer() -> None:
+    # fix may be tools::run, which runs nothing, or other::run, which runs the
+    # requirements-fix alias; only a fix that surely runs it needs the pair.
+    recipes = standard_recipes()
+    standard_fix = recipes["fix"]
+    recipes["check"].remove("requirements-check")
+    del recipes["requirements-fix"]
+    recipes.update({"tools::run": [], "other::run": ["other::minfix"], "other::minfix": []})
+    aliases = {"fix-all": "run", "requirements-fix": "minfix"}
+    settings = Settings(
+        features=frozenset(config.FEATURES), omit_dependencies=(("check", frozenset({"requirements-check"})),)
+    )
+    recipes["fix"] = [*standard_fix, "fix-all"]
+    assert problems(parse_dump(dump(recipes, aliases=aliases)), settings)[0] == []
+    recipes["fix"] = [*standard_fix, "other::run"]
+    assert problems(parse_dump(dump(recipes, aliases=aliases)), settings)[0] == [
+        "`fix` reaches `requirements-fix`, so `check` must reach `requirements-check`."
+    ]
 
 
 def test_alias_to_nothing_is_missing() -> None:

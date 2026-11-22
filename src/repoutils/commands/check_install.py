@@ -32,6 +32,7 @@ import shlex
 import subprocess
 import sys
 import time
+import urllib.parse
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,20 +109,49 @@ def wheel_name(name: str) -> str:
     return re.sub(r"[-_.]+", "_", name).lower()
 
 
+# PEP 440's version pattern (its appendix B), for normalize_version.
+_VERSION_RE = re.compile(
+    r"""v?(?:(?P<epoch>[0-9]+)!)?(?P<release>[0-9]+(?:\.[0-9]+)*)
+    (?:[-_.]?(?P<pre_l>a|b|c|rc|alpha|beta|pre|preview)[-_.]?(?P<pre_n>[0-9]+)?)?
+    (?:-(?P<post_n1>[0-9]+)|[-_.]?(?P<post_l>post|rev|r)[-_.]?(?P<post_n2>[0-9]+)?)?
+    (?:[-_.]?(?P<dev_l>dev)[-_.]?(?P<dev_n>[0-9]+)?)?
+    (?:\+(?P<local>[a-z0-9]+(?:[-_.][a-z0-9]+)*))?""",
+    re.IGNORECASE | re.VERBOSE,
+)
+_PRE = {"alpha": "a", "beta": "b", "c": "rc", "pre": "rc", "preview": "rc"}
+
+
+def normalize_version(version: str) -> str | None:
+    """version as PEP 440 normalizes it, and wheel file names give it (`1.0-RC1` is `1.0rc1`),
+    or None if it isn't a PEP 440 version."""
+    match = _VERSION_RE.fullmatch(version.strip())
+    if match is None:
+        return None
+    parts = match.groupdict()
+    text = f"{int(parts['epoch'])}!" if parts["epoch"] and int(parts["epoch"]) else ""
+    text += ".".join(str(int(number)) for number in parts["release"].split("."))
+    if parts["pre_l"] is not None:
+        label = parts["pre_l"].lower()
+        text += f"{_PRE.get(label, label)}{int(parts['pre_n'] or 0)}"
+    if parts["post_n1"] is not None or parts["post_l"] is not None:
+        text += f".post{int(parts['post_n1'] or parts['post_n2'] or 0)}"
+    if parts["dev_l"] is not None:
+        text += f".dev{int(parts['dev_n'] or 0)}"
+    if parts["local"] is not None:
+        text += "+" + re.sub(r"[-_]", ".", parts["local"].lower())
+    return text
+
+
 def find_wheel(path: Path, name: str, version: str | None) -> Path:
     """path if it's a file, or else the one wheel of name (at version, if given) in the directory path.
-
-    A version that isn't spelt as PEP 440 normalizes it, such as `1.0-rc1`, matches no wheel's file
-    name, so then any one wheel of name will do, as this can't normalize it with the standard library."""
+    A version that isn't a PEP 440 version matches any one wheel of name."""
     if path.is_file():
         return path
     if not path.is_dir():
         raise CheckError(f"{path.as_posix()} is neither a wheel nor a directory")
-    pattern = f"{wheel_name(name)}-{version if version is not None else '*'}-*.whl"
+    normalized = normalize_version(version) if version is not None else None
+    pattern = f"{wheel_name(name)}-{normalized or '*'}-*.whl"
     wheels = sorted(path.glob(pattern))
-    if not wheels and version is not None:
-        pattern = f"{wheel_name(name)}-*-*.whl"
-        wheels = sorted(path.glob(pattern))
     if len(wheels) != 1:
         found = ", ".join(wheel.name for wheel in wheels) or "none"
         raise CheckError(f"expected one wheel matching {path.as_posix()}/{pattern}, found {found}")
@@ -141,9 +171,21 @@ def _call(runner: Runner, args: list[str]) -> subprocess.CompletedProcess[str]:
         raise CheckError(f"can't run {args[0]}: {error}") from error
 
 
+def shown(url: str) -> str:
+    """url without the user name and password it may hold, to print."""
+    parts = urllib.parse.urlsplit(url)
+    if "@" not in parts.netloc:
+        return url
+    return urllib.parse.urlunsplit(parts._replace(netloc="***@" + parts.netloc.rpartition("@")[2]))
+
+
+def _shown_args(args: list[str]) -> str:
+    return shlex.join([shown(arg) if arg.startswith(("http://", "https://")) else arg for arg in args])
+
+
 def _failed(args: list[str], result: subprocess.CompletedProcess[str]) -> str:
     output = (result.stdout + result.stderr).rstrip()
-    return f"`{shlex.join(args)}` exited {result.returncode}" + (f":\n{output}" if output else "")
+    return f"`{_shown_args(args)}` exited {result.returncode}" + (f":\n{output}" if output else "")
 
 
 def read_probe(name: str, source: str, stdout: str) -> tuple[Installed | None, list[str]]:
@@ -185,7 +227,7 @@ def _check_command(
         if result.returncode != 0:
             problems.append(_failed(args, result))
         elif result.stdout.strip() != expected:
-            problems.append(f"expected `{shlex.join(args)}` to print {expected!r}, got {result.stdout.strip()!r}")
+            problems.append(f"expected `{_shown_args(args)}` to print {expected!r}, got {result.stdout.strip()!r}")
     whole = re.compile(rf"\b{installed.commit}\b")
     for run in options.runs:
         args = uv_run(source, [options.command, *run.args], index)
@@ -193,7 +235,7 @@ def _check_command(
         if result.returncode != 0:
             problems.append(_failed(args, result))
         elif run.with_commit and whole.search(result.stdout) is None:
-            problems.append(f"expected `{shlex.join(args)}` to print the commit {installed.commit}")
+            problems.append(f"expected `{_shown_args(args)}` to print the commit {installed.commit}")
     return problems
 
 
@@ -245,7 +287,7 @@ def check_release(
         if installed is None:
             return problems
         return _check_command(runner, name, source, options, installed, index)
-    return [f"{source} did not install from {index} after {len(delays)} tries: {failure}"]
+    return [f"{source} did not install from {shown(index)} after {len(delays)} tries: {failure}"]
 
 
 def _project() -> dict[str, object]:
@@ -273,6 +315,10 @@ def main(
     sleep: Callable[[float], None] = time.sleep,
 ) -> int:
     project = _project()
+    # [project] version is this project's, so it says nothing about another that --name names.
+    project_name = project.get("name")
+    same = name is None or (isinstance(project_name, str) and wheel_name(name) == wheel_name(project_name))
+    project_version = project.get("version") if same else None
     if name is None:
         project_name = project.get("name")
         if not isinstance(project_name, str) or not project_name:
@@ -288,13 +334,12 @@ def main(
     options = Options(command or name, version_line, parsed, build_info_path)
     try:
         if wheel is not None:
-            project_version = project.get("version")
             found = find_wheel(wheel, name, project_version if isinstance(project_version, str) else None)
             problems = check_wheel(found, name, options, runner)
             done = f"{found.as_posix()} installs and records this checkout's commit"
         elif version is not None:
             problems = check_release(name, version, index, options, runner, delays, sleep)
-            done = f"{name} {version} installs from {index} and records its commit"
+            done = f"{name} {version} installs from {shown(index)} and records its commit"
         else:
             print("check-install: give --wheel or --version", file=sys.stderr)
             return 2

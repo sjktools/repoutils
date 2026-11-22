@@ -144,10 +144,62 @@ def test_wheel_without_a_static_version_needs_one_wheel(project: Path, capsys: p
     assert "expected one wheel matching dist/my_pkg-*-*.whl, found my_pkg-1.1.0" in capsys.readouterr().err
 
 
-def test_unnormalized_project_version_finds_the_one_wheel(project: Path) -> None:
-    (project / "pyproject.toml").write_text('[project]\nname = "my-pkg"\nversion = "1.2.0-rc1"\n')
-    (project / "dist" / WHEEL).unlink()
-    assert check_install.main(Path("dist"), runner=FakeRunner(probe("1.1.0"))) == 0
+def test_unnormalized_project_version_finds_its_wheel(project: Path) -> None:
+    (project / "pyproject.toml").write_text('[project]\nname = "my-pkg"\nversion = "1.2.0-RC1"\n')
+    (project / "dist" / "my_pkg-1.2.0rc1-py3-none-any.whl").write_text("")
+    runner = FakeRunner(probe("1.2.0rc1"))
+    assert check_install.main(Path("dist"), runner=runner) == 0
+    assert "dist/my_pkg-1.2.0rc1-py3-none-any.whl" in runner.calls[0]
+
+
+def test_project_version_that_isnt_pep_440_needs_one_wheel(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (project / "pyproject.toml").write_text('[project]\nname = "my-pkg"\nversion = "latest"\n')
+    assert check_install.main(Path("dist"), runner=FakeRunner()) == 1
+    assert "expected one wheel matching dist/my_pkg-*-*.whl" in capsys.readouterr().err
+
+
+def test_another_name_ignores_the_project_version(project: Path) -> None:
+    (project / "dist" / "other-2.0-py3-none-any.whl").write_text("")
+    runner = FakeRunner(probe("2.0"))
+    assert check_install.main(Path("dist"), name="other", runner=runner) == 0
+    assert "dist/other-2.0-py3-none-any.whl" in runner.calls[0]
+    # The project's own name, however spelt, still uses its version.
+    assert check_install.main(Path("dist"), name="My_Pkg", runner=FakeRunner(probe())) == 0
+
+
+@pytest.mark.parametrize(
+    ("version", "normalized"),
+    [
+        ("1.0", "1.0"),
+        ("v01.02", "1.2"),
+        ("1.1alpha1", "1.1a1"),
+        ("1.0-beta.2", "1.0b2"),
+        ("1.0c", "1.0rc0"),
+        ("1.0preview3", "1.0rc3"),
+        ("1.0-1", "1.0.post1"),
+        ("1.0_rev", "1.0.post0"),
+        ("1.0.DEV", "1.0.dev0"),
+        ("0!1.0", "1.0"),
+        ("2!1.0+Ubuntu-1", "2!1.0+ubuntu.1"),
+        ("latest", None),
+    ],
+)
+def test_normalize_version(version: str, normalized: str | None) -> None:
+    assert check_install.normalize_version(version) == normalized
+
+
+def test_shown_hides_credentials() -> None:
+    assert check_install.shown("https://user:secret@example.com/simple/") == "https://***@example.com/simple/"
+    assert check_install.shown(INDEX) == INDEX
+
+
+def test_index_credentials_are_not_printed(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    index = "https://user:secret@example.com/simple/"
+    assert check_install.main(version="1.2.0", index=index, runner=FakeRunner((1, "")), delays=[0]) == 1
+    assert check_install.main(version="1.2.0", index=index, runner=FakeRunner(probe())) == 0
+    out, err = capsys.readouterr()
+    assert "secret" not in out + err
+    assert "https://***@example.com/simple/" in out
 
 
 def test_a_run_that_fails(project: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -286,6 +286,13 @@ def test_warns_if_the_job_lookup_fails(
     )
 
 
+def test_reruns_nothing_once_the_time_is_up(upstream: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The second read, which settles the checks, comes as the timeout ends.
+    fake = FakeGitHub(monkeypatch, [([run("test", conclusion="failure", run_id=11), run("lint")], [])])
+    assert finish("--timeout", "30", "--interval", "30") == 1
+    assert fake.changes == []
+
+
 def test_times_out_waiting_for_a_rerun(
     upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

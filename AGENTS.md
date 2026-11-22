@@ -222,7 +222,7 @@ Its `finish` job runs the `downstream-finish` action, in the `downstream` enviro
 The action runs `repoutils downstream finish`, which waits for the test PR's checks, then:
 
 - closes the PR and deletes its branch if they all pass.
-- re-runs the failed jobs once and waits again, if only GitHub Actions jobs failed.
+- re-runs the failed jobs up to `--retries` times (default `1`) and waits again, if only GitHub Actions jobs failed and time is left.
 - leaves the PR open and fails if any still fails.
 
 So a test run succeeds only if it closed every test PR.

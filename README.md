@@ -249,7 +249,7 @@ That run publishes a dev version of `main` to TestPyPI.
 - If only GitHub Actions jobs fail, it re-runs the failed jobs of their workflow runs, and waits for the checks again.
   It does this once, or `--retries` times (from `0` to `9`), because a check can fail for a short-lived reason, such as a TestPyPI server that does not yet list the dev version.
   It re-runs nothing if a commit status or a check run of another app fails, because the pull request cannot pass then.
-  The re-runs count toward the same `--timeout`, so a re-run gets only the time that is left.
+  The re-runs count toward the same `--timeout`, so a re-run gets only the time that is left, and it re-runs nothing once no time is left.
 - If any check still fails, it leaves the pull request open, lists the checks that failed, and exits with code `1`.
 - It fails if the checks do not finish within `--timeout` seconds (default `3600`).
   It reads the checks every `--interval` seconds (default `30`).

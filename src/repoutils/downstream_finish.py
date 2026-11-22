@@ -216,8 +216,8 @@ def finish(
 ) -> int:
     """Wait for the checks on bump's pull request, then close it and delete
     its branch if they all passed, and return 0. If only GitHub Actions jobs
-    failed, re-run them and wait again, up to retries times. If any still
-    failed, leave it open, and return 1."""
+    failed, re-run them and wait again, up to retries times while time is
+    left. If any still failed, leave it open, and return 1."""
     deadline = monotonic() + timeout
     required = required_checks(repo, token, bump.base)
     print(f"Waiting for the checks on {bump.url}")
@@ -226,7 +226,8 @@ def finish(
     try:
         sha, found = wait(repo, token, bump, interval=interval, deadline=deadline, required=required)
         failed = [c for c in found if c.state == "failed"]
-        while failed and retries > 0 and rerun(repo, token, failed):
+        # With no time left, a re-run couldn't finish, so it reports the failures instead.
+        while failed and retries > 0 and monotonic() < deadline and rerun(repo, token, failed):
             retries -= 1
             replaced = frozenset(c.id for c in failed)
             sha, found = wait(

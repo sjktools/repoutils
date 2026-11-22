@@ -46,7 +46,11 @@ class FakeGitHub:
 
 
 def _exolot_comment(
-    node_id: str, *, mine: bool = True, minimized: bool = False, body: str = EXOLOT_MARKER + "\nold"
+    node_id: str,
+    *,
+    mine: bool = True,
+    minimized: bool = False,
+    body: str = EXOLOT_MARKER + "\nold",
 ) -> dict[str, Any]:
     return {"id": node_id, "viewerDidAuthor": mine, "isMinimized": minimized, "body": body}
 
@@ -81,6 +85,8 @@ class PostCommentHidePreviousTests(TestCase):
                         _exolot_comment("OTHER", body="<!-- something else -->"),
                         _exolot_comment("OLD2"),
                         _exolot_comment("NEW"),
+                        # Another run's, posted since: a newer report, so left alone.
+                        _exolot_comment("LATER"),
                     ],
                     pages=pages,
                 )
@@ -224,3 +230,57 @@ class PostCommentEditTests(TestCase):
         with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
             post_comment_main(["7", "r.md", "--name", "x", "--update-only", "--hide-previous"])
         self.assertIn("can't go with --hide-previous", err.getvalue())
+
+    def test_update_only_edits_the_newest_and_deletes_the_rest(self) -> None:
+        code, _, writes = self._update_only(
+            [
+                {"id": 5, "user": {"login": "bot"}, "body": "<!-- repoutils-autofix -->\nfailed"},
+                {"id": 6, "user": {"login": "bot"}, "body": "<!-- repoutils-autofix -->\nfailed again"},
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            writes,
+            [
+                (
+                    "PATCH",
+                    "https://api.github.com/repos/o/r/issues/comments/6",
+                    {"body": "<!-- repoutils-autofix -->\nfixed\n"},
+                ),
+                ("DELETE", "https://api.github.com/repos/o/r/issues/comments/5", None),
+            ],
+        )
+
+
+class PostCommentAuthorTests(TestCase):
+    def test_looks_up_the_author_when_not_given(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "r.md"
+            report.write_text("new\n")
+            calls: list[tuple[str, str]] = []
+
+            def request(method: str, url: str, token: str, **kwargs: object) -> Any:
+                calls.append((method, url))
+                if url.endswith("/user"):
+                    return {"login": "me"}
+                return [{"id": 5, "user": {"login": "me"}, "body": "<!-- repoutils-notes -->\nold"}]
+
+            with (
+                contextlib.chdir(tmp),
+                mock.patch.dict("os.environ", {"GITHUB_TOKEN": "tok"}),
+                mock.patch.object(github_comments, "request", request),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                code = post_comment_main(["7", str(report), "--repo", "o/r", "--name", "notes"])
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[0], ("GET", "https://api.github.com/user"))
+        self.assertIn(("PATCH", "https://api.github.com/repos/o/r/issues/comments/5"), calls)
+
+
+class HideCommentsTests(TestCase):
+    def test_without_keep_hides_every_shown_report(self) -> None:
+        gh = FakeGitHub([_exolot_comment("A"), _exolot_comment("B", minimized=True), _exolot_comment("C")], pages=2)
+        with mock.patch.object(github_comments, "request", gh):
+            hidden = github_comments.hide_comments("o/r", 7, EXOLOT_MARKER, "tok")
+        self.assertEqual(hidden, 2)
+        self.assertEqual(gh.hidden(), ["A", "C"])

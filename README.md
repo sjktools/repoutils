@@ -375,13 +375,21 @@ Two options are for a workflow that runs the command for a `/autofix` comment:
   If the reaction fails, the command only warns.
 - `--report <file>` writes the Markdown for a comment on the pull request when the command fails, unless the `report` job of the `fix-push.yml` run succeeded.
   The comment says how far the command got, and links to the run of the workflow, which the command reads from `$GITHUB_SERVER_URL`, `$GITHUB_REPOSITORY` and `$GITHUB_RUN_ID`.
+  If GitHub refused to start a run, the comment gives the reason from GitHub.
+
+GitHub does not start a workflow whose `uses:` are not all in `.github/workflows/actions.lock`.
+So a branch that changes the `uses:` of `fix.yml`, for example to move to a new release of the actions of repoutils, can stop `/autofix` from starting.
+`/autofix` cannot then update `actions.lock` itself.
+The command and the comment of `--report` recognise this error, and say how to fix it: run `gh actions-lock` on the branch where `gh` is logged in to GitHub, then commit and push `actions.lock`.
 
 In GitHub Actions, the command prints its errors and warnings as annotations.
 
 The `autofix-start` composite action is the job of `autofix-comment.yml`.
 It does nothing unless the comment is `/autofix`, ignoring whitespace.
-It runs `repoutils autofix` with both options, and posts the report with `repoutils post-comment`, in the comment that the `report` job of `fix-push.yml` posts.
+It runs `repoutils autofix` with both options, and posts the report with `repoutils post-comment`, with the marker of the comment that the `report` job of `fix-push.yml` posts.
 The `post-comment` composite action runs `repoutils post-comment`, and is the last step of that `report` job.
+Each report, of a success or a failure, is a new comment below the `/autofix` comment, because GitHub notifies the subscribers of the pull request about a new comment but not about an edit.
+The report hides the earlier reports as outdated.
 
 The two workflows check the fix run and its pull request with two subcommands, which the `autofix-check` and `autofix-resolve` composite actions run from their own commit with the `python3` of the runner:
 

@@ -9,7 +9,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from email.message import Message
 from pathlib import Path
 from typing import IO, Any, override
@@ -170,16 +170,17 @@ def marked_comments(repo: str, pr: int, author: str | None, marker: str, token: 
 
 
 def upsert_comment(repo: str, pr: int, author: str, marker: str, body: str, token: str, *, create: bool = True) -> bool:
-    """Edit author's comment on pr starting with marker to have body, or post
-    one if there's none and create is true. body should start with marker, so
-    the next run finds it. Returns whether it edited or posted one."""
+    """Edit author's newest comment on pr starting with marker to have body,
+    or post one if there's none and create is true. body should start with
+    marker, so the next run finds it. Returns whether it edited or posted one."""
     previous = marked_comments(repo, pr, author, marker, token)
     comments_url = f"{API_URL}/repos/{repo}/issues/comments"
     if previous:
         # Edit in place, so the comment keeps its place in the conversation.
-        request("PATCH", f"{comments_url}/{previous[0]['id']}", token, json_body={"body": body})
+        # The newest, as a run with --hide-previous may have posted it.
+        request("PATCH", f"{comments_url}/{previous[-1]['id']}", token, json_body={"body": body})
         # Keep only one, should a failed or raced run have left another.
-        for comment in previous[1:]:
+        for comment in previous[:-1]:
             request("DELETE", f"{comments_url}/{comment['id']}", token)
     elif create:
         request("POST", f"{API_URL}/repos/{repo}/issues/{pr}/comments", token, json_body={"body": body})
@@ -216,21 +217,34 @@ mutation($id: ID!) {
 }"""
 
 
-def hide_comments(repo: str, pr: int, marker: str, token: str, *, keep: str | None = None) -> int:
-    """Hide as outdated every comment on pr that token's user posted whose body
-    starts with marker and isn't hidden yet, except the one whose node ID is
-    keep. Matching the author means nobody else's comment can be hidden by
-    copying the marker. Returns how many it hid."""
+def own_comments(repo: str, pr: int, marker: str, token: str) -> Iterator[dict[str, Any]]:
+    """The comments on pr that token's user posted whose body starts with
+    marker, oldest first, as GraphQL nodes with id and isMinimized. Matching
+    the author means nobody else's comment is picked up by copying the
+    marker."""
     owner, name = repo.split("/", 1)
-    hidden = 0
     cursor = None
     while True:
         variables = {"owner": owner, "name": name, "pr": pr, "cursor": cursor}
         comments = graphql(_MY_COMMENTS, variables, token)["repository"]["pullRequest"]["comments"]
         for c in comments["nodes"]:
-            if c["viewerDidAuthor"] and not c["isMinimized"] and c["body"].startswith(marker) and c["id"] != keep:
-                graphql(_MINIMIZE, {"id": c["id"]}, token)
-                hidden += 1
+            if c["viewerDidAuthor"] and c["body"].startswith(marker):
+                yield c
         if not comments["pageInfo"]["hasNextPage"]:
-            return hidden
+            return
         cursor = comments["pageInfo"]["endCursor"]
+
+
+def hide_comments(repo: str, pr: int, marker: str, token: str, *, keep: str | None = None) -> int:
+    """Hide as outdated each of own_comments that isn't hidden yet, up to the
+    one whose node ID is keep, if given. Comments after keep are left alone,
+    as another run may have posted them since, with a newer report. Returns
+    how many it hid."""
+    hidden = 0
+    for c in own_comments(repo, pr, marker, token):
+        if c["id"] == keep:
+            break
+        if not c["isMinimized"]:
+            graphql(_MINIMIZE, {"id": c["id"]}, token)
+            hidden += 1
+    return hidden

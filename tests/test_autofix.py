@@ -52,7 +52,10 @@ class FakeGitHub:
         push_lists: list[list[dict[str, Any]]],
         push_runs: list[dict[str, Any]],
         report: str | None = "success",
+        refused: dict[str, bytes] | None = None,
     ) -> None:
+        # The workflows whose dispatch GitHub refuses with a 422, and the body it answers with.
+        self.refused = refused or {}
         self.answers: dict[str, list[Any]] = {
             f"{REPO}/pulls/5": prs,
             FIX_RUN: fix_runs,
@@ -76,6 +79,9 @@ class FakeGitHub:
         if method == "POST" and url == REACTIONS:
             return {"content": "rocket"}
         if method == "POST":
+            for workflow, body in self.refused.items():
+                if url.endswith(f"/{workflow}/dispatches"):
+                    raise urllib.error.HTTPError(url, 422, "Unprocessable Entity", Message(), io.BytesIO(body))
             run_id = 7 if url.endswith("/fix.yml/dispatches") else 8
             return {"workflow_run_id": run_id}
         answers = self.answers[url]
@@ -333,6 +339,91 @@ def test_report() -> None:
         f"but [PR Fixes Push]({PUSH_PAGE}) didn't report whether it pushed the fixes.\n"
     )
     assert autofix.report(autofix.Progress(fix_url=FIX_PAGE, push_url=PUSH_PAGE, reported=True), run) is None
+
+
+def test_report_gives_the_reason_github_refused_a_run() -> None:
+    run = "https://github.com/o/r/actions/runs/1"
+    assert autofix.report(autofix.Progress(refused="HTTP 403: Resource not accessible"), run) == (
+        f"/autofix [couldn't start PR Fixes]({run}), as GitHub refused:\n\n"
+        "```\nHTTP 403: Resource not accessible\n```\n"
+    )
+    # A fence longer than any run of backticks in the reason.
+    assert autofix.report(autofix.Progress(fix_url=FIX_PAGE, refused="a ```` b"), run) == (
+        f"/autofix started [PR Fixes]({FIX_PAGE}), but [couldn't start pushing its fixes]({run}), "
+        "as GitHub refused:\n\n`````\na ```` b\n`````\n"
+    )
+
+
+LOCKFILE_422 = (
+    b'{"message": "Invalid Argument - failed to parse workflow: Invalid dependency lockfile '
+    b'\\".github/workflows/actions.lock\\": workflow \\".github/workflows/fix.yml\\" references actions '
+    b"not present in the lockfile: sjktools/repoutils@v0.5.1 Run 'gh actions-lock' to regenerate the lockfile.\", "
+    b'"documentation_url": "https://docs.github.com/rest", "status": "422"}'
+)
+LOCKFILE_REASON = (
+    "HTTP 422: Invalid Argument - failed to parse workflow: Invalid dependency lockfile "
+    '".github/workflows/actions.lock": workflow ".github/workflows/fix.yml" references actions '
+    "not present in the lockfile: sjktools/repoutils@v0.5.1 Run 'gh actions-lock' to regenerate the lockfile."
+)
+
+
+def test_command_line_explains_a_fix_run_refused_for_the_lockfile(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    run = _actions_env(monkeypatch)
+    fake = FakeGitHub(prs=[_pr()], fix_runs=[], push_lists=[], push_runs=[], refused={"fix.yml": LOCKFILE_422})
+    _install(monkeypatch, fake)
+    report = tmp_path / "report.md"
+    assert autofix.main(["5", "--comment-id", "99", "--report", str(report)]) == 1
+    assert report.read_text() == (
+        f"/autofix [couldn't start PR Fixes]({run}), as GitHub refused:\n\n```\n{LOCKFILE_REASON}\n```\n\n"
+        + autofix.LOCKFILE_FIX
+    )
+    assert "gh actions-lock" in autofix.LOCKFILE_FIX
+    assert capsys.readouterr().err == (
+        f"::error::GitHub refused to start fix.yml on feature: {LOCKFILE_REASON}\n{autofix.LOCKFILE_FIX}\n"
+    )
+    # No run started, so nothing to react to.
+    assert REACTIONS not in [url for _, url, _ in fake.calls]
+
+
+def test_command_line_gives_the_reason_github_refused_the_push_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path, slept: list[float]
+) -> None:
+    run = _actions_env(monkeypatch)
+    fake = FakeGitHub(
+        prs=[_pr()],
+        fix_runs=[_done(7, actor="github-actions[bot]")],
+        push_lists=[],
+        push_runs=[],
+        refused={"fix-push.yml": b"not JSON\n"},
+    )
+    _install(monkeypatch, fake)
+    report = tmp_path / "report.md"
+    assert autofix.main(["5", "--report", str(report)]) == 1
+    assert report.read_text() == (
+        f"/autofix started [PR Fixes]({FIX_PAGE}), but [couldn't start pushing its fixes]({run}), "
+        "as GitHub refused:\n\n```\nHTTP 422: not JSON\n```\n"
+    )
+    assert capsys.readouterr().err.endswith(
+        "::error::GitHub refused to start fix-push.yml on main: HTTP 422: not JSON\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("detail", "message"),
+    [
+        (
+            '{"message": "Workflow does not have \'workflow_dispatch\' trigger"}',
+            "Workflow does not have 'workflow_dispatch' trigger",
+        ),
+        ('{"message": ""}', '{"message": ""}'),
+        ("[1]", "[1]"),
+        (" plain \n", "plain"),
+    ],
+)
+def test_api_message(detail: str, message: str) -> None:
+    assert autofix._api_message(detail) == message  # pyright: ignore[reportPrivateUsage]
 
 
 def test_find_push_run_reads_every_page_since_the_fix_run(monkeypatch: pytest.MonkeyPatch) -> None:

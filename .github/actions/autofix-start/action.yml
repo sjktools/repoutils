@@ -12,8 +12,10 @@ description: >-
 # uses it. The workflows must be fix.yml and fix-push.yml, as
 # `repoutils autofix --help` describes.
 #
-# It comments with the job's GITHUB_TOKEN, as github-actions[bot], in the
-# comment that fix-push.yml's report job posts. A fix run started with a
+# It comments with the job's GITHUB_TOKEN, as github-actions[bot], with the
+# marker of fix-push.yml's report job. It reports only a failure, so it posts a
+# new comment, which notifies the pull request's subscribers as an edit
+# doesn't, and hides the earlier ones as outdated. A fix run started with a
 # GITHUB_TOKEN starts no workflow_run workflow, so `repoutils autofix` starts
 # fix-push.yml itself.
 inputs:
@@ -62,7 +64,8 @@ runs:
           --report "$RUNNER_TEMP/autofix-report.md"
 
     # `repoutils autofix` writes the report only if PR Fixes Push didn't
-    # comment on the pull request itself.
+    # comment on the pull request itself. If GitHub refused to start a run,
+    # the report gives GitHub's reason.
     - name: Report on the pull request
       if: failure() && steps.autofix.outcome == 'failure'
       shell: bash
@@ -74,5 +77,5 @@ runs:
       run: |
         report="$RUNNER_TEMP/autofix-report.md"
         if [ -f "$report" ]; then
-          python3 -m repoutils post-comment "$PR" "$report" --name autofix --author "github-actions[bot]"
+          python3 -m repoutils post-comment "$PR" "$report" --name autofix --author "github-actions[bot]" --hide-previous
         fi

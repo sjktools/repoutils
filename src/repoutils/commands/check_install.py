@@ -49,18 +49,22 @@ COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 # Run in the installed package's environment, with -I so that neither the
 # current directory nor PYTHONPATH can put another copy of the package first.
 # It prints the installed version and each build_info.json the distribution
-# has (or only the one that argv[2] names), outside its .dist-info.
+# has (or only the one that argv[2] names), outside its .dist-info, and the
+# commands it installs: its console scripts and the files it puts in bin/.
 PROBE = """
 import json, sys
 from importlib.metadata import distribution
 dist = distribution(sys.argv[1])
 found = {}
+commands = {entry.name for entry in dist.entry_points if entry.group == "console_scripts"}
 for file in dist.files or ():
     path = file.as_posix()
     wanted = path == sys.argv[2] if len(sys.argv) > 2 else file.name == "build_info.json"
     if wanted and ".dist-info/" not in path:
         found[path] = file.read_text()
-print(json.dumps({"version": dist.version, "files": found}))
+    if file.parent.name in ("bin", "Scripts"):
+        commands.add(file.name.removesuffix(".exe"))
+print(json.dumps({"version": dist.version, "files": found, "commands": sorted(commands)}))
 """
 
 Runner = Callable[[list[str]], subprocess.CompletedProcess[str]]
@@ -102,6 +106,8 @@ class Installed:
     version: str
     commit: str
     dirty: bool
+    # The commands the distribution installs.
+    commands: tuple[str, ...] = ()
 
 
 def wheel_name(name: str) -> str:
@@ -194,6 +200,7 @@ def read_probe(name: str, source: str, stdout: str) -> tuple[Installed | None, l
     try:
         probe = json.loads(stdout)
         version, files = str(probe["version"]), dict(probe["files"])
+        commands = tuple(str(command) for command in probe["commands"])
     except (ValueError, KeyError, TypeError):
         return None, [f"can't read what the probe of {source} printed: {stdout!r}"]
     if len(files) != 1:
@@ -207,7 +214,7 @@ def read_probe(name: str, source: str, stdout: str) -> tuple[Installed | None, l
         return None, [f"{path} in {source} is not the build info that the repoutils-build-info hook writes"]
     if not isinstance(commit, str) or COMMIT_RE.fullmatch(commit) is None or not isinstance(dirty, bool):
         return None, [f"{path} in {source} records no commit, as its build had no Git checkout: {text.strip()}"]
-    return Installed(version, commit, dirty), []
+    return Installed(version, commit, dirty, commands), []
 
 
 def _probe_args(name: str, source: str, options: Options, index: str | None) -> list[str]:
@@ -219,6 +226,10 @@ def _check_command(
     runner: Runner, name: str, source: str, options: Options, installed: Installed, index: str | None
 ) -> list[str]:
     """The problems with the command's --version line and runs, which run once the build info passes."""
+    if (options.version_line or options.runs) and options.command not in installed.commands:
+        # uv run would find a command of that name elsewhere on PATH, which isn't the one under test.
+        installs = ", ".join(installed.commands) or "none"
+        return [f"{name} from {source} installs no command {options.command!r} (it installs: {installs})"]
     problems: list[str] = []
     if options.version_line:
         args = uv_run(source, [options.command, "--version"], index)

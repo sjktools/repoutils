@@ -22,7 +22,7 @@ def probe(
     """What PROBE prints for an install whose build info records commit and dirty."""
     text = json.dumps({"commit": commit, "dirty": dirty})
     found = {f"my_pkg/build_info{n or ''}.json": text for n in range(files)}
-    return 0, json.dumps({"version": version, "files": found})
+    return 0, json.dumps({"version": version, "files": found, "commands": ["mp", "my-pkg"]})
 
 
 class FakeRunner:
@@ -121,7 +121,8 @@ def test_version_line_that_fails(project: Path, capsys: pytest.CaptureFixture[st
         (probe(commit=None, dirty=False), "records no commit"),
         (probe(dirty=None), "records no commit"),
         (probe(commit=COMMIT[:12]), "records no commit"),
-        ((0, json.dumps({"version": "1", "files": {"a.json": "[]"}})), "a.json in dist/"),
+        ((0, json.dumps({"version": "1", "files": {"a.json": "[]"}, "commands": []})), "a.json in dist/"),
+        ((0, json.dumps({"version": "1", "files": {}})), "can't read what the probe"),
     ],
 )
 def test_bad_build_info(project: Path, capsys: pytest.CaptureFixture[str], result: tuple[int, str], error: str) -> None:
@@ -364,25 +365,35 @@ def test_default_runner_drops_pythonpath(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_probe_reads_an_installed_distribution(tmp_path: Path) -> None:
     # PROBE itself, against a distribution put by hand in a directory on the path.
-    package = tmp_path / "my_pkg"
+    # It's three levels below tmp_path, as installed scripts are below site-packages,
+    # and importlib.metadata leaves out the files that RECORD lists but don't exist.
+    site = tmp_path / "lib" / "python" / "site-packages"
+    site.mkdir(parents=True)
+    for script in ("bin/my-script", "Scripts/win-script.exe"):
+        (tmp_path / script).parent.mkdir()
+        (tmp_path / script).write_text("")
+    package = site / "my_pkg"
     package.mkdir()
     (package / "build_info.json").write_text(json.dumps({"commit": COMMIT, "dirty": False}))
     (package / "other.json").write_text("{}")
-    info = tmp_path / "my_pkg-1.2.0.dist-info"
+    info = site / "my_pkg-1.2.0.dist-info"
     info.mkdir()
     (info / "METADATA").write_text("Metadata-Version: 2.1\nName: my-pkg\nVersion: 1.2.0\n")
     (info / "build_info.json").write_text("{}")
     record = ["my_pkg/build_info.json,,", "my_pkg/other.json,,", "my_pkg-1.2.0.dist-info/build_info.json,,"]
+    record += ["../../../bin/my-script,,", "../../../Scripts/win-script.exe,,"]
     (info / "RECORD").write_text("\n".join(record) + "\n")
-    env = {**os.environ, "PYTHONPATH": str(tmp_path)}
+    (info / "entry_points.txt").write_text("[console_scripts]\nmy-pkg = my_pkg:main\n[other]\nx = y\n")
+    env = {**os.environ, "PYTHONPATH": str(site)}
 
     def run(*args: str) -> check_install.Installed | None:
         command = [sys.executable, "-c", check_install.PROBE, *args]
         out = subprocess.run(command, env=env, capture_output=True, text=True, check=True).stdout
         return check_install.read_probe("my-pkg", "here", out)[0]
 
-    assert run("my-pkg") == check_install.Installed("1.2.0", COMMIT, False)
-    assert run("my-pkg", "my_pkg/build_info.json") == check_install.Installed("1.2.0", COMMIT, False)
+    commands = ("my-pkg", "my-script", "win-script")
+    assert run("my-pkg") == check_install.Installed("1.2.0", COMMIT, False, commands)
+    assert run("my-pkg", "my_pkg/build_info.json") == check_install.Installed("1.2.0", COMMIT, False, commands)
     assert run("my-pkg", "my_pkg/other.json") is None
 
 
@@ -390,3 +401,13 @@ def test_stale_wheel_of_another_version_is_not_taken(project: Path, capsys: pyte
     (project / "dist" / WHEEL).unlink()
     assert check_install.main(Path("dist"), runner=FakeRunner()) == 1
     assert "expected one wheel matching dist/my_pkg-1.2.0-*.whl, found none" in capsys.readouterr().err
+
+
+def test_command_the_package_doesnt_install(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    runner = FakeRunner(probe())
+    assert check_install.main(Path("dist"), command="elsewhere", version_line=True, runner=runner) == 1
+    assert "installs no command 'elsewhere' (it installs: mp, my-pkg)" in capsys.readouterr().out
+    # It doesn't run a command of that name from elsewhere on PATH.
+    assert len(runner.calls) == 1
+    # Without --version-line or a run, the command isn't needed.
+    assert check_install.main(Path("dist"), command="elsewhere", runner=FakeRunner(probe())) == 0

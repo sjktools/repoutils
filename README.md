@@ -395,9 +395,11 @@ In `autofix-comment.yml`, the `dispatch` job runs the command with `--relock`.
 If GitHub refuses to start `fix.yml` for this error, the `relock` job runs the `autofix-relock` composite action:
 
 - The action checks out the head commit of the pull request, and runs `gh actions-lock` with the read-only `GITHUB_TOKEN` of the job.
-- It commits `actions.lock`, and uploads the commit as a Git bundle in the `fixes-<head commit>` artifact.
+- If `actions.lock` changed, it commits the file, and uploads the commit as a Git bundle in the `fixes-<head commit>` artifact.
+  If the file did not change, it uploads nothing.
 - The job has no secrets and only the Contents `read` permission, and runs no code from the branch.
   `gh actions-lock` only reads the workflow files, and reads the actions that they use through the API.
+  A private action in another repository may need more access than that token has, and the relock then fails.
 
 The `retry` job then runs the command with `--relocked`.
 `fix-push.yml` pushes that commit only if it is one commit on the head commit of the pull request, and changes only `actions.lock`.
@@ -441,6 +443,7 @@ A project that uses these actions must keep these names:
 - The run name of `fix.yml` is `PR Fixes #<number>`, or `PR Fixes` without a number.
 - The run name of `fix-push.yml` is `PR Fixes Push for run <fix run ID>`, its job that pushes the fixes is `push`, and its job that comments on the pull request is `report`.
 - The artifact that holds the bundle is `fixes`.
+- The workflow file of the relock run is `autofix-comment.yml`, its run name is `Comment on #<number>`, its job that relocks `actions.lock` is `relock`, and the artifact of that job is `fixes-<commit>`.
 
 ### Starting a TestPyPI release with a command
 

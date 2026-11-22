@@ -189,8 +189,9 @@ If GitHub refuses to start a run, the comment gives GitHub's reason, and says ho
 `fix-push.yml`'s `report` job posts it with the `post-comment` action, and `autofix-start` posts it only if that job didn't succeed.
 When GitHub refuses to start `fix.yml` for an incomplete `actions.lock`, `autofix-comment.yml` relocks the branch itself, as it runs from `main` with `main`'s lock:
 
-- Its `relock` job runs the `autofix-relock` action, with no secrets and contents `read`, and uploads the commit as a bundle.
-- Its `retry` job runs `repoutils autofix --relocked`, which has `fix-push.yml` push that commit, then starts `fix.yml` again on the new head.
+- Its `relock` job runs the `autofix-relock` action, with no secrets and contents `read`, which uploads a bundle only if `actions.lock` changed.
+- Its `retry` job runs the `autofix-start` action, which runs `repoutils autofix --relocked <run ID>`.
+  That has `fix-push.yml` push the bundle, if there is one, then starts `fix.yml` again on the head the branch is then at.
 - `fix-push.yml` tells that relock run by its workflow, event and run name (`Comment on #<PR>`), and pushes only one commit that changes only `actions.lock`.
 
 The fix runs on the branch rather than on `main` because code in a run can write to the Actions cache of the run's branch.

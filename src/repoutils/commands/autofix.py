@@ -366,11 +366,12 @@ def autofix(
         )
         return 1
     new_head = github.pr_head(repo, pr, token)
-    if new_head == first_head:
+    if new_head == head_sha:
         print(f"PR Fixes found nothing to fix on {branch} at {head_sha}", file=sys.stderr)
     else:
         print(f"PR Fixes pushed its fixes to {branch}, which is now at {new_head}", file=sys.stderr)
-        # The new head on its own, for a script to read.
+    # The new head on its own, for a script to read, if the fixes or a relock moved the branch.
+    if new_head != first_head:
         print(new_head)
     return 0
 

@@ -704,7 +704,7 @@ def test_pushes_the_relock_then_runs_pr_fixes(
         f"Waiting for fix-push.yml to push the relocked actions.lock: {RELOCK_PUSH_PAGE}\n"
         f"Started fix.yml on feature: {FIX_PAGE}\n"
         f"Waiting for fix-push.yml: {PUSH_PAGE}\n"
-        "PR Fixes pushed its fixes to feature, which is now at rrr\n"
+        "PR Fixes found nothing to fix on feature at rrr\n"
     )
     assert fake.posts() == [
         (

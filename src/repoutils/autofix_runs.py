@@ -403,7 +403,7 @@ def relock_artifact(repo: str, run_id: int, token: str) -> str | None:
 
 
 def _output_fixes(artifact: str, output: Output) -> None:
-    """Output that there's artifact to push, or nothing if it's empty."""
+    """Output that there's a bundle to push in artifact, or, if artifact is empty, that there's none."""
     output("fixes", str(bool(artifact)).lower())
     output("already_pushed", "false")
     output("artifact", artifact)

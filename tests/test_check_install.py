@@ -331,6 +331,15 @@ def test_release_with_a_wrong_version_line_fails_at_once(project: Path, capsys: 
     assert len(runner.calls) == 2
 
 
+def test_release_with_a_wrong_version_line_and_a_failed_run_fails_at_once(
+    project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runner = FakeRunner(probe(), (0, "my-pkg 1.2.0\n"), (1, ""))
+    assert check_install.main(version="1.2.0", version_line=True, runs=["--help"], runner=runner, sleep=no_sleep) == 1
+    assert "Retrying" not in capsys.readouterr().err
+    assert len(runner.calls) == 3
+
+
 def test_release_without_build_info_fails_at_once(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
     runner = FakeRunner(probe(files=0))
     assert check_install.main(version="1.2.0", runner=runner, sleep=no_sleep) == 1

@@ -1013,7 +1013,7 @@ It encrypts them to a throwaway key from `age-keygen` (`--age-keygen PATH`), to 
 Then it decrypts the output with the throwaway key, and fails in these cases:
 
 - The output is not ASCII-armored.
-- The `age` header does not name an SSH recipient for each SSH key given.
+- The `age` header does not name each SSH key given, by the tag that `age` derives from the key.
 - The decrypted TOML does not give back exactly the made-up values.
 
 As in a real export, the plaintext reaches `age` only on its standard input.

@@ -366,9 +366,10 @@ class FakeAgeTools:
             header = "age-encryption.org/v1\n"
             for recipient in recipients:
                 kind = recipient.split(" ", 1)[0]
-                header += f"-> {kind if kind in secret_export.AGE_SSH_TYPES and self.ssh_stanzas else 'X25519'} x\n"
+                ssh = kind in secret_export.AGE_SSH_TYPES and self.ssh_stanzas
+                header += f"-> {secret_export.ssh_tag(recipient) if ssh else 'X25519'} x\n"
             body = base64.b64encode(f"{header}---\n".encode() + input).decode()
-            text = f"{ARMOR_BEGIN}\n{body}\n{ARMOR_END}\n" if self.armor else body
+            text = f"{ARMOR_BEGIN}\n{body}\n{ARMOR_END}\n" if self.armor and "--armor" in args else body
             Path(args[args.index("--output") + 1]).write_text(text)
             return subprocess.CompletedProcess(args, 0, b"", b"")
         assert "--decrypt" in args
@@ -413,7 +414,7 @@ def test_self_test_environment(
     ("tools", "error"),
     [
         (FakeAgeTools(armor=False), "the export isn't ASCII-armored"),
-        (FakeAgeTools(ssh_stanzas=False), "the export isn't encrypted to each of the 1 SSH key(s) given"),
+        (FakeAgeTools(ssh_stanzas=False), f"the export isn't encrypted to these SSH keys: {ED25519}"),
         (FakeAgeTools(tamper=True), "the decrypted secrets differ from the made-up ones"),
     ],
 )

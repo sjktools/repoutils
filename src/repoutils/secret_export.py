@@ -19,6 +19,7 @@ Stdlib-only, like every repoutils module: age is run as a program."""
 import argparse
 import base64
 import binascii
+import hashlib
 import json
 import os
 import re
@@ -230,10 +231,12 @@ def armored_header(armored: str) -> bytes:
     return base64.b64decode("".join(armored.splitlines()[1:-1]))
 
 
-def ssh_stanzas(header: bytes) -> int:
-    """How many of the recipients in an age header are SSH keys age can encrypt to.
-    The header names each recipient's type, in a ``-> TYPE ...`` line."""
-    return sum(header.count(f"\n-> {kind} ".encode()) for kind in AGE_SSH_TYPES)
+def ssh_tag(key: str) -> str:
+    """The type and tag that age's header names an SSH key ``TYPE BASE64`` by:
+    the first 4 bytes of the SHA-256 of the key, base64-encoded without padding."""
+    kind, blob = key.split()[:2]
+    tag = base64.b64encode(hashlib.sha256(base64.b64decode(blob)).digest()[:4]).decode().rstrip("=")
+    return f"{kind} {tag}"
 
 
 def self_test(
@@ -248,7 +251,7 @@ def self_test(
 ) -> int:
     """Export made-up values for the secrets in wanted, as export would the real
     ones, to a throwaway age identity, recipients and github_keys, and check that the
-    export is armored, is encrypted to every SSH key, and decrypts with the
+    export is armored, names every SSH key in its header, and decrypts with the
     identity to exactly those values. The plaintext reaches age only on its
     standard input, as in a real export."""
     values = made_up_values(wanted)
@@ -256,6 +259,9 @@ def self_test(
     levels = None
     if environment is not None:
         levels = secret_levels.Levels(frozenset(), {environment.lower(): frozenset(n.upper() for n in wanted)})
+    # Picked here rather than by export, to check the header names each one.
+    keys = [pick_key(user, fingerprint, fetch_keys(user)) for user, fingerprint in github_keys]
+    ssh_keys = [key for key in [*recipients, *keys] if key.split(" ", 1)[0] in AGE_SSH_TYPES]
     with tempfile.TemporaryDirectory() as tmp:
         identity, output = Path(tmp, "identity"), Path(tmp, "secrets.toml.age")
         _run_age_keygen(age_keygen, "-o", str(identity))
@@ -264,8 +270,8 @@ def self_test(
             wanted,
             listed,
             environment,
-            recipients=[recipient, *recipients],
-            github_keys=github_keys,
+            recipients=[recipient, *recipients, *keys],
+            github_keys=[],
             output=output,
             age=age,
             armor=True,
@@ -274,17 +280,18 @@ def self_test(
         )
         armored = output.read_text()
         header = armored_header(armored)
-        ssh_keys = len(github_keys) + sum(r.split(" ", 1)[0] in AGE_SSH_TYPES for r in recipients)
-        if ssh_stanzas(header) != ssh_keys:
-            raise RuntimeError(f"the export isn't encrypted to each of the {ssh_keys} SSH key(s) given")
+        # age's header names each SSH recipient in a ``-> TYPE TAG ...`` line.
+        missing = [key for key in ssh_keys if f"\n-> {ssh_tag(key)} ".encode() not in header]
+        if missing:
+            raise RuntimeError(f"the export isn't encrypted to these SSH keys: {', '.join(missing)}")
         plaintext = secret_export_remote.decrypt(age, [identity], armored.encode())
     expected: dict[str, object] = {"actions": values}
     if environment is not None:
         expected = {"environments": {environment: values}}
     if tomllib.loads(plaintext.decode()) != expected:
         raise RuntimeError("the decrypted secrets differ from the made-up ones")
-    keys = "".join(f", also encrypted to {user}/{fingerprint}" for user, fingerprint in github_keys)
-    print(f"Self-test passed: exported and decrypted {len(values)} made-up secret(s){keys}")
+    also = "".join(f", also encrypted to {user}/{fingerprint}" for user, fingerprint in github_keys)
+    print(f"Self-test passed: exported and decrypted {len(values)} made-up secret(s){also}")
     return 0
 
 

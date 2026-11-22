@@ -9,9 +9,12 @@ the installed distribution's metadata, so the package needs no command.
   The file's commit, and whether it had uncommitted changes, must match the
   checkout in the current directory.
 - `--version` installs that version from the index that `--index` names
-  (default PyPI), retrying with backoff while the install fails, such as while
-  the index catches up with a new upload. Any commit will do, as the checkout
-  it runs in need not be the one the release was built from.
+  (default PyPI), retrying with backoff while an install fails, such as while
+  the index catches up with a new upload. Each command it runs installs the
+  version again, so it also retries while one of them exits non-zero, as the
+  index can serve the version to one install and not yet to the next. Any
+  commit will do, as the checkout it runs in need not be the one the release
+  was built from.
 
 Options for a package that installs a command (by default, named after the
 package):
@@ -227,13 +230,15 @@ def _probe_args(name: str, source: str, options: Options, index: str | None) -> 
 
 def _check_command(
     runner: Runner, name: str, source: str, options: Options, installed: Installed, index: str | None
-) -> list[str]:
-    """The problems with the command's --version line and runs, which run once the build info passes."""
+) -> tuple[list[str], bool]:
+    """The problems with the command's --version line and runs, which run once the build info passes,
+    and whether any of them exited non-zero, which may mean that installing it again failed."""
     if (options.version_line or options.runs) and options.command not in installed.commands:
         # uv run would find a command of that name elsewhere on PATH, which isn't the one under test.
         installs = ", ".join(installed.commands) or "none"
-        return [f"{name} from {source} installs no command {options.command!r} (it installs: {installs})"]
+        return [f"{name} from {source} installs no command {options.command!r} (it installs: {installs})"], False
     problems: list[str] = []
+    exited = False
     if options.version_line:
         args = uv_run(source, [options.command, "--version"], index)
         info = build_info.BuildInfo(installed.version, installed.commit, installed.dirty, None)
@@ -241,6 +246,7 @@ def _check_command(
         result = _call(runner, args)
         if result.returncode != 0:
             problems.append(_failed(args, result))
+            exited = True
         elif result.stdout.strip() != expected:
             problems.append(f"expected `{_shown_args(args)}` to print {expected!r}, got {result.stdout.strip()!r}")
     whole = re.compile(rf"\b{installed.commit}\b")
@@ -249,9 +255,10 @@ def _check_command(
         result = _call(runner, args)
         if result.returncode != 0:
             problems.append(_failed(args, result))
+            exited = True
         elif run.with_commit and whole.search(result.stdout) is None:
             problems.append(f"expected `{_shown_args(args)}` to print the commit {installed.commit}")
-    return problems
+    return problems, exited
 
 
 def check_wheel(wheel: Path, name: str, options: Options, runner: Runner = _run) -> list[str]:
@@ -273,7 +280,7 @@ def check_wheel(wheel: Path, name: str, options: Options, runner: Runner = _run)
             f"{source} was built from {installed.commit}{changes[installed.dirty]},"
             f" but this checkout has {head[0]}{changes[head[1]]}"
         ]
-    return _check_command(runner, name, source, options, installed, None)
+    return _check_command(runner, name, source, options, installed, None)[0]
 
 
 def check_release(
@@ -285,7 +292,7 @@ def check_release(
     delays: Sequence[float] = DELAYS,
     sleep: Callable[[float], None] = time.sleep,
 ) -> list[str]:
-    """The problems with installing name==version from index, retrying while it fails to install."""
+    """The problems with installing name==version from index, retrying while it fails to install or run."""
     source = f"{name}=={version}"
     args = _probe_args(name, source, options, index)
     failure = ""
@@ -297,11 +304,17 @@ def check_release(
             if tries < len(delays):
                 print(f"{failure}\nRetrying in {delays[tries]} seconds.", file=sys.stderr)
             continue
-        # What an install gives won't change by waiting, so from here it fails at once.
+        # What an install gives won't change by waiting, so a wrong build info or output fails at once.
         installed, problems = read_probe(name, source, result.stdout)
         if installed is None:
             return problems
-        return _check_command(runner, name, source, options, installed, index)
+        # Each command installs the version again, which can fail while the index catches up,
+        # as uv's error can't be told from the command's own exit.
+        problems, exited = _check_command(runner, name, source, options, installed, index)
+        if not exited or tries == len(delays):
+            return problems
+        failure = "\n".join(problems)
+        print(f"{failure}\nRetrying in {delays[tries]} seconds.", file=sys.stderr)
     return [f"{source} did not install from {shown(index)} after {len(delays)} tries: {failure}"]
 
 

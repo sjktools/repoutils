@@ -1,5 +1,6 @@
 import json
 import os
+import shlex
 import subprocess
 import sys
 import venv
@@ -288,6 +289,46 @@ def test_release_gives_up(project: Path, capsys: pytest.CaptureFixture[str]) -> 
     runner = FakeRunner((1, ""), (1, ""))
     assert check_install.main(version="1.2.0", runner=runner, delays=[0, 5], sleep=no_sleep) == 1
     assert "my-pkg==1.2.0 did not install from https://pypi.org/simple/ after 2 tries" in capsys.readouterr().out
+
+
+def test_release_retries_a_command_that_fails_to_install(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # The probe installs the version, but the index doesn't yet serve it to --version's own install.
+    slept: list[float] = []
+    line = (0, "my-pkg 1.2.0 (0123456789ab)\n")
+    runner = FakeRunner(probe(), (1, ""), (0, ""), probe(), line, (0, ""))
+    assert (
+        check_install.main(
+            version="1.2.0", index=INDEX, runs=["--help"], version_line=True, runner=runner, sleep=slept.append
+        )
+        == 0
+    )
+    assert slept == [0, 10]
+    out, err = capsys.readouterr()
+    assert out == f"my-pkg 1.2.0 installs from {INDEX} and records its commit\n"
+    assert "--version` exited 1:\nan error\nRetrying in 10 seconds." in err
+    source = "my-pkg==1.2.0"
+    assert runner.calls[1] == uv(source, "my-pkg", "--version", index=INDEX)
+    assert runner.calls[3] == runner.calls[0]
+    assert runner.calls[4:] == [
+        uv(source, "my-pkg", "--version", index=INDEX),
+        uv(source, "my-pkg", "--help", index=INDEX),
+    ]
+
+
+def test_release_with_a_run_that_keeps_failing_gives_up(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    runner = FakeRunner(probe(), (1, ""), probe(), (1, ""))
+    assert check_install.main(version="1.2.0", runs=["--help"], runner=runner, delays=[0, 5], sleep=no_sleep) == 1
+    out, err = capsys.readouterr()
+    args = uv("my-pkg==1.2.0", "my-pkg", "--help", index=check_install.DEFAULT_INDEX)
+    assert out == f"::error::`{shlex.join(args)}` exited 1:\nan error\n"
+    assert err.count("Retrying in 5 seconds.") == 1
+
+
+def test_release_with_a_wrong_version_line_fails_at_once(project: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    runner = FakeRunner(probe(), (0, "my-pkg 1.2.0\n"))
+    assert check_install.main(version="1.2.0", version_line=True, runner=runner, sleep=no_sleep) == 1
+    assert "to print 'my-pkg 1.2.0 (0123456789ab)', got 'my-pkg 1.2.0'" in capsys.readouterr().out
+    assert len(runner.calls) == 2
 
 
 def test_release_without_build_info_fails_at_once(project: Path, capsys: pytest.CaptureFixture[str]) -> None:

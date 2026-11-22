@@ -65,7 +65,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `deploy-keys` | Checks or creates the deploy keys declared in `pyproject.toml` and the secrets that store their private keys, or prints the deploy keys in the repository. |
 | `security-settings` | Checks or updates the security settings defined in `pyproject.toml` (such as secret protection), or prints the current security settings of the repository. |
 | `check-attestations` | Fails unless every distribution file in `dist/` has a PEP 740 publish attestation. |
-| `check-install` | Installs a wheel (`--wheel`) or a released version from an index (`--version`) with `uvx`, and fails unless `--version` of its command prints its version and the commit that its build came from, as the `repoutils-build-info` hook records them. For a wheel, the commit must be the commit of the checkout, and the line must say whether the checkout has uncommitted changes. For a released version, the command retries while `uvx` fails to install or run it, such as while the index does not yet serve the version. After that check passes, each `--run` also runs the command, which must exit with code `0`, and each `--run-with-commit` also requires the output to give the whole commit. |
+| `check-install` | Installs a wheel (`--wheel`) or a released version from an index (`--version`) in an isolated environment, and fails unless it has the `build_info.json` file that the `repoutils-build-info` hook writes, with a commit (see [Recording the build commit](#recording-the-commit-in-a-build)). For a wheel, the commit must be the commit of the checkout, and the file must say whether the checkout has uncommitted changes. For a released version, the command retries while the installation fails, such as while the index does not yet serve the version. The package needs no command, but for a package with one, `--version-line` requires its `--version` output to give the version and commit as `repoutils --version` does, each `--run` runs it, which must exit with code `0`, and each `--run-with-commit` also requires its output to give the whole commit. |
 | `version` | Prints the version of repoutils, the Git commit it was built from, where it is installed, and the Python version. When repoutils runs from a source checkout, it reads the version from `pyproject.toml` and the commit from Git. |
 
 These commands require a GitHub token:
@@ -1249,6 +1249,8 @@ Both values are `null` when the project is not in a Git repository with a commit
 - A wheel that is built from an sdist gets the file from the sdist, and the hook does not run Git.
 - An editable install gets no file, because the commit would be out of date after the next commit.
 - The file contains no timestamp, so two builds of the same commit give the same file.
+
+`check-install --wheel dist` checks that a wheel has the file, with the commit of the checkout, and `check-install --version <version>` checks that a release has it.
 
 ### Checking actions against a locked package
 

@@ -81,7 +81,7 @@ check-attestations dist="dist":
 
 # Install the wheel `just build` built into a fresh environment and check that it runs and records this checkout's commit
 smoke:
-    {{ repoutils }} check-install --wheel dist --run-with-commit version --run=--help --run check-whitespace
+    {{ repoutils }} check-install --wheel dist --version-line --run-with-commit version --run=--help --run check-whitespace
 
 # Retries while the index catches up with a new upload. --version must also
 # give a 12-hex commit after the version (and a dev build's bumped version
@@ -89,7 +89,7 @@ smoke:
 # Check that a released version installs from PyPI (or the index given) and runs
 [positional-arguments]
 check-release version index="https://pypi.org/simple/":
-    {{ repoutils }} check-install --version "$1" --index "$2"
+    {{ repoutils }} check-install --version "$1" --index "$2" --version-line
 
 # Lint with ruff, failing on any warning too, as ruff only warns about such
 # things as an invalid noqa directive. --no-cache, as ruff gives those only for

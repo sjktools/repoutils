@@ -160,7 +160,7 @@ variables-workflows-check:
 
 # Check that the justfile has the standard recipes, and that check, fix, ci and patch-coverage reach the standard ones
 check-justfile:
-    uv run repoutils check-justfile --just {{ quote(just_executable()) }}
+    uv run repoutils check-justfile --just {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }}
 
 # Check `secrets export` round-trips made-up secrets through age (on the PATH), also encrypting to the GitHub key given as USER/SHA256:FINGERPRINT
 secrets-export-test $SECRETS_EXPORT_KEY='':

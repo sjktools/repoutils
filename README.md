@@ -754,7 +754,8 @@ The default limit for short sentences comes from a smaller sample of rewrites of
 
 `repoutils check-justfile` checks the justfile in the current directory against the standard justfile of `repoutils`.
 It reads the justfile with `just --dump --dump-format json`, which evaluates no assignments, so the command runs nothing from the justfile.
-Pass `--just <path>` to run a `just` that is not on `PATH`, such as `--just {{ quote(just_executable()) }}` in a recipe.
+Pass `--just <path>` to run a `just` that is not on `PATH`, and `--justfile <path>` to check a justfile that `just` does not find from the current directory.
+A recipe passes `--just {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }}`, so it checks the justfile that runs it.
 
 The command fails in these cases:
 
@@ -775,7 +776,7 @@ The `features` setting in `[tool.repoutils]` adds standard recipes:
 
 An unknown feature name is an error, so a typo does not turn a feature off.
 List a standard recipe that the project leaves out on purpose in `omit`, and a standard dependency that it leaves out in `omit-dependencies`.
-An omitted dependency does not excuse a missing pair, so if `fix` runs `fmt`, `check` must run `fmt-check`.
+An omitted recipe or dependency does not excuse a missing pair, so if `fix` runs `fmt`, `check` must run `fmt-check`, even when `fmt-check` is in `omit`.
 Pass `--exit-zero` to print the same output and exit with code `0`.
 The command exits with code `1` even with `--exit-zero` when it cannot run `just` or read the output of `just`, or when a setting is not valid.
 

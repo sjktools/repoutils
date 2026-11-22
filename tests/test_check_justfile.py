@@ -290,3 +290,27 @@ def test_dump_runs_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     )
     assert main() == 1
     assert sorted(path.name for path in tmp_path.iterdir()) == ["justfile"]
+
+
+def test_main_prints_no_text_when_no_recipe_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "dump.json").write_text(dump(standard_recipes(), variables=()))
+    assert main(fake_just(tmp_path, f"cat {tmp_path / 'dump.json'}")) == 1
+    out = capsys.readouterr().out
+    assert "- There's no `repoutils` variable.\n" in out
+    assert "standard text" not in out
+
+
+def test_main_checks_the_justfile_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Only the justfile given has a default recipe, and the current directory has no justfile.
+    (tmp_path / "other").mkdir()
+    (tmp_path / "other" / "my.just").write_text("repoutils := 'x'\n\ndefault:\n    echo\n")
+    monkeypatch.chdir(tmp_path)
+    assert main(justfile_path=str(tmp_path / "other" / "my.just"), exit_zero=True) == 0
+    out = capsys.readouterr().out
+    assert "There's no `default`" not in out
+    assert "There's no `sync` recipe or alias." in out

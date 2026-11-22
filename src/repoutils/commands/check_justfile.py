@@ -1,7 +1,7 @@
 """Check that the justfile has the standard recipes, and that check, fix, ci and patch-coverage reach the standard ones.
 
-It reads the justfile in the current directory with ``just --dump
---dump-format json``, which evaluates no assignment, not even ``shell()`` or
+It reads the justfile in the current directory (or the one ``--justfile``
+names) with ``just --dump --dump-format json``, which evaluates no assignment, not even ``shell()`` or
 an ``eager`` one, so it runs nothing from the justfile. That output includes
 the recipes of any ``import``. It checks that:
 
@@ -107,9 +107,10 @@ def parse_dump(text: str) -> Justfile:
     return Justfile(recipes, aliases, frozenset(_table(dump, "assignments")))
 
 
-def read_justfile(just: str) -> Justfile:
-    """The justfile in the current directory, as ``just --dump`` gives it, raising RuntimeError if that fails."""
-    command = [just, "--dump", "--dump-format", "json"]
+def read_justfile(just: str, path: str | None = None) -> Justfile:
+    """The justfile at path, or else the one ``just`` finds from the current directory, as ``just --dump`` gives it,
+    raising RuntimeError if that fails."""
+    command = [just, *(["--justfile", path] if path else []), "--dump", "--dump-format", "json"]
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=False)
     except OSError as error:
@@ -206,10 +207,10 @@ def problems(justfile: Justfile, settings: Settings) -> tuple[list[str], list[Re
     return found, missing
 
 
-def main(just: str = "just", exit_zero: bool = False) -> int:
+def main(just: str = "just", exit_zero: bool = False, justfile_path: str | None = None) -> int:
     settings = Settings.from_config()
     try:
-        justfile = read_justfile(just)
+        justfile = read_justfile(just, justfile_path)
     except RuntimeError as error:
         print(f"repoutils check-justfile: {error}", file=sys.stderr)
         return 1
@@ -235,9 +236,12 @@ def run(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="repoutils check-justfile", description=summary(__doc__))
     parser.add_argument("--just", default="just", help="the just to run (default: just, from the PATH)")
     parser.add_argument(
+        "--justfile", help="the justfile to check (default: the one just finds from the current directory)"
+    )
+    parser.add_argument(
         "--exit-zero",
         action="store_true",
         help="report, but exit 0 even if the justfile breaks the standard (not if it can't be read)",
     )
     args = parser.parse_args(argv)
-    return main(args.just, args.exit_zero)
+    return main(args.just, args.exit_zero, args.justfile)

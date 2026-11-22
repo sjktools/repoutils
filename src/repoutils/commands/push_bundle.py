@@ -54,11 +54,11 @@ def _run_git(*args: str, env: dict[str, str] | None = None, ok: tuple[int, ...] 
     )
     if result.returncode not in ok:
         raise Refused(f"`git {' '.join(args)}` exited with code {result.returncode}")
-    return result.returncode, result.stdout.strip()
+    return result.returncode, result.stdout
 
 
 def _git(*args: str, env: dict[str, str] | None = None) -> str:
-    return _run_git(*args, env=env)[1]
+    return _run_git(*args, env=env)[1].strip()
 
 
 def _commit(ref: str) -> str:
@@ -100,7 +100,8 @@ def denied_paths(changed: Sequence[str], allow_paths: Sequence[str], deny_paths:
 
 def _changed(old: str, new: str) -> list[str]:
     # --no-renames, so a file moved out of a denied path is listed under its old name too.
-    names = _git("diff", "--no-renames", "--name-only", "-z", old, new)
+    # Not stripped, as a path can start or end with a space.
+    names = _run_git("diff", "--no-renames", "--name-only", "-z", old, new)[1]
     return [name for name in names.split("\0") if name]
 
 
@@ -195,6 +196,8 @@ def main(
     deny_paths: Sequence[str] = (),
 ) -> int:
     try:
+        # Once, so the lease is on the commit that check() checked.
+        start = _commit(start)
         head = check(
             bundle,
             start,

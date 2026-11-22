@@ -206,6 +206,20 @@ class PushBundleTests(TestCase):
             self.assertEqual(self.push(allow_paths=["a.txt"]), 1)
         self.assertIn(os.fsdecode(b"caf\xe9.txt"), "".join(c.args[0] for c in stderr.write.call_args_list))
 
+    def test_a_path_with_a_leading_space_isnt_the_path_without_it(self) -> None:
+        self.write(" uv.lock", "x\n")
+        self.commit_and_bundle()
+        self.assertEqual(self.push(allow_paths=["uv.lock"]), 1)
+
+    def test_the_lease_is_on_the_start_commit_not_its_name(self) -> None:
+        self.write("a.txt", "fixed\n")
+        head = self.commit_and_bundle()
+        self.git(self.checkout, "tag", "start", self.start)
+        with mock.patch.object(push_bundle, "push") as push:
+            result = push_bundle.main(self.bundle, "topic", "start", str(self.remote), "secret")
+        self.assertEqual(result, 0)
+        push.assert_called_once_with(head, "topic", self.start, str(self.remote), "secret")
+
     def test_a_file_moved_out_of_a_denied_path_is_denied(self) -> None:
         self.git(self.maker, "mv", "a.txt", "b.txt")
         self.commit_and_bundle()

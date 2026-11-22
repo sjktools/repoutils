@@ -219,9 +219,11 @@ mutation($id: ID!) {
 
 def hide_comments(repo: str, pr: int, marker: str, token: str, *, keep: str | None = None) -> int:
     """Hide as outdated every comment on pr that token's user posted whose body
-    starts with marker and isn't hidden yet, except the one whose node ID is
-    keep. Matching the author means nobody else's comment can be hidden by
-    copying the marker. Returns how many it hid."""
+    starts with marker and isn't hidden yet, up to the one whose node ID is
+    keep, if given. Comments after keep are left alone, as another run may
+    have posted them since, with a newer report. Matching the author means
+    nobody else's comment can be hidden by copying the marker. Returns how
+    many it hid."""
     owner, name = repo.split("/", 1)
     hidden = 0
     cursor = None
@@ -229,7 +231,9 @@ def hide_comments(repo: str, pr: int, marker: str, token: str, *, keep: str | No
         variables = {"owner": owner, "name": name, "pr": pr, "cursor": cursor}
         comments = graphql(_MY_COMMENTS, variables, token)["repository"]["pullRequest"]["comments"]
         for c in comments["nodes"]:
-            if c["viewerDidAuthor"] and not c["isMinimized"] and c["body"].startswith(marker) and c["id"] != keep:
+            if c["id"] == keep:
+                return hidden
+            if c["viewerDidAuthor"] and not c["isMinimized"] and c["body"].startswith(marker):
                 graphql(_MINIMIZE, {"id": c["id"]}, token)
                 hidden += 1
         if not comments["pageInfo"]["hasNextPage"]:

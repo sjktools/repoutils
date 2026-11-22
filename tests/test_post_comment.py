@@ -81,6 +81,8 @@ class PostCommentHidePreviousTests(TestCase):
                         _exolot_comment("OTHER", body="<!-- something else -->"),
                         _exolot_comment("OLD2"),
                         _exolot_comment("NEW"),
+                        # Another run's, posted since: a newer report, so left alone.
+                        _exolot_comment("LATER"),
                     ],
                     pages=pages,
                 )
@@ -243,8 +245,12 @@ class PostCommentEditTests(TestCase):
 class PostCommentUpdateHiddenTests(TestCase):
     """With --update-only and --hide-previous, the newest comment is edited and the rest hidden, not deleted."""
 
-    def _run(self, existing: list[dict[str, Any]]) -> tuple[int, str, FakeGitHub]:
-        gh = FakeGitHub([_exolot_comment(str(c["node_id"]), body=str(c["body"])) for c in existing])
+    def _run(self, existing: list[dict[str, Any]], later: tuple[str, ...] = ()) -> tuple[int, str, FakeGitHub]:
+        # later are comments another run posted after this one listed them.
+        gh = FakeGitHub(
+            [_exolot_comment(str(c["node_id"]), body=str(c["body"])) for c in existing]
+            + [_exolot_comment(node_id) for node_id in later]
+        )
 
         def request(method: str, url: str, token: str, *, json_body: Any = None, **kwargs: object) -> Any:
             if method == "GET" and url.endswith("/comments?per_page=100&page=1"):
@@ -274,7 +280,7 @@ class PostCommentUpdateHiddenTests(TestCase):
             {"id": 5, "node_id": "OLD", "user": {"login": "bot"}, "body": EXOLOT_MARKER + "\nfailed"},
             {"id": 6, "node_id": "NEWEST", "user": {"login": "bot"}, "body": EXOLOT_MARKER + "\nfailed again"},
         ]
-        code, out, gh = self._run(existing)
+        code, out, gh = self._run(existing, later=("RACED",))
         self.assertEqual(code, 0)
         writes = [(m, u, b) for m, u, b in gh.calls if m in ("PATCH", "DELETE", "POST") and not u.endswith("/graphql")]
         self.assertEqual(

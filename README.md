@@ -1133,7 +1133,7 @@ The command writes a Markdown summary table to `$GITHUB_STEP_SUMMARY` (or to `--
 Passing `--exit-zero` ignores those three findings, but the command still exits non-zero on a failed network request or an unparseable expiration date.
 
 The `inspect-secrets` composite action of this repository runs `inspect` as the only step of a job.
-It checks out `pyproject.toml`, runs `inspect`, and uploads the step summary as the artifact `step-summaries-<job>`, so the job needs the Contents `read` permission.
+It checks out `pyproject.toml`, runs `inspect`, and uploads the step summary as the artifact `step-summaries-<job>` (`step-summaries-<job>-<environment>` with an environment), so the job needs the Contents `read` permission.
 Pass it the secrets as `secrets-json: ${{ toJSON(secrets) }}`, as a composite action cannot read them, and pass `environment` and `secret-names` where the job has them.
 
 `repoutils secrets inspect-remote` runs `inspect` from your own machine.

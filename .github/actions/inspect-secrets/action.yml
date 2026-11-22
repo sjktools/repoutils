@@ -3,7 +3,8 @@ description: >-
   Reports what each secret the job gets is, to the step summary, with
   `repoutils secrets inspect`: each GitHub token's type, owner, expiry and the
   start of its SHA-256 hash, and each SSH key's fingerprint. It never shows a
-  value. Uploads the step summary as the artifact step-summaries-<job>.
+  value. Uploads the step summary as the artifact step-summaries-<job>, or
+  step-summaries-<job>-<environment> with an environment.
 
 # Runs repoutils from this action's own commit, with the runner's python3,
 # installing nothing. It checks out only the caller's pyproject.toml, which
@@ -56,6 +57,7 @@ runs:
       if: always()
       uses: actions/upload-artifact@v7.0.2
       with:
-        name: step-summaries-${{ github.job }}
+        # The environment keeps the name unique when a matrix runs one job for each.
+        name: step-summaries-${{ github.job }}${{ inputs.environment && format('-{0}', inputs.environment) || '' }}
         path: ${{ runner.temp }}/step-summaries/
         if-no-files-found: ignore

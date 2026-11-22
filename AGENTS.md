@@ -230,7 +230,7 @@ The action runs `repoutils downstream finish`, which waits for the PR's checks, 
 - leaves the PR open and fails if any still fails.
 
 So a test run succeeds only if it closed every test PR.
-A release's run fails if a release PR's checks still fail after the re-runs.
+A release's run fails if a release PR's checks still fail after the re-runs, or don't finish within `--timeout`.
 The re-run is for a PR whose CI started before PyPI's index listed the release.
 
 `claude.yml` and `claude-code-review.yml` run Claude Code when a comment starts with `@claude` (with the `CLAUDE_CODE_OAUTH_TOKEN` secret).

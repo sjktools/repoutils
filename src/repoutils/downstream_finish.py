@@ -114,10 +114,11 @@ class Closed(RuntimeError):
 
 def find(repo: str, token: str, package: str, version: str, marker: str) -> downstream_prs.Bump | None:
     """The open pull request in repo that bumps package to version, whose
-    body starts with marker, a test pull request for a dev version. None if
-    there's no such pull request for a release, which a bump that had
-    nothing to do, or a merged pull request, leaves. Raises RuntimeError if
-    there's no such test pull request, which a test run always opens."""
+    body starts with marker: a test pull request for a dev version, or a
+    release's pull request. None if a release has no such pull request, as a
+    bump that had nothing to do, or a merged pull request, leaves none.
+    Raises RuntimeError if a dev version has no such test pull request,
+    which a test run always opens."""
     for bump in downstream_prs.open_bumps(repo, token, package, version, marker):
         if bump.version == version:
             return bump

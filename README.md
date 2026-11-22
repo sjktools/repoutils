@@ -225,7 +225,8 @@ A downstream project needs no workflow of its own, but it must use `uv`.
 - The `finish` job runs the `downstream-finish` action once for each downstream project, in the same environment as the `push` job.
   The action runs `downstream finish`, which waits for the checks on the pull request, and re-runs failed jobs once.
   For a release, it leaves the pull request open for review, and the job fails if any check still fails.
-  Because the job waits for the checks, the workflow run can take up to an hour.
+  The command waits up to an hour for the checks, so the job has a 70-minute timeout.
+  Later runs of the workflow wait for it, because they share the `bump-downstream` concurrency group.
 
 The workflow also makes a test run when someone starts the Publish workflow by hand on `main` and the run succeeds.
 That run publishes a dev version of `main` to TestPyPI.
@@ -337,6 +338,7 @@ To set up the same workflow for another package:
 5. Create a `downstream` environment that only the default branch can deploy to, and store the `DOWNSTREAM_TOKEN` secret in it.
    The token needs the Contents `write` and Pull requests `write` permissions on each downstream repository.
    It also needs the Actions `write` permission, so that `downstream finish` can re-run failed jobs.
+   On a private downstream repository, it also needs the Commit statuses `read` and Checks `read` permissions, so that `downstream finish` can read the checks.
    It also needs the Workflows `write` permission on each downstream repository where the pull request changes a file in `.github/workflows`, such as a workflow or `actions.lock` that uses the actions of the package.
    A fine-grained token has one resource owner, so downstream repositories of a second owner need a second token.
    For each owner, use a copy of the workflow with its own variable, environment and token.

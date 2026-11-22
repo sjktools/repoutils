@@ -1,11 +1,16 @@
 name: Plan downstream bumps
 description: >-
-  Checks the downstream repositories that a release's version bump goes to,
-  with `repoutils downstream list`, and gives them as JSON for a job matrix.
+  Checks the downstream repositories that a version bump goes to, and works
+  out the version, the commit and whether it's a test run from the event that
+  started the run, with `repoutils downstream plan`.
 
-# The plan job of a Bump downstream workflow (see the README). It runs
-# repoutils from this action's own commit, with the runner's python3,
-# installing nothing.
+# The plan job of a Bump downstream workflow (see the README), started by a
+# workflow_run event of the workflow that publishes the package, or by hand
+# with version and commit inputs. It runs repoutils from this action's own
+# commit, with the runner's python3, installing nothing. For a Publish run
+# started by hand, it reads pyproject.toml at the run's commit, and checks the
+# commit is on the checked-out branch, so check out the default branch with
+# all its history (fetch-depth: 0) first.
 inputs:
   repositories:
     description: The downstream repositories, as space-separated owner/name, such as vars.DOWNSTREAM_REPOS.
@@ -13,18 +18,25 @@ inputs:
 outputs:
   repositories:
     description: The repositories, as a JSON list.
-    value: ${{ steps.list.outputs.repositories }}
+    value: ${{ steps.plan.outputs.repositories }}
+  version:
+    description: The version to bump to, a release or a dev version on TestPyPI.
+    value: ${{ steps.plan.outputs.version }}
+  commit:
+    description: For a dev version, the commit its build came from, or empty.
+    value: ${{ steps.plan.outputs.commit }}
+  test:
+    description: true for a dev version's test run, else false.
+    value: ${{ steps.plan.outputs.test }}
 
 runs:
   using: composite
   steps:
-    - name: List the downstream repositories
-      id: list
+    - name: Plan the bumps
+      id: plan
       shell: bash
       env:
         DOWNSTREAM_REPOS: ${{ inputs.repositories }}
         PYTHONPATH: ${{ github.action_path }}/../../../src
         PYTHONSAFEPATH: "1"
-      run: |
-        repositories=$(python3 -m repoutils downstream list)
-        echo "repositories=$repositories" >> "$GITHUB_OUTPUT"
+      run: python3 -m repoutils downstream plan >> "$GITHUB_OUTPUT"

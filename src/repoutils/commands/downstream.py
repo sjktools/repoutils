@@ -3,7 +3,9 @@ downstream's pins of this project's package to a release, and open a pull
 request with the bump.
 
 `list` checks the repositories that the DOWNSTREAM_REPOS Actions variable
-names, and prints them as JSON for a job matrix. `bump` runs in the
+names, and prints them as JSON for a job matrix. `plan` does too, and works
+out the version a Bump downstream run bumps to from the event that started
+it. `bump` runs in the
 upstream's checkout, which gives the package's name, and changes the
 downstream checkout that `--directory` names. It also moves the downstream's
 references to the upstream's GitHub Actions to the release's tag, and
@@ -32,12 +34,14 @@ from repoutils import (
     downstream_actions,
     downstream_finish,
     downstream_pins,
+    downstream_plan,
     downstream_prs,
     github,
     pull_request,
     pypi_provenance,
     workflow_summaries,
 )
+from repoutils.autofix_runs import print_output
 from repoutils.commands import check_pins
 from repoutils.docstrings import summary
 from repoutils.locked_actions import ACTIONS_LOCK
@@ -360,7 +364,7 @@ def _follow_up(
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="repoutils downstream", description=summary(__doc__))
-    subparsers = parser.add_subparsers(dest="mode", required=True, metavar="{list,bump,finish}")
+    subparsers = parser.add_subparsers(dest="mode", required=True, metavar="{list,plan,bump,finish}")
     list_parser = subparsers.add_parser(
         "list",
         help="check the downstream repositories, and print them as JSON for a job matrix",
@@ -371,6 +375,34 @@ def main(argv: list[str]) -> int:
         "--repositories",
         default=os.environ.get("DOWNSTREAM_REPOS", ""),
         help="the space-separated list (default: $DOWNSTREAM_REPOS)",
+    )
+    plan_parser = subparsers.add_parser(
+        "plan",
+        help="work out what a Bump downstream run bumps to, and print it as name=value lines for $GITHUB_OUTPUT",
+        description="Check the downstream repositories, as `list` does, and work out from the event that started "
+        "the run the version to bump to, the commit for a dev version, and whether it's a test run. For a "
+        "workflow_run event of a Publish run on the tag v<version>, the version is <version>. For one of a Publish "
+        "run that someone started by hand, it's the dev version of the next patch release of the run's commit, "
+        "numbered by the run's ID, as `bump-version patch --dev <run ID>` gives, read from the commit's "
+        "pyproject.toml with git show, and the commit is the run's. For a workflow_dispatch event, the version and "
+        "commit are the run's version and commit inputs. Prints repositories (as a JSON list), version, commit "
+        "(empty for a release) and test (true for a dev version, else false), one name=value line each. Fails if "
+        "the commit isn't in the history of the current directory's checkout, which must be of the default branch.",
+    )
+    plan_parser.add_argument(
+        "--repositories",
+        default=os.environ.get("DOWNSTREAM_REPOS", ""),
+        help="the space-separated list (default: $DOWNSTREAM_REPOS)",
+    )
+    plan_parser.add_argument(
+        "--event-name",
+        default=os.environ.get("GITHUB_EVENT_NAME", ""),
+        help="the event that started the run (default: $GITHUB_EVENT_NAME)",
+    )
+    plan_parser.add_argument(
+        "--event-path",
+        default=os.environ.get("GITHUB_EVENT_PATH", ""),
+        help="the event's JSON file (default: $GITHUB_EVENT_PATH)",
     )
     bump_parser = subparsers.add_parser(
         "bump",
@@ -474,6 +506,12 @@ def main(argv: list[str]) -> int:
     try:
         if args.mode == "list":
             return list_repositories(args.repositories)
+        if args.mode == "plan":
+            listed = repositories(args.repositories)
+            event = downstream_plan.read_event(args.event_path)
+            for name, value in downstream_plan.plan(Path(), args.event_name, event, listed).items():
+                print_output(name, value)
+            return 0
         if args.mode == "finish":
             package = args.package or package_name(Path())
             marker = config.marker(downstream_prs.marker_name(package, args.version))

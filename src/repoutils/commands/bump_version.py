@@ -2,8 +2,9 @@
 
 It bumps ``[project] version`` in ``pyproject.toml``, of the form X.Y.Z, by
 one patch, minor or major level, and the project's own entry in ``uv.lock`` to
-match. It edits both files as text and runs no uv, so a job that holds a token
-that can push runs nothing but repoutils. With ``--pr``, it commits the bump to
+match. With ``--dev``, it bumps both to a dev version of the new version
+instead. It edits both files as text and runs no uv, so a job that holds a
+token that can push runs nothing but repoutils. With ``--pr``, it commits the bump to
 a new branch, ``release-version-<version>``, pushes it and opens a pull request
 into the repository's default branch, which the checkout must be on.
 Stdlib-only, like every repoutils module."""
@@ -46,6 +47,16 @@ def bumped(version: str, level: str) -> str:
     return f"{major}.{minor}.{patch + 1}"
 
 
+def dev_version(version: str, level: str, number: int) -> str:
+    """version, of the form X.Y.Z, bumped by level, as a dev version numbered
+    number, as `uv version --bump <level> --bump dev=<number>` does. A manual
+    Publish run publishes a dev version of the next patch release numbered by
+    its run ID, which `downstream plan` works out too."""
+    if number < 0:
+        raise ValueError(f"A dev version's number can't be negative, but it's {number}")
+    return f"{bumped(version, level)}.dev{number}"
+
+
 def _read(path: Path) -> str:
     # newline="" keeps the file's line endings when it's written back.
     with path.open(encoding="utf-8", newline="") as f:
@@ -71,7 +82,7 @@ def _replace_one(text: str, old: str, new: str, expected: dict[str, Any], what: 
     return found[0]
 
 
-def _project(pyproject: dict[str, Any], path: Path) -> tuple[str, str]:
+def name_and_version(pyproject: dict[str, Any], path: Path) -> tuple[str, str]:
     """The project's name and version, from [project]."""
     project = pyproject.get("project")
     if not isinstance(project, dict):
@@ -107,16 +118,17 @@ def _lock_text(text: str, name: str, old: str, new: str, path: Path) -> str:
     return _replace_one(text, old, new, lock, f"{path}'s entry for {name}")
 
 
-def bump(root: Path, level: str) -> tuple[str, str, list[str]]:
-    """Bump root's version by level, in pyproject.toml and, if root has one,
+def bump(root: Path, level: str, dev: int | None = None) -> tuple[str, str, list[str]]:
+    """Bump root's version by level, as a dev version numbered dev if given
+    one, in pyproject.toml and, if root has one,
     uv.lock. Return the old and new versions, and the files it changed,
     relative to root. It writes nothing unless it can change them all, and
     puts both back if writing either fails."""
     path = root / PYPROJECT
     text = _read(path)
     pyproject = read_pyproject(path)
-    name, old = _project(pyproject, path)
-    new = bumped(old, level)
+    name, old = name_and_version(pyproject, path)
+    new = bumped(old, level) if dev is None else dev_version(old, level, dev)
     pyproject["project"]["version"] = new
     originals = {path: text}
     texts = {path: _replace_one(text, old, new, pyproject, f"{path}'s [project] version")}
@@ -157,7 +169,7 @@ def bump_pr(root: Path, repo: str, token: str, level: str, auto_merge: str | Non
     merge method. If a pull request from that branch is already open, change
     nothing."""
     path = root / PYPROJECT
-    _, old = _project(read_pyproject(path), path)
+    _, old = name_and_version(read_pyproject(path), path)
     new = bumped(old, level)
     branch = BRANCH_PREFIX + new
     if existing := pull_request.open_pr(repo, branch, token):
@@ -193,6 +205,12 @@ def bump_pr(root: Path, repo: str, token: str, level: str, auto_merge: str | Non
     return 0
 
 
+def _dev_number(text: str) -> int:
+    if not text.isdigit():
+        raise argparse.ArgumentTypeError(f"{text!r} isn't a dev number of decimal digits")
+    return int(text)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=PROG,
@@ -209,6 +227,13 @@ def _parser() -> argparse.ArgumentParser:
         "open, change nothing",
     )
     parser.add_argument(
+        "--dev",
+        type=_dev_number,
+        metavar="N",
+        help="bump to a dev version of the new version numbered N, such as 0.4.1.devN for a patch bump of 0.4.0, "
+        "as a manual Publish run does with its run ID; not with --pr",
+    )
+    parser.add_argument(
         "--auto-merge",
         choices=MERGE_METHODS,
         help="with --pr, turn on auto-merge for the pull request, with this merge method",
@@ -223,7 +248,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def _run(args: argparse.Namespace) -> int:
     if not args.pr:
-        old, new, paths = bump(Path(), args.level)
+        old, new, paths = bump(Path(), args.level, args.dev)
         print(f"Bumped the version from {old} to {new} in {', '.join(paths)}")
         return 0
     token = os.environ.get("GITHUB_TOKEN") or github.gh_output("auth", "token")
@@ -236,6 +261,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     if args.auto_merge and not args.pr:
         parser.error("--auto-merge needs --pr")
+    if args.dev is not None and args.pr:
+        parser.error("--dev can't be used with --pr, as a dev version is never merged")
     return github.guarded(f"{github.annotation('error')}{PROG}: ", lambda: _run(args))
 
 

@@ -51,6 +51,7 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
   It moves them to a dev version's commit instead, as a dev version has no tag.
   `src/repoutils/downstream_prs.py` finds the open PRs of earlier `downstream bump --pr` runs, and closes or comments on them once the new PR is open.
   A dev version's bump opens a draft test PR with its own marker and branch prefix, so a release's bump and a test bump never close or comment on each other's PRs.
+  `src/repoutils/downstream_plan.py` is `downstream plan`, which works out the version a Bump downstream run bumps to from the event that started it.
   `src/repoutils/downstream_finish.py` is `downstream finish`, which closes a test PR once all its checks pass.
   `src/repoutils/pypi_provenance.py` checks that PyPI's provenance for a release, or TestPyPI's for a dev version, names the upstream's repository as its trusted publisher.
 - `src/repoutils/release_pins.py` is the format of the pins file that `github-releases bump` writes, kept apart from the command for length.
@@ -213,7 +214,7 @@ That secret lives in the main-only `downstream` environment, and needs Contents 
 It also needs Workflows write on each downstream where the PR changes a file in `.github/workflows`, such as a workflow or `actions.lock` that uses repoutils' actions.
 
 `bump-downstream.yml` also makes a test run when a Publish run that someone started by hand on `main` succeeds, with the dev version that the run published to TestPyPI.
-Its plan job works out that version with the same `uv version` command as Publish's `Set dev version` step, so keep the two in step.
+Its plan job works out that version with `repoutils downstream plan`, which shares its code with the `repoutils bump-version patch --dev` that Publish's `Set dev version` step runs.
 A test run moves each `uses:` of repoutils' actions to the commit that Publish ran on, and opens draft test PRs.
 It makes no test run for a Publish run on another branch, as the downstream's CI would run that branch's unreviewed code with the downstream's secrets.
 Its `finish` job runs the `downstream-finish` action, in the `downstream` environment, once for each downstream.

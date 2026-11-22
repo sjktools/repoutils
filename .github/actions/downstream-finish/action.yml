@@ -2,7 +2,8 @@ name: Finish a downstream test bump
 description: >-
   Waits for the checks on a dev version's test pull request in a downstream
   repository, and closes it without merging it, deleting its branch, if they
-  all pass, with `repoutils downstream finish`. Fails if any fails.
+  all pass, with `repoutils downstream finish`. If only GitHub Actions jobs
+  fail, it re-runs them, and waits again. Fails if any still fails.
 
 # The finish job of a Bump downstream workflow's test run (see the README),
 # once for each downstream, in an environment that only main can deploy to,
@@ -20,7 +21,9 @@ inputs:
   token:
     description: >-
       A token with Contents and Pull requests write on the downstream, which
-      closes the pull request and deletes its branch.
+      closes the pull request and deletes its branch, and Actions write, which
+      re-runs failed jobs. On a private downstream, it also needs Commit
+      statuses read and Checks read, to read its checks.
     required: true
   package:
     description: The package that was bumped (default, the [project] name in the upstream's pyproject.toml).
@@ -30,6 +33,10 @@ inputs:
     description: How many seconds to wait for the checks.
     required: false
     default: "3600"
+  retries:
+    description: How many times to re-run the failed jobs if only GitHub Actions jobs fail, from 0 to 9.
+    required: false
+    default: "1"
 
 runs:
   using: composite
@@ -50,10 +57,11 @@ runs:
         GITHUB_TOKEN: ${{ inputs.token }}
         PACKAGE: ${{ inputs.package }}
         REPOSITORY: ${{ inputs.repository }}
+        RETRIES: ${{ inputs.retries }}
         TIMEOUT: ${{ inputs.timeout }}
         VERSION: ${{ inputs.version }}
         PYTHONPATH: ${{ github.action_path }}/../../../src
         PYTHONSAFEPATH: "1"
       run: |
         python3 -m repoutils downstream finish --repo "$REPOSITORY" --version "$VERSION" \
-          --timeout "$TIMEOUT" ${PACKAGE:+--package "$PACKAGE"}
+          --timeout "$TIMEOUT" --retries "$RETRIES" ${PACKAGE:+--package "$PACKAGE"}

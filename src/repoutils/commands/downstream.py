@@ -478,10 +478,12 @@ def main(argv: list[str]) -> int:
         description="Run in the upstream's checkout. Find the open test pull request that `bump --pr` opened "
         "for the dev version, and wait for the checks that the downstream's rulesets require on its base branch "
         "to appear, and for at least one check, then for every check run and commit status on its head to "
-        "finish. If they all pass, close it without merging it, and delete its branch. If any fails, leave it "
-        "open, and exit 1. Fails if there's no such pull request, or the checks take over --timeout seconds.",
+        "finish. If they all pass, close it without merging it, and delete its branch. If only GitHub Actions jobs "
+        "failed, re-run them up to --retries times, and wait again. If any still fails, leave it open, and exit 1. "
+        "Fails if there's no such pull request, or the checks take over --timeout seconds.",
         epilog="It uses $GITHUB_TOKEN, defaulting to `gh auth token`, which needs Contents and Pull requests write "
-        "on the downstream. It reads the rules and checks with the same token, which any token can read on a public "
+        "on the downstream, and Actions write to re-run failed jobs, without which it warns and leaves the pull "
+        "request open. It reads the rules and checks with the same token, which any token can read on a public "
         "downstream; on a private one, it also needs Commit statuses read, and read access to its checks.",
     )
     finish_parser.add_argument("--repo", required=True, help="the downstream's owner/name")
@@ -501,6 +503,14 @@ def main(argv: list[str]) -> int:
         default=30,
         help="seconds between reads of the checks (default: %(default)s)",
     )
+    finish_parser.add_argument(
+        "--retries",
+        type=int,
+        choices=range(10),
+        default=1,
+        metavar="N",
+        help="times to re-run the failed jobs if only GitHub Actions jobs failed, from 0 to 9 (default: %(default)s)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -517,7 +527,9 @@ def main(argv: list[str]) -> int:
             marker = config.marker(downstream_prs.marker_name(package, args.version))
             token = os.environ.get("GITHUB_TOKEN") or github.gh_output("auth", "token")
             found = downstream_finish.find(args.repo, token, package, args.version, marker)
-            return downstream_finish.finish(args.repo, token, found, interval=args.interval, timeout=args.timeout)
+            return downstream_finish.finish(
+                args.repo, token, found, interval=args.interval, timeout=args.timeout, retries=args.retries
+            )
         if args.pr and not args.repo:
             parser.error("bump --pr needs --repo")
         # Read pyproject.toml first, so a bad setting fails before anything asks GitHub.

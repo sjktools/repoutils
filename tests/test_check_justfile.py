@@ -1,5 +1,6 @@
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -146,6 +147,36 @@ def test_pair_rule_needs_fix_to_surely_run_the_fixer() -> None:
     ]
 
 
+def test_pair_rule_counts_fix_itself() -> None:
+    # fix is an alias of requirements-fix, which has the standard fix's dependencies.
+    recipes = standard_recipes()
+    recipes["requirements-fix"] = recipes.pop("fix")
+    recipes["check"].remove("requirements-check")
+    settings = Settings(
+        features=frozenset(config.FEATURES), omit_dependencies=(("check", frozenset({"requirements-check"})),)
+    )
+    assert problems(parse_dump(dump(recipes, aliases={"fix": "requirements-fix"})), settings)[0] == [
+        "`fix` reaches `requirements-fix`, so `check` must reach `requirements-check`."
+    ]
+
+
+def test_pair_rule_without_check() -> None:
+    # Omitting check doesn't excuse the pairs, as fix still fixes.
+    recipes = standard_recipes()
+    del recipes["check"]
+    recipes["ci"].remove("check")
+    settings = Settings(
+        features=frozenset(config.FEATURES),
+        omit=frozenset({"check"}),
+        omit_dependencies=(("ci", frozenset({"check"})),),
+    )
+    assert problems(parse_dump(dump(recipes)), settings)[0] == [
+        f"`fix` reaches `{fixer}`, so `check` must reach `{checker}`."
+        for fixer, checker in FIX_CHECK_PAIRS
+        if fixer in recipes["fix"]
+    ]
+
+
 def test_alias_to_nothing_is_missing() -> None:
     recipes = standard_recipes()
     del recipes["default"]
@@ -224,6 +255,18 @@ def test_text() -> None:
     # An omitted dependency isn't in the header, even one that's passed arguments.
     omitted = Settings(omit=frozenset({"coverage"}), omit_dependencies=(("patch-coverage", frozenset({"diff-cover"})),))
     assert omitted.text(BY_NAME["patch-coverage"]).endswith("\npatch-coverage base='origin/main':\n")
+
+
+@pytest.mark.parametrize("branch", ["main", "release's", 'a"b\\c', "line\nbreak\ttab"])
+def test_text_quotes_the_branch(tmp_path: Path, branch: str) -> None:
+    # just reads the default back as origin/<branch>, whatever the branch has in it.
+    path = tmp_path / "justfile"
+    settings = Settings(default_branch=branch)
+    path.write_text(f"coverage:\n\n{settings.text(BY_NAME['diff-cover'])}\n{settings.text(BY_NAME['patch-coverage'])}")
+    command = ["just", "--justfile", str(path), "--dump", "--dump-format", "json"]
+    recipes = json.loads(subprocess.run(command, capture_output=True, text=True, check=True).stdout)["recipes"]
+    for name in ("diff-cover", "patch-coverage"):
+        assert recipes[name]["parameters"][0]["default"] == f"origin/{branch}"
 
 
 @pytest.mark.parametrize(

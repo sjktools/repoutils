@@ -3,8 +3,8 @@
 Each recipe's text is the doc comment, attributes and body that the command
 prints for a project to paste in when the recipe is missing. The command never
 compares a recipe's text with the project's, as a project may have a reason to
-change it. In the text, ``@default-branch@`` stands for the project's
-``default-branch``. An aggregate recipe's text has no header line: the command
+change it. In the text, ``@base@`` stands for ``origin/<default-branch>``,
+with the project's ``default-branch``, written as a just string. An aggregate recipe's text has no header line: the command
 writes ``<name><parameters>: <dependencies>`` after it, with only the dependencies the
 project's features and settings ask for.
 
@@ -14,7 +14,7 @@ standard and that justfile stay in step.
 
 from dataclasses import dataclass
 
-BRANCH = "@default-branch@"
+BASE = "@base@"
 
 
 @dataclass(frozen=True)
@@ -87,14 +87,14 @@ coverage *args:
         "patch-coverage",
         "# Run coverage, then report coverage of the lines changed since base",
         "coverage diff-cover",
-        f" base='origin/{BRANCH}'",
+        f" base={BASE}",
         (("diff-cover", "(diff-cover base)"),),
     ),
     _recipe(
         "diff-cover",
         f"""
 # Report coverage of the lines changed since base from an existing coverage.xml (extra args go to diff-cover)
-diff-cover base='origin/{BRANCH}' *args:
+diff-cover base={BASE} *args:
     uv run --group dev diff-cover coverage.xml --compare-branch={{{{ base }}}} --branch-coverage {{{{ args }}}}
 """,
     ),

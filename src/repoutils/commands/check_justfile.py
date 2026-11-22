@@ -40,7 +40,7 @@ from typing import Any
 
 from repoutils import config
 from repoutils.docstrings import summary
-from repoutils.justfile_standard import BRANCH, BY_NAME, FIX_CHECK_PAIRS, RECIPES, VARIABLE, Recipe
+from repoutils.justfile_standard import BASE, BY_NAME, FIX_CHECK_PAIRS, RECIPES, VARIABLE, Recipe
 
 WHERE = "[tool.repoutils.justfile]"
 
@@ -91,7 +91,9 @@ class Justfile:
         return seen
 
     def reaches(self, name: str, dependency: str, definite: bool = False) -> bool:
-        return bool(self._resolve(dependency, definite) & self.reached(name, definite))
+        """Whether running name runs dependency, as name itself (if name is an alias) or before or after it."""
+        runs = self._resolve(name, definite) | self.reached(name, definite)
+        return bool(self._resolve(dependency, definite) & runs)
 
 
 def _table(dump: dict[str, Any], key: str, default: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -155,6 +157,14 @@ def read_justfile(just: str, path: str | None = None) -> Justfile:
         raise RuntimeError(f"can't read the output of `{' '.join(command)}`: {error}") from None
 
 
+def just_string(value: str) -> str:
+    """value as a just string: in single quotes, which take no escapes, unless value has a quote or line break."""
+    if not any(char in value for char in "'\n\r"):
+        return f"'{value}'"
+    escapes = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+    return '"' + "".join(escapes.get(char, char) for char in value) + '"'
+
+
 @dataclass(frozen=True)
 class Settings:
     features: frozenset[str] = frozenset()
@@ -208,7 +218,7 @@ class Settings:
             calls = dict(recipe.calls)
             dependencies = "".join(f" {calls.get(name, name)}" for name in self.dependencies(recipe))
             text += f"{recipe.name}{recipe.parameters}:{dependencies}\n"
-        return text.replace(BRANCH, self.default_branch)
+        return text.replace(BASE, just_string(f"origin/{self.default_branch}"))
 
 
 def problems(justfile: Justfile, settings: Settings) -> tuple[list[str], list[Recipe]]:
@@ -228,7 +238,8 @@ def problems(justfile: Justfile, settings: Settings) -> tuple[list[str], list[Re
             if not justfile.reaches(recipe.name, dependency):
                 found.append(f"`{recipe.name}` doesn't reach `{dependency}`.")
                 unreached.add((recipe.name, dependency))
-    if justfile.resolve("fix") and justfile.resolve("check"):
+    # A check that's missing, even on purpose, reaches no checker.
+    if justfile.resolve("fix"):
         for fixer, checker in FIX_CHECK_PAIRS:
             if (
                 # A pair is only required when fix surely runs the fixer, so

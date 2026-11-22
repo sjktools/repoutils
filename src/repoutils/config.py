@@ -14,9 +14,8 @@ from typing import Any
 PYPROJECT = "pyproject.toml"
 DEFAULT_COMMENT_PREFIX = "repoutils"
 # The optional features a project can list in [tool.repoutils] features:
-# pypi-publication for a package published to PyPI, and secrets-export for a
-# project that backs up its secrets with `repoutils secrets export`.
-FEATURES = ("pypi-publication", "secrets-export")
+# pypi-publication for a package published to PyPI.
+FEATURES = ("pypi-publication",)
 # A key TOML allows unquoted.
 _BARE_KEY_RE = re.compile(r"[A-Za-z0-9_-]+")
 

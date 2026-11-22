@@ -329,7 +329,6 @@ check-justfile:
 secrets-export-test $SECRETS_EXPORT_KEY='':
     {{ repoutils }} secrets export --self-test ${SECRETS_EXPORT_KEY:+--github-key "$SECRETS_EXPORT_KEY"}
 """,
-        "secrets-export",
     ),
     _recipe(
         "lock-platforms-check",

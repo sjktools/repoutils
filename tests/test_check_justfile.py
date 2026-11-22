@@ -184,7 +184,7 @@ def test_omitted_recipes_and_dependencies() -> None:
 
 def test_features_decide_the_standard() -> None:
     recipes = standard_recipes()
-    for name in ("build", "check-attestations", "smoke", "check-release", "secrets-export-test"):
+    for name in ("build", "check-attestations", "smoke", "check-release"):
         del recipes[name]
     recipes["ci"] = ["lock-check", "sync", "check", "coverage"]
     justfile = parse_dump(dump(recipes))
@@ -274,11 +274,11 @@ def test_bad_settings(tmp_path: Path, config_text: str, message: str) -> None:
 
 def test_settings_from_config(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
-        "[tool.repoutils]\nfeatures = ['secrets-export']\ndefault-branch = 'master'\n"
+        "[tool.repoutils]\nfeatures = ['pypi-publication']\ndefault-branch = 'master'\n"
         "[tool.repoutils.justfile]\nomit = ['prose-check']\nomit-dependencies = { check = ['pyright'] }\n"
     )
     assert Settings.from_config(tmp_path) == Settings(
-        frozenset({"secrets-export"}),
+        frozenset({"pypi-publication"}),
         frozenset({"prose-check"}),
         (("check", frozenset({"pyright"})),),
         "master",

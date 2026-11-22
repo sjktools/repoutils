@@ -21,7 +21,7 @@ the standard text, ready to paste.
 Which recipes are standard depends on the features in ``[tool.repoutils]
 features``: ``pypi-publication`` adds ``build``, ``check-attestations``,
 ``smoke`` and ``check-release`` (and ``ci``'s dependencies on ``build`` and
-``smoke``), and ``secrets-export`` adds ``secrets-export-test``.
+``smoke``).
 ``[tool.repoutils.justfile]`` lists the standard recipes (``omit``) and
 dependencies (``omit-dependencies``) the project leaves out on purpose.
 

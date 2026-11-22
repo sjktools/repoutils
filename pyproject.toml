@@ -55,7 +55,7 @@ dev = [
 [tool.repoutils]
 default-branch = "main"
 # The optional repoutils features this project uses, which decide the standard justfile recipes.
-features = ["pypi-publication", "secrets-export"]
+features = ["pypi-publication"]
 
 [tool.repoutils.long-files]
 include = ["*.py"]

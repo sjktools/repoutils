@@ -570,8 +570,8 @@ Every setting is optional:
 comment-prefix = "repoutils"
 # The branch to compare with when there's no PR base.
 default-branch = "main"
-# The optional repoutils features this project uses: "pypi-publication" and
-# "secrets-export". `repoutils check-justfile` uses them; see below.
+# The optional repoutils features this project uses: "pypi-publication" is the
+# only one. `repoutils check-justfile` uses them; see below.
 features = []
 
 # The names of the commit statuses `repoutils post-coverage-status` posts, and
@@ -776,10 +776,7 @@ The command does not compare the body or the doc comment of a recipe with the st
 It does not check the value of the `repoutils` variable either, because projects run `repoutils` in different ways.
 For each missing recipe, the command prints the standard text of the recipe, with the `default-branch` of the project, so that you can paste it into the justfile.
 
-The `features` setting in `[tool.repoutils]` adds standard recipes:
-
-- `pypi-publication` adds `build`, `check-attestations`, `smoke` and `check-release`, and makes `ci` depend on `build` and `smoke`.
-- `secrets-export` adds `secrets-export-test`.
+The `pypi-publication` feature in the `features` setting of `[tool.repoutils]` adds the standard recipes `build`, `check-attestations`, `smoke` and `check-release`, and makes `ci` depend on `build` and `smoke`.
 
 An unknown feature name is an error, so a typo does not turn a feature off.
 List a standard recipe that the project leaves out on purpose in `omit`, and a standard dependency that it leaves out in `omit-dependencies`.

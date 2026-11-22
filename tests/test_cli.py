@@ -99,6 +99,7 @@ def test_python_dash_m(tmp_path: Path) -> None:
         (["added-strings", "--base", "HEAD"], "Strings to double check"),
         (["requirements-min-versions", "check"], "Dependency minimum versions match uv.lock."),
         (["check-lock-platforms"], "uv.lock"),
+        (["check-justfile"], "standard recipes"),
     ],
 )
 def test_repo_checks(
@@ -199,6 +200,12 @@ def test_comment_posters(
             False,
         ),
         (
+            ["check-justfile", "--exit-zero"],
+            "[tool.repoutils.justfile]\nomit = 'lint'\n",
+            "[tool.repoutils.justfile] omit must be a list of strings",
+            False,
+        ),
+        (
             ["check-lock-platforms"],
             "[tool.repoutils.lock-platforms]\nsupported = 3\n",
             "[tool.repoutils.lock-platforms] supported must be a list of strings",
@@ -264,6 +271,7 @@ def test_bad_pyproject_setting_prints_one_line_error(
     [
         (["check-prose"], False),
         (["check-prose", "--exit-zero"], False),
+        (["check-justfile", "--exit-zero"], False),
         (["check-sentence-per-line"], False),
         (["check-screenshots-dir"], False),
         (["check-lock-platforms"], True),

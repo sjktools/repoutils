@@ -28,7 +28,8 @@ name: Bump downstream
 # Three jobs, one composite action each, so the code that re-locks never runs
 # alongside a token that can push:
 #
-# - plan checks DOWNSTREAM_REPOS and gives the matrix.
+# - plan checks DOWNSTREAM_REPOS and gives the matrix, and works out the
+#   version from the event.
 # - bump checks out each downstream's default branch, moves its pins and
 #   re-locks it with its own uv, which runs its build backends. It moves the
 #   downstream's uses of this repository's actions to the release's tag, and
@@ -82,9 +83,9 @@ jobs:
     timeout-minutes: 5
     outputs:
       repositories: ${{ steps.plan.outputs.repositories }}
-      version: ${{ steps.version.outputs.version }}
-      commit: ${{ steps.version.outputs.commit }}
-      test: ${{ steps.version.outputs.test }}
+      version: ${{ steps.plan.outputs.version }}
+      commit: ${{ steps.plan.outputs.commit }}
+      test: ${{ steps.plan.outputs.test }}
 
     steps:
       - name: Checkout repoutils' source
@@ -98,58 +99,11 @@ jobs:
             /src/repoutils/
           sparse-checkout-cone-mode: false
 
-      # Keep version in step with pyproject.toml's [tool.uv] required-version.
-      - name: Install uv
-        if: github.event.workflow_run.event == 'workflow_dispatch'
-        uses: astral-sh/setup-uv@v10.3.3
-        with:
-          version: "0.13.6"
-          enable-cache: false
-
       # A release's Publish run's head branch is the tag it ran on,
       # v<version>. A Publish run started by hand published a dev version of
-      # the commit it ran on, numbered by its run ID.
-      - name: Find the version
-        id: version
-        env:
-          DISPATCHED: ${{ inputs.version }}
-          DISPATCHED_COMMIT: ${{ inputs.commit }}
-          EVENT: ${{ github.event.workflow_run.event }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
-          TAG: ${{ github.event.workflow_run.head_branch }}
-        run: |
-          if [ "$EVENT" = workflow_dispatch ]; then
-            mkdir "$RUNNER_TEMP/published"
-            git show "$SHA:pyproject.toml" > "$RUNNER_TEMP/published/pyproject.toml"
-            # The same as publish-pypi.yml's Set dev version, so keep the two in step.
-            version=$(uv version --directory "$RUNNER_TEMP/published" --frozen --dry-run --short \
-              --bump patch --bump "dev=$RUN_ID")
-            commit=$SHA
-          elif [ -n "$DISPATCHED" ]; then
-            version=$DISPATCHED
-            commit=$DISPATCHED_COMMIT
-          else
-            version=${TAG#v}
-            commit=
-          fi
-          # The downstream's CI runs the actions at the commit, so it must be
-          # reviewed code. A Publish run on a tag named main would have main
-          # as its head branch too.
-          if [ -n "$commit" ] && ! git merge-base --is-ancestor "$commit" HEAD; then
-            echo "::error::$commit isn't a commit on main."
-            exit 1
-          fi
-          test=false
-          if [[ "$version" == *.dev* ]]; then
-            test=true
-          fi
-          {
-            echo "version=$version"
-            echo "commit=$commit"
-            echo "test=$test"
-          } >> "$GITHUB_OUTPUT"
-
+      # the next patch release of the commit it ran on, numbered by its run
+      # ID, with `repoutils bump-version patch --dev <run ID>`, which the
+      # action works out with the same code.
       - name: Plan
         id: plan
         uses: $/.github/actions/downstream-plan

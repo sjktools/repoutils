@@ -49,6 +49,20 @@ def test_bumped_refuses_other_forms(version: str) -> None:
         bump_version.bumped(version, "patch")
 
 
+@pytest.mark.parametrize(
+    ("level", "new"),
+    [("patch", "1.2.4.dev99"), ("minor", "1.3.0.dev0"), ("major", "2.0.0.dev7")],
+)
+def test_dev_version(level: str, new: str) -> None:
+    number = int(new.rsplit("dev", 1)[1])
+    assert bump_version.dev_version("1.2.3", level, number) == new
+
+
+def test_dev_version_refuses_a_negative_number() -> None:
+    with pytest.raises(ValueError, match="can't be negative"):
+        bump_version.dev_version("1.2.3", "patch", -1)
+
+
 @pytest.fixture
 def cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.chdir(tmp_path)
@@ -62,6 +76,34 @@ def test_bump(cwd: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert capsys.readouterr().out == "Bumped the version from 1.2.3 to 1.3.0 in pyproject.toml, uv.lock\n"
     assert (cwd / "pyproject.toml").read_text() == PYPROJECT.replace('version = "1.2.3"\ndep', 'version = "1.3.0"\ndep')
     assert (cwd / "uv.lock").read_text() == LOCK.replace('my-pkg"\nversion = "1.2.3"', 'my-pkg"\nversion = "1.3.0"')
+
+
+def test_bump_dev(cwd: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert bump_version.run(["patch", "--dev", "41908943359"]) == 0
+    new = "1.2.4.dev41908943359"
+    assert capsys.readouterr().out == f"Bumped the version from 1.2.3 to {new} in pyproject.toml, uv.lock\n"
+    assert (cwd / "pyproject.toml").read_text() == PYPROJECT.replace(
+        'version = "1.2.3"\ndep', f'version = "{new}"\ndep'
+    )
+    assert (cwd / "uv.lock").read_text() == LOCK.replace('my-pkg"\nversion = "1.2.3"', f'my-pkg"\nversion = "{new}"')
+
+
+@pytest.mark.parametrize(
+    ("args", "error"),
+    [
+        (["patch", "--dev", "-1"], "isn't a dev number"),
+        (["patch", "--dev", "x"], "isn't a dev number"),
+        # Arabic-Indic digits, which int() would take.
+        (["patch", "--dev", "\u0661\u0662"], "isn't a dev number"),
+        (["patch", "--dev", "1", "--pr"], "--dev can't be used with --pr"),
+    ],
+)
+def test_bump_dev_refuses(args: list[str], error: str, cwd: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as raised:
+        bump_version.run(args)
+    assert raised.value.code == 2
+    assert error in capsys.readouterr().err
+    assert (cwd / "pyproject.toml").read_text() == PYPROJECT
 
 
 def test_bump_keeps_line_endings_and_quotes(cwd: Path) -> None:

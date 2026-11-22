@@ -71,12 +71,16 @@ jobs:
       # publish-testpypi.yml numbered by its run number. Re-running a run
       # reuses its ID, so once its upload has succeeded, re-run only failed
       # jobs or start a new run rather than re-running all jobs.
-      # --frozen leaves uv.lock alone; only the built package changes.
-      # bump-downstream.yml's plan job works out the same version, so keep
-      # the two in step.
+      # It edits pyproject.toml and uv.lock as text, with this checkout's
+      # repoutils, as uv version --bump patch --bump dev=<run ID> would.
+      # bump-downstream.yml's plan job works out the same version with the
+      # same code (`repoutils downstream plan`).
       - name: Set dev version
         if: github.event_name == 'workflow_dispatch'
-        run: uv version --frozen --bump patch --bump "dev=${GITHUB_RUN_ID}"
+        env:
+          PYTHONPATH: src
+          PYTHONSAFEPATH: "1"
+        run: python3 -m repoutils bump-version patch --dev "$GITHUB_RUN_ID"
 
       - name: Get version
         id: version

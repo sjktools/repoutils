@@ -129,8 +129,12 @@ def bump(root: Path, level: str) -> tuple[str, str, list[str]]:
             _write(changed, new_text)
     except BaseException:
         # So a failed write leaves the two files as they were, and in step.
+        # Each is put back even if another can't be, and the write's own error is the one raised.
         for changed, original in originals.items():
-            _write(changed, original)
+            try:
+                _write(changed, original)
+            except OSError as e:
+                print(f"{github.annotation('warning')}Couldn't put back {changed}: {e}", file=sys.stderr)
         raise
     return old, new, [changed.relative_to(root).as_posix() for changed in texts]
 

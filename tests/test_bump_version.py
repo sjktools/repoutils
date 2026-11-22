@@ -122,6 +122,30 @@ def test_bump_puts_files_back_if_a_write_fails(
     assert (cwd / "uv.lock").read_text() == LOCK
 
 
+def test_bump_puts_back_what_it_can(
+    cwd: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write = bump_version._write
+    pyproject_writes: list[str] = []
+
+    def fail(path: Path, text: str) -> None:
+        if path.name == "pyproject.toml":
+            pyproject_writes.append(text)
+            # The bump goes through, but putting the file back fails.
+            if len(pyproject_writes) == 2:
+                raise OSError("read-only")
+        elif "1.2.4" in text:
+            raise OSError("disk full")
+        write(path, text)
+
+    monkeypatch.setattr(bump_version, "_write", fail)
+    assert bump_version.run(["patch"]) == 1
+    err = capsys.readouterr().err
+    assert "Couldn't put back pyproject.toml: read-only" in err
+    assert err.endswith("disk full\n")
+    assert (cwd / "uv.lock").read_text() == LOCK
+
+
 def test_auto_merge_needs_pr(cwd: Path, capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as raised:
         bump_version.run(["patch", "--auto-merge", "squash"])

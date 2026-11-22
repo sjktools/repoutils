@@ -73,7 +73,8 @@ runs:
       run: |
         trap 'mkdir -p "$RUNNER_TEMP/step-summaries" && cp "$GITHUB_STEP_SUMMARY" "$RUNNER_TEMP/step-summaries/inspect.md"' EXIT
         args=()
-        [ -n "$ENVIRONMENT" ] && args+=(--environment "$ENVIRONMENT")
+        # One argument, so a name that starts with - isn't read as an option.
+        [ -n "$ENVIRONMENT" ] && args+=("--environment=$ENVIRONMENT")
         python3 -m repoutils secrets inspect "${args[@]}"
 
     # GitHub's API doesn't serve step summaries, so this keeps the one the

@@ -72,6 +72,10 @@ def test_short(info: BuildInfo, line: str) -> None:
     assert build_info.short(info) == line
 
 
+def test_short_with_another_name() -> None:
+    assert build_info.short(BuildInfo("1.0", COMMIT, False, None), "exolot") == "exolot 1.0 (0123456789ab)"
+
+
 @pytest.mark.parametrize(("dirty", "changes"), [(None, "unknown"), (True, "yes"), (False, "no")])
 def test_describe_a_build(dirty: bool | None, changes: str) -> None:
     lines = version.describe(BuildInfo("1.0", COMMIT if dirty is not None else None, dirty, None))

@@ -65,6 +65,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `deploy-keys` | Checks or creates the deploy keys declared in `pyproject.toml` and the secrets that store their private keys, or prints the deploy keys in the repository. |
 | `security-settings` | Checks or updates the security settings defined in `pyproject.toml` (such as secret protection), or prints the current security settings of the repository. |
 | `check-attestations` | Fails unless every distribution file in `dist/` has a PEP 740 publish attestation. |
+| `check-install` | Installs a wheel (`--wheel`) or a released version from an index (`--version`) with `uvx`, and fails unless `--version` of its command prints its version and the commit that its build came from, as the `repoutils-build-info` hook records them. For a wheel, the commit must be the commit of the checkout, and the line must say whether the checkout has uncommitted changes. For a released version, the command retries while the index does not yet serve the version. Each `--run` also runs the command, which must exit with code `0`. |
 | `version` | Prints the version of repoutils, the Git commit it was built from, where it is installed, and the Python version. When repoutils runs from a source checkout, it reads the version from `pyproject.toml` and the commit from Git. |
 
 These commands require a GitHub token:

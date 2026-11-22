@@ -384,7 +384,7 @@ def test_probe_reads_an_installed_distribution(tmp_path: Path) -> None:
     (info / "METADATA").write_text("Metadata-Version: 2.1\nName: my-pkg\nVersion: 1.2.0\n")
     (info / "build_info.json").write_text("{}")
     record = ["my_pkg/build_info.json", "my_pkg/other.json", "my_pkg/bin/data-not-a-command"]
-    record += ["my_pkg-1.2.0.dist-info/build_info.json", os.path.relpath(scripts / "my-script", site)]
+    record += ["my_pkg-1.2.0.dist-info/build_info.json", Path(os.path.relpath(scripts / "my-script", site)).as_posix()]
     (info / "RECORD").write_text("".join(f"{path},,\n" for path in record))
     (info / "entry_points.txt").write_text("[console_scripts]\nmy-pkg = my_pkg:main\n[other]\nx = y\n")
 

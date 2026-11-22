@@ -1,9 +1,11 @@
 """Check that the justfile has the standard recipes, and that check, fix, ci and patch-coverage reach the standard ones.
 
 It reads the justfile in the current directory (or the one ``--justfile``
-names) with ``just --dump --dump-format json``, which evaluates no assignment, not even ``shell()`` or
-an ``eager`` one, so it runs nothing from the justfile. That output includes
-the recipes of any ``import``. It checks that:
+names) with ``just --dump --dump-format json``, which evaluates no assignment,
+not even ``shell()`` or an ``eager`` one, so it runs nothing from the
+justfile. That output includes the recipes of any ``import``. The settings
+always come from the current directory's ``pyproject.toml``, even with
+``--justfile``. It checks that:
 
 - every standard recipe exists, as a recipe or an alias.
 - ``check``, ``fix``, ``ci`` and ``patch-coverage`` reach their standard

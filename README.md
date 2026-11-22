@@ -756,6 +756,7 @@ The default limit for short sentences comes from a smaller sample of rewrites of
 It reads the justfile with `just --dump --dump-format json`, which evaluates no assignments, so the command runs nothing from the justfile.
 Pass `--just <path>` to run a `just` that is not on `PATH`, and `--justfile <path>` to check a justfile that `just` does not find from the current directory.
 A recipe passes `--just {{ quote(just_executable()) }} --justfile {{ quote(justfile()) }}`, so it checks the justfile that runs it.
+The settings always come from the `pyproject.toml` in the current directory, as with every other command, even with `--justfile`.
 
 The command fails in these cases:
 

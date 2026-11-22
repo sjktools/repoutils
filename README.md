@@ -74,7 +74,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 These commands require a GitHub token:
 
 - any command that posts to a pull request, and `post-coverage-status`
-- the `github-settings`, `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys`, `security-settings`, `dependabot-uv`, `github-releases` and `autofix` commands
+- the `github-settings`, `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys`, `security-settings`, `dependabot-uv`, `github-releases`, `autofix` and `testpypi` commands
 - `downstream bump --pr`
 
 These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when `$GITHUB_TOKEN` is not set.
@@ -393,7 +393,8 @@ A run that is started that way publishes a dev version of the branch to TestPyPI
 
 `repoutils testpypi <pull request>` does the same as the comment, for a client that cannot post the exact comment, such as Claude Code on the web.
 
-- The command refuses a pull request that is closed or comes from a fork, because the branch of a fork is not in the repository.
+- The command refuses a closed pull request.
+  It also refuses a pull request from a fork, because the branch of a fork is not in the repository.
 - It starts the workflow on the branch, and prints the link to the run on standard output.
   It does not wait for the run.
 - `--workflow` names another workflow file.

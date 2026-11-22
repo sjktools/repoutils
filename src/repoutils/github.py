@@ -107,7 +107,7 @@ def annotation(kind: str) -> str:
     return f"::{kind}::" if os.environ.get("GITHUB_ACTIONS") == "true" else ""
 
 
-def close_error(e: OSError) -> None:
+def close_error(e: Exception) -> None:
     """Close an HTTPError's response, which an error that's handled and
     dropped would otherwise leave open."""
     if isinstance(e, urllib.error.HTTPError):
@@ -125,7 +125,8 @@ def react(repo: str, comment_id: int, token: str) -> None:
             token,
             json_body={"content": "rocket"},
         )
-    except OSError as e:
+    # RuntimeError is request()'s error for too many redirects.
+    except (OSError, RuntimeError) as e:
         close_error(e)
         print(f"{annotation('warning')}Couldn't react to comment {comment_id}: {e}", file=sys.stderr)
 

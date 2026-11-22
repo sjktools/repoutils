@@ -31,7 +31,7 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
 - `src/repoutils/github.py` holds the GitHub API helpers the posting commands share.
   They are a request function that never follows a redirect with the token to another host, paginated comment listing, `upsert_comment` and `hide_comments`.
   It also holds `react`, which only warns if reacting to a comment fails.
-  `guarded` prints a command's error from the API, the network or `gh`, and returns 1 for it.
+  `guarded` prints a command's error from the API, the network or `gh`, or its `ValueError` or `RuntimeError`, and returns 1 for it.
 - `src/repoutils/secret_inspect.py` is `secrets inspect`, which reports what each secret a workflow passes it is, kept apart from the command for length.
   `src/repoutils/workflow_summaries.py` is `secrets inspect-remote`, which starts the workflow that runs `secrets inspect` and prints the step summaries it keeps as artifacts.
   `src/repoutils/secret_export.py` is `secrets export`, which encrypts those secrets' values with age for a backup.

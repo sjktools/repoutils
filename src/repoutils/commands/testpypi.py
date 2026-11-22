@@ -41,7 +41,8 @@ def reply(repo: str, pr: int, body: str, token: str) -> None:
     """Comment body on pr. The run has started by then, so a failure only warns."""
     try:
         github.request("POST", f"{github.API_URL}/repos/{repo}/issues/{pr}/comments", token, json_body={"body": body})
-    except OSError as e:
+    # RuntimeError is github.request()'s error for too many redirects.
+    except (OSError, RuntimeError) as e:
         github.close_error(e)
         print(f"{github.annotation('warning')}Couldn't reply on pull request #{pr}: {e}", file=sys.stderr)
 
@@ -64,12 +65,12 @@ def testpypi(
     print(f"Started {workflow} on {branch}: {run_url}", file=sys.stderr)
     # The run's page on its own, for a script to read.
     print(run_url)
-    if step_summary is not None:
-        with step_summary.open("a") as f:
-            f.write(f"{started} (PR #{pr}).\n\nPublish run: {run_url}\n")
     if comment_id is not None:
         github.react(repo, comment_id, token)
         reply(repo, pr, f"{started}: {run_url}", token)
+    if step_summary is not None:
+        with step_summary.open("a") as f:
+            f.write(f"{started} (PR #{pr}).\n\nPublish run: {run_url}\n")
     return 0
 
 

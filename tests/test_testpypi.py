@@ -28,6 +28,8 @@ def _pr(**overrides: Any) -> dict[str, Any]:
 
 
 class FakeGitHub:
+    """Answers the requests testpypi makes, raising a 403 for each URL in failing."""
+
     def __init__(self, pr: dict[str, Any], *, failing: frozenset[str] = frozenset()) -> None:
         self.pr = pr
         self.failing = failing
@@ -107,6 +109,23 @@ def test_a_failed_reaction_or_reply_only_warns(
     err = capsys.readouterr().err
     assert f"{prefix}Couldn't react to comment 99: HTTP Error 403: Forbidden\n" in err
     assert f"{prefix}Couldn't reply on pull request #5: HTTP Error 403: Forbidden\n" in err
+
+
+def test_too_many_redirects_on_the_reaction_and_reply_only_warns(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeGitHub(_pr())
+
+    def request(method: str, url: str, token: str, *, json_body: object = None) -> Any:
+        if url in (REACTIONS, COMMENTS):
+            raise RuntimeError(f"too many redirects for {method} {url}")
+        return fake.request(method, url, token, json_body=json_body)
+
+    monkeypatch.setattr(github, "request", request)
+    assert testpypi.testpypi("o/r", 5, "tok", comment_id=99) == 0
+    err = capsys.readouterr().err
+    assert f"Couldn't react to comment 99: too many redirects for POST {REACTIONS}\n" in err
+    assert f"Couldn't reply on pull request #5: too many redirects for POST {COMMENTS}\n" in err
 
 
 @pytest.mark.parametrize(

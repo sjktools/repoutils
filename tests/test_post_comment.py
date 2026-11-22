@@ -284,7 +284,7 @@ class PostCommentUpdateHiddenTests(TestCase):
             ]
         )
         self.assertEqual(code, 0)
-        writes = [(m, u, b) for m, u, b in gh.calls if m != "POST"]
+        writes = [(m, u, b) for m, u, b in gh.calls if not u.endswith("/graphql")]
         self.assertEqual(
             writes,
             [("PATCH", "https://api.github.com/repos/o/r/issues/comments/6", {"body": EXOLOT_MARKER + "\nfixed\n"})],
@@ -296,7 +296,7 @@ class PostCommentUpdateHiddenTests(TestCase):
         code, out, gh = self._run([_exolot_comment("HIDDEN", minimized=True)])
         self.assertEqual(code, 0)
         self.assertEqual(gh.hidden(), [])
-        self.assertNotIn("PATCH", [m for m, _, _ in gh.calls])
+        self.assertEqual([(m, u) for m, u, _ in gh.calls if not u.endswith("/graphql")], [])
         self.assertIn("no earlier comment to update", out)
 
 

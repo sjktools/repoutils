@@ -108,7 +108,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--author",
         help="login $GITHUB_TOKEN comments as, e.g. github-actions[bot], to find the comment to edit "
-        "(default: looked up, which only works for a user token)",
+        "(default: looked up, which only works for a user token; "
+        "not used with --hide-previous, which asks GitHub which comments the token's user posted)",
     )
     args = parser.parse_args(argv)
     try:

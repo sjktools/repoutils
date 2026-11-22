@@ -25,10 +25,7 @@ Stdlib-only, like every repoutils module."""
 
 import argparse
 import os
-import subprocess
 import sys
-import urllib.error
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic, sleep
@@ -59,12 +56,6 @@ class Progress:
     reported: bool = False
 
 
-def _annotation(kind: str) -> str:
-    """The prefix that makes GitHub Actions show a line as an annotation, or
-    nothing outside Actions."""
-    return f"::{kind}::" if os.environ.get("GITHUB_ACTIONS") == "true" else ""
-
-
 def _run_page(repo: str, run_id: int) -> str:
     return f"https://github.com/{repo}/actions/runs/{run_id}"
 
@@ -75,28 +66,6 @@ def check_pr(repo: str, pr: int, token: str) -> tuple[str, str]:
     data = github.request("GET", f"{github.API_URL}/repos/{repo}/pulls/{pr}", token)
     autofix_runs.check_pr_data(data, pr)
     return str(data["head"]["ref"]), str(data["head"]["sha"])
-
-
-def _close(e: OSError) -> None:
-    """Close an HTTPError's response, which an error that's handled and
-    dropped would otherwise leave open."""
-    if isinstance(e, urllib.error.HTTPError):
-        e.close()
-
-
-def react(repo: str, comment_id: int, token: str) -> None:
-    """React to the comment with a rocket. The fix run has started by then,
-    so a failure only warns: a failed run would suggest commenting again."""
-    try:
-        github.request(
-            "POST",
-            f"{github.API_URL}/repos/{repo}/issues/comments/{comment_id}/reactions",
-            token,
-            json_body={"content": "rocket"},
-        )
-    except OSError as e:
-        _close(e)
-        print(f"{_annotation('warning')}Couldn't react to comment {comment_id}: {e}", file=sys.stderr)
 
 
 def report_succeeded(repo: str, run_id: int, token: str) -> bool:
@@ -183,7 +152,7 @@ def autofix(
     progress.fix_url = _run_page(repo, fix_run_id)
     print(f"Started {workflow} on {branch}: {progress.fix_url}", file=sys.stderr)
     if comment_id is not None:
-        react(repo, comment_id, token)
+        github.react(repo, comment_id, token)
     fix_run = workflow_summaries.wait(
         repo, fix_run_id, token, interval=interval, timeout=deadline - monotonic(), just_started=True
     )
@@ -209,7 +178,7 @@ def autofix(
         try:
             progress.reported = report_succeeded(repo, push_run_id, token)
         except OSError as e:
-            _close(e)
+            github.close_error(e)
         raise
     pushed = push_run.get("conclusion") == "success"
     if not fixed or not pushed:
@@ -405,21 +374,6 @@ def _write_report(path: Path, progress: Progress) -> None:
         path.write_text(body)
 
 
-def _guarded(error: str, action: Callable[[], int | None]) -> int:
-    """Run action, printing an exception it raises and returning 1 for it."""
-    try:
-        return action() or 0
-    except subprocess.CalledProcessError as e:
-        print(f"{error}{' '.join(e.cmd)} failed:\n{e.stderr}", file=sys.stderr)
-    except urllib.error.HTTPError as e:
-        with e:
-            detail = e.read().decode(errors="replace")
-        print(f"{error}HTTP {e.code} from {e.filename}:\n{detail}", file=sys.stderr)
-    except (OSError, ValueError, RuntimeError) as e:
-        print(f"{error}{e}", file=sys.stderr)
-    return 1
-
-
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     command = argv[0] if argv and argv[0] in SUBCOMMANDS else ""
@@ -430,11 +384,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         args = _autofix_parser().parse_args(argv)
     # The subcommands run in a workflow, where an ::error:: line is shown as an annotation.
-    error = "::error::" if command else _annotation("error")
+    error = "::error::" if command else github.annotation("error")
     progress = Progress()
-    code = _guarded(error, lambda: _run_command(command, args, progress))
+    code = github.guarded(error, lambda: _run_command(command, args, progress))
     if code and not command and args.report:
-        _guarded(error, lambda: _write_report(args.report, progress))
+        github.guarded(error, lambda: _write_report(args.report, progress))
     return code
 
 

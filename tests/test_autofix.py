@@ -322,17 +322,6 @@ def test_a_failed_reaction_only_warns(
     assert f"{prefix}Couldn't react to comment 99: HTTP Error 403: Forbidden\n" in capsys.readouterr().err
 
 
-def test_a_reaction_that_cannot_connect_only_warns(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    def request(method: str, url: str, token: str, *, json_body: object = None) -> Any:
-        raise urllib.error.URLError("no route to host")
-
-    monkeypatch.setattr(github, "request", request)
-    autofix.react("o/r", 99, "tok")
-    assert capsys.readouterr().err == "Couldn't react to comment 99: <urlopen error no route to host>\n"
-
-
 def test_report() -> None:
     run = "https://github.com/o/r/actions/runs/1"
     assert autofix.report(autofix.Progress(), run) == f"/autofix [couldn't start PR Fixes]({run}).\n"

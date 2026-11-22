@@ -3,10 +3,13 @@ it on later runs, and the no-redirect opener wait-for-base-coverage uses.
 Standard library only."""
 
 import json
+import os
 import subprocess
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from email.message import Message
 from pathlib import Path
 from typing import IO, Any, override
@@ -96,6 +99,53 @@ def pr_head(repo: str, pr: int, token: str) -> str:
     """The PR's current head commit."""
     sha: str = request("GET", f"{API_URL}/repos/{repo}/pulls/{pr}", token)["head"]["sha"]
     return sha
+
+
+def annotation(kind: str) -> str:
+    """The prefix that makes GitHub Actions show a line as an annotation, such
+    as ``::warning::``, or nothing outside Actions."""
+    return f"::{kind}::" if os.environ.get("GITHUB_ACTIONS") == "true" else ""
+
+
+def close_error(e: Exception) -> None:
+    """Close an HTTPError's response, which an error that's handled and
+    dropped would otherwise leave open."""
+    if isinstance(e, urllib.error.HTTPError):
+        e.close()
+
+
+def react(repo: str, comment_id: int, token: str) -> None:
+    """React to the comment with a rocket, to say the run it asked for has
+    started. By then the run has started, so a failure only warns: a failed
+    run would suggest commenting again."""
+    try:
+        request(
+            "POST",
+            f"{API_URL}/repos/{repo}/issues/comments/{comment_id}/reactions",
+            token,
+            json_body={"content": "rocket"},
+        )
+    # RuntimeError is request()'s error for too many redirects.
+    except (OSError, RuntimeError) as e:
+        close_error(e)
+        print(f"{annotation('warning')}Couldn't react to comment {comment_id}: {e}", file=sys.stderr)
+
+
+def guarded(error: str, action: Callable[[], int | None]) -> int:
+    """Run action, returning its exit code (0 for None). If it raises an
+    error from gh, the API or the network, or a ValueError or RuntimeError,
+    print the error after the prefix error and return 1 instead."""
+    try:
+        return action() or 0
+    except subprocess.CalledProcessError as e:
+        print(f"{error}{' '.join(e.cmd)} failed:\n{e.stderr}", file=sys.stderr)
+    except urllib.error.HTTPError as e:
+        with e:
+            detail = e.read().decode(errors="replace")
+        print(f"{error}HTTP {e.code} from {e.filename}:\n{detail}", file=sys.stderr)
+    except (OSError, ValueError, RuntimeError) as e:
+        print(f"{error}{e}", file=sys.stderr)
+    return 1
 
 
 def marked_comments(repo: str, pr: int, author: str | None, marker: str, token: str) -> list[dict[str, Any]]:

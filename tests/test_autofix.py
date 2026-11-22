@@ -207,6 +207,20 @@ def test_failed_fix_run_still_goes_to_a_push_run(
     assert progress == autofix.Progress(fix_url=FIX_PAGE, push_url=PUSH_PAGE, reported=reported)
 
 
+def test_starts_the_push_run_for_a_failed_fix_run_a_github_token_started(
+    monkeypatch: pytest.MonkeyPatch, slept: list[float]
+) -> None:
+    fake = FakeGitHub(
+        prs=[_pr()], fix_runs=[_done(7, "failure", actor="github-actions[bot]")], push_lists=[[]], push_runs=[_done(8)]
+    )
+    _install(monkeypatch, fake)
+    assert _run() == 1
+    assert fake.posts()[1] == (
+        "/actions/workflows/fix-push.yml/dispatches",
+        {"ref": "main", "return_run_details": True, "inputs": {"run-id": "7"}},
+    )
+
+
 @pytest.mark.parametrize(("report", "reported"), [("success", True), ("failure", False)])
 def test_failed_push_run(
     monkeypatch: pytest.MonkeyPatch,

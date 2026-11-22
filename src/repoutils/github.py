@@ -9,7 +9,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from email.message import Message
 from pathlib import Path
 from typing import IO, Any, override
@@ -204,7 +204,7 @@ query($owner: String!, $name: String!, $pr: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $pr) {
       comments(first: 100, after: $cursor) {
-        nodes { id isMinimized viewerDidAuthor body }
+        nodes { id databaseId isMinimized viewerDidAuthor body }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -217,25 +217,34 @@ mutation($id: ID!) {
 }"""
 
 
-def hide_comments(repo: str, pr: int, marker: str, token: str, *, keep: str | None = None) -> int:
-    """Hide as outdated every comment on pr that token's user posted whose body
-    starts with marker and isn't hidden yet, up to the one whose node ID is
-    keep, if given. Comments after keep are left alone, as another run may
-    have posted them since, with a newer report. Matching the author means
-    nobody else's comment can be hidden by copying the marker. Returns how
-    many it hid."""
+def own_comments(repo: str, pr: int, marker: str, token: str) -> Iterator[dict[str, Any]]:
+    """The comments on pr that token's user posted whose body starts with
+    marker, oldest first, as GraphQL nodes with id, databaseId and
+    isMinimized. Matching the author means nobody else's comment is picked up
+    by copying the marker."""
     owner, name = repo.split("/", 1)
-    hidden = 0
     cursor = None
     while True:
         variables = {"owner": owner, "name": name, "pr": pr, "cursor": cursor}
         comments = graphql(_MY_COMMENTS, variables, token)["repository"]["pullRequest"]["comments"]
         for c in comments["nodes"]:
-            if c["id"] == keep:
-                return hidden
-            if c["viewerDidAuthor"] and not c["isMinimized"] and c["body"].startswith(marker):
-                graphql(_MINIMIZE, {"id": c["id"]}, token)
-                hidden += 1
+            if c["viewerDidAuthor"] and c["body"].startswith(marker):
+                yield c
         if not comments["pageInfo"]["hasNextPage"]:
-            return hidden
+            return
         cursor = comments["pageInfo"]["endCursor"]
+
+
+def hide_comments(repo: str, pr: int, marker: str, token: str, *, keep: str | None = None) -> int:
+    """Hide as outdated each of own_comments that isn't hidden yet, up to the
+    one whose node ID is keep, if given. Comments after keep are left alone,
+    as another run may have posted them since, with a newer report. Returns
+    how many it hid."""
+    hidden = 0
+    for c in own_comments(repo, pr, marker, token):
+        if c["id"] == keep:
+            break
+        if not c["isMinimized"]:
+            graphql(_MINIMIZE, {"id": c["id"]}, token)
+            hidden += 1
+    return hidden

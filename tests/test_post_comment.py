@@ -46,9 +46,14 @@ class FakeGitHub:
 
 
 def _exolot_comment(
-    node_id: str, *, mine: bool = True, minimized: bool = False, body: str = EXOLOT_MARKER + "\nold"
+    node_id: str,
+    *,
+    mine: bool = True,
+    minimized: bool = False,
+    body: str = EXOLOT_MARKER + "\nold",
+    database_id: int = 0,
 ) -> dict[str, Any]:
-    return {"id": node_id, "viewerDidAuthor": mine, "isMinimized": minimized, "body": body}
+    return {"id": node_id, "databaseId": database_id, "viewerDidAuthor": mine, "isMinimized": minimized, "body": body}
 
 
 class PostCommentHidePreviousTests(TestCase):
@@ -243,19 +248,12 @@ class PostCommentEditTests(TestCase):
 
 
 class PostCommentUpdateHiddenTests(TestCase):
-    """With --update-only and --hide-previous, the newest comment is edited and the rest hidden, not deleted."""
+    """With --update-only and --hide-previous, the newest shown comment is edited and the older ones hidden."""
 
-    def _run(self, existing: list[dict[str, Any]], later: tuple[str, ...] = ()) -> tuple[int, str, FakeGitHub]:
-        # later are comments another run posted after this one listed them.
-        gh = FakeGitHub(
-            [_exolot_comment(str(c["node_id"]), body=str(c["body"])) for c in existing]
-            + [_exolot_comment(node_id) for node_id in later]
-        )
+    def _run(self, comments: list[dict[str, Any]]) -> tuple[int, str, FakeGitHub]:
+        gh = FakeGitHub(comments)
 
         def request(method: str, url: str, token: str, *, json_body: Any = None, **kwargs: object) -> Any:
-            if method == "GET" and url.endswith("/comments?per_page=100&page=1"):
-                gh.calls.append((method, url, json_body))
-                return existing
             if method == "PATCH":
                 gh.calls.append((method, url, json_body))
                 return {}
@@ -265,7 +263,7 @@ class PostCommentUpdateHiddenTests(TestCase):
             report = Path(tmp) / "r.md"
             report.write_text("fixed\n")
             out = io.StringIO()
-            argv = ["7", str(report), "--repo", "o/r", "--name", "exolot-findings", "--author", "bot"]
+            argv = ["7", str(report), "--repo", "o/r", "--name", "exolot-findings"]
             with (
                 contextlib.chdir(tmp),
                 mock.patch.dict("os.environ", {"GITHUB_TOKEN": "tok"}),
@@ -275,14 +273,18 @@ class PostCommentUpdateHiddenTests(TestCase):
                 code = post_comment_main([*argv, "--update-only", "--hide-previous"])
         return code, out.getvalue(), gh
 
-    def test_edits_the_newest_and_hides_the_rest(self) -> None:
-        existing = [
-            {"id": 5, "node_id": "OLD", "user": {"login": "bot"}, "body": EXOLOT_MARKER + "\nfailed"},
-            {"id": 6, "node_id": "NEWEST", "user": {"login": "bot"}, "body": EXOLOT_MARKER + "\nfailed again"},
-        ]
-        code, out, gh = self._run(existing, later=("RACED",))
+    def test_edits_the_newest_shown_and_hides_the_older_ones(self) -> None:
+        code, out, gh = self._run(
+            [
+                _exolot_comment("OLD", database_id=4),
+                _exolot_comment("THEIRS", mine=False, database_id=5),
+                _exolot_comment("NEWEST", database_id=6),
+                # Hidden by someone, so not the one to edit.
+                _exolot_comment("HIDDEN", minimized=True, database_id=7),
+            ]
+        )
         self.assertEqual(code, 0)
-        writes = [(m, u, b) for m, u, b in gh.calls if m in ("PATCH", "DELETE", "POST") and not u.endswith("/graphql")]
+        writes = [(m, u, b) for m, u, b in gh.calls if m != "POST"]
         self.assertEqual(
             writes,
             [("PATCH", "https://api.github.com/repos/o/r/issues/comments/6", {"body": EXOLOT_MARKER + "\nfixed\n"})],
@@ -290,10 +292,11 @@ class PostCommentUpdateHiddenTests(TestCase):
         self.assertEqual(gh.hidden(), ["OLD"])
         self.assertIn("in its latest comment, and hid 1 earlier comment(s)", out)
 
-    def test_posts_nothing_without_an_earlier_comment(self) -> None:
-        code, out, gh = self._run([])
+    def test_posts_nothing_without_a_shown_comment(self) -> None:
+        code, out, gh = self._run([_exolot_comment("HIDDEN", minimized=True)])
         self.assertEqual(code, 0)
-        self.assertEqual([m for m, _, _ in gh.calls], ["GET"])
+        self.assertEqual(gh.hidden(), [])
+        self.assertNotIn("PATCH", [m for m, _, _ in gh.calls])
         self.assertIn("no earlier comment to update", out)
 
 

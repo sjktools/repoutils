@@ -10,7 +10,8 @@ reports whose history is worth keeping, such as exolot's findings. With
 ``--update-only`` it edits the newest earlier comment but never posts a first
 one, so a run can mark a problem an earlier run reported as resolved without
 adding a comment where there was none. Without ``--hide-previous``, it deletes
-any older ones, and with it, it hides them instead. So a report can post a new
+any older ones. With it, it edits the newest one that isn't hidden, and hides
+the older ones instead. So a report can post a new
 comment for a problem, which notifies the PR's subscribers as an edit doesn't,
 and edit that comment once the problem is gone, as ``/autofix``'s does.
 
@@ -49,17 +50,18 @@ def _post(args: argparse.Namespace, marker: str) -> str:
         if not head.startswith(args.commit):
             return f"Not posting: the report is for {args.commit}, but PR #{args.pr}'s head is now {head}."
     if args.hide_previous and args.update_only:
-        previous = github_comments.marked_comments(repo, args.pr, _author(args, token), marker, token)
-        if not previous:
+        # The newest one still showing, as someone may have hidden a newer one.
+        shown = [c for c in github_comments.own_comments(repo, args.pr, marker, token) if not c["isMinimized"]]
+        if not shown:
             return f"Not posting: PR #{args.pr} has no earlier comment to update."
-        newest = previous[-1]
+        newest = shown[-1]
         github_comments.request(
             "PATCH",
-            f"{github_comments.API_URL}/repos/{repo}/issues/comments/{newest['id']}",
+            f"{github_comments.API_URL}/repos/{repo}/issues/comments/{newest['databaseId']}",
             token,
             json_body={"body": body},
         )
-        hidden = github_comments.hide_comments(repo, args.pr, marker, token, keep=newest["node_id"])
+        hidden = github_comments.hide_comments(repo, args.pr, marker, token, keep=newest["id"])
         return f"Posted {args.body} to PR #{args.pr} in its latest comment, and hid {hidden} earlier comment(s)."
     if args.hide_previous:
         # Post first, so a failure leaves the old report showing rather than none.

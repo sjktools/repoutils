@@ -1,0 +1,51 @@
+name: Tag and release the project's version
+description: >-
+  Tags the checked-out commit v<version>, from pyproject.toml's [project]
+  version, pushes the tag over SSH with a deploy key, and creates the GitHub
+  release for it, with `repoutils release-tag`. Each step does nothing if its
+  work is already done, so a rerun finishes a failed job.
+
+# Runs repoutils from this action's own commit, with the runner's python3,
+# installing nothing. Check out the commit to release with its tags fetched
+# (fetch-tags: true and fetch-depth: 0) and without persisted credentials. The
+# job needs contents write for the release, as the deploy key pushes the tag.
+inputs:
+  deploy-key:
+    description: The private half of a deploy key with write access, which pushes the tag.
+    required: true
+  token:
+    description: The token that creates the GitHub release.
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check the deploy key is set
+      shell: bash
+      env:
+        RELEASE_DEPLOY_KEY: ${{ inputs.deploy-key }}
+      run: |
+        if [ -z "$RELEASE_DEPLOY_KEY" ]; then
+          echo "::error::The deploy-key input is empty: is the secret set, and in the job's environment if it has one?"
+          exit 1
+        fi
+
+    - name: Tag the version
+      shell: bash
+      env:
+        RELEASE_DEPLOY_KEY: ${{ inputs.deploy-key }}
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+        PYTHONSAFEPATH: "1"
+      run: python3 -m repoutils release-tag push
+
+    # Separate from the tag, so the deploy key isn't in its environment, and a
+    # rerun creates the release if an earlier run pushed the tag but failed to
+    # create it.
+    - name: Create the GitHub release
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        PYTHONPATH: ${{ github.action_path }}/../../../src
+        PYTHONSAFEPATH: "1"
+      run: python3 -m repoutils release-tag release

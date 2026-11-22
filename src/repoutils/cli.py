@@ -44,6 +44,7 @@ GROUPS: dict[str, list[Command]] = {
         Command("testpypi", "testpypi", "Start a TestPyPI dev release of a PR's branch with the Publish workflow"),
         Command("claude-route", "claude_route", "Decide which Claude workflow a comment (on stdin) is for"),
         Command("push-bundle", "push_bundle", "Check a Git bundle's commits, and push them to a branch with a lease"),
+        Command("release-tag", "release_tag", "Tag the project's version over SSH, and create its GitHub release"),
     ],
     "uv and Dependabot": [
         Command(

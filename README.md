@@ -43,6 +43,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `autofix` | Starts the PR Fixes workflow on a pull request, waits for the workflow that pushes its fixes, and prints the new head commit of the branch. `autofix resolve` and `autofix check-branch` make the checks of the two workflows (see [Running PR Fixes with a command](#running-pr-fixes-with-a-command)). |
 | `testpypi` | Starts the Publish workflow on the branch of a pull request, which publishes a dev version of the branch to TestPyPI, and prints the link to the run (see [Starting a TestPyPI release with a command](#starting-a-testpypi-release-with-a-command)). |
 | `push-bundle` | Fetches the head of a Git bundle, checks that it adds commits to a start commit and, optionally, that it changes only the paths you allow, and pushes it to a branch with a lease on the start commit (see [Pushing a Git bundle](#pushing-a-git-bundle)). |
+| `release-tag` | `push` tags the checked-out commit `v<version>`, with the version from `pyproject.toml`, and pushes the tag over SSH with a deploy key, unless the tag exists. `release` creates the GitHub release for the tag, unless it exists (see [Tagging a release](#tagging-a-release)). |
 | `claude-route` | Reads a comment from standard input and prints `review`, `other` or `none` to route between the Claude workflows. |
 | `requirements-min-versions` | Checks or updates the `>=` minimum versions in `pyproject.toml` to match the versions in `uv.lock`. |
 | `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
@@ -76,6 +77,7 @@ These commands require a GitHub token:
 - any command that posts to a pull request, and `post-coverage-status`
 - the `github-settings`, `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys`, `security-settings`, `dependabot-uv`, `github-releases`, `autofix` and `testpypi` commands
 - `downstream bump --pr`
+- `release-tag release`
 
 These commands read the token from `$GITHUB_TOKEN`, or run `gh auth token` when `$GITHUB_TOKEN` is not set.
 `push-bundle` also needs a token, and reads it from `$GITHUB_TOKEN` only.
@@ -461,6 +463,46 @@ Push with a token other than a `GITHUB_TOKEN` if the push must start workflow ru
 A workflow that a branch can change, such as a `pull_request` workflow, can expose the token to anyone who can push to the branch.
 For a token that can push to other branches, put the push job in a workflow that runs from the default branch, and keep the token in an environment that only the default branch can deploy to, as the PR Fixes Push workflow does.
 The token needs the Contents `write` permission, and also the Workflows `write` permission if the bundle changes a file in `.github/workflows`, such as `actions.lock`.
+
+### Tagging a release
+
+A release job can tag the version of the project and create its GitHub release once a version bump merges to the default branch.
+The `release-tag` composite action does this job's work:
+
+```yaml
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: sjktools/repoutils/.github/actions/release-tag@v<version>
+        with:
+          deploy-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+```
+
+The action runs `repoutils release-tag push` and then `repoutils release-tag release`, in separate steps, from its own commit with the `python3` of the runner.
+It installs nothing, so no cache runs alongside the deploy key.
+Each subcommand does nothing if its work is already done, so a rerun of a failed job finishes it.
+
+- `push` reads the version from `[project] version` in `pyproject.toml`, and does nothing if the checkout has the tag `v<version>`.
+  So check out with the tags fetched.
+  Otherwise, it creates an annotated tag on the checked-out commit as `github-actions[bot]`, and pushes the tag to `github.com` over SSH.
+- `push` reads the private key from `$RELEASE_DEPLOY_KEY`, and gives it to an `ssh-agent` on standard input, so the key is never written to a file.
+  It trusts only the published Ed25519 host key of GitHub, and runs no Git hooks.
+- `release` does nothing if the release exists, and fails if the tag is not on GitHub.
+  Otherwise, it creates the release, with notes that GitHub generates.
+  The token needs the Contents `write` permission.
+
+A push with a deploy key starts workflow runs, so the tag can trigger a workflow that publishes the release.
+Keep the deploy key in an environment that only the default branch can deploy to.
+A tag ruleset that lets only a deploy key create `v*` tags, and lets nobody update or delete them, then stops any other branch or token from tagging a release (see [Rulesets](#rulesets) and [Deploy keys](#deploy-keys)).
 
 ## Configuration
 

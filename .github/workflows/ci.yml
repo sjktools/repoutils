@@ -664,48 +664,9 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      # Keep version in step with pyproject.toml's [tool.uv] required-version.
-      # No cache, so nothing a cache entry holds runs alongside the deploy key.
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.3.3
+      # Runs repoutils from this commit with the runner's python3, installing
+      # nothing, so nothing from a cache runs alongside the deploy key.
+      - name: Tag and release the version
+        uses: $/.github/actions/release-tag
         with:
-          version: "0.13.6"
-          enable-cache: false
-
-      - name: Tag version
-        run: |
-          VERSION="$(uv version --short)"
-          TAG="v${VERSION}"
-          if git rev-parse "${TAG}" >/dev/null 2>&1; then
-            echo "Tag ${TAG} already exists"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${TAG}" -m "Release ${TAG}"
-          # The key goes to an ssh-agent and never to a file. github.com's
-          # host key is GitHub's published Ed25519 key, so ssh trusts nothing else.
-          eval "$(ssh-agent -s)" >/dev/null
-          trap 'ssh-agent -k >/dev/null' EXIT
-          ssh-add - <<<"${RELEASE_DEPLOY_KEY}"
-          KNOWN_HOSTS="${RUNNER_TEMP}/known_hosts"
-          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" >"${KNOWN_HOSTS}"
-          export GIT_SSH_COMMAND="ssh -o UserKnownHostsFile=${KNOWN_HOSTS} -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519"
-          git push "git@github.com:${GITHUB_REPOSITORY}.git" "refs/tags/${TAG}"
-          echo "Created and pushed tag ${TAG}"
-        env:
-          RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
-
-      # Separate from the tag, so a rerun creates the release if an earlier run
-      # pushed the tag but failed to create it.
-      - name: Create GitHub release
-        run: |
-          TAG="v$(uv version --short)"
-          if gh release view "${TAG}" >/dev/null 2>&1; then
-            echo "Release ${TAG} already exists"
-          else
-            gh release create "${TAG}" --verify-tag --title "Release ${TAG}" --generate-notes
-            echo "Created GitHub release ${TAG}"
-          fi
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+          deploy-key: ${{ secrets.RELEASE_DEPLOY_KEY }}

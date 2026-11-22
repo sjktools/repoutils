@@ -375,7 +375,8 @@ The `push-bundle` composite action does this push job's work:
             uv.lock
 ```
 
-The action downloads the artifact (from another workflow run if you give `run-id`), and runs `repoutils push-bundle` from its own commit with the `python3` of the runner.
+The action downloads the artifact, and runs `repoutils push-bundle` from its own commit with the `python3` of the runner.
+With `run-id`, it downloads the artifact from that workflow run, and the job needs the Actions `read` permission.
 Check out the start commit first, without persisted credentials.
 If the bundle contains a merge, check out the full history (`fetch-depth: 0`).
 
@@ -394,6 +395,8 @@ The command reads the token from `$GITHUB_TOKEN`, and gives it to Git in an HTTP
 It pushes with `--force-with-lease` on `--start`, so the push fails if the branch moved.
 It runs no Git hooks.
 Push with a token other than a `GITHUB_TOKEN` if the push must start workflow runs.
+A workflow that a branch can change, such as a `pull_request` workflow, can expose the token to anyone who can push to the branch.
+For a token that can push to other branches, put the push job in a workflow that runs from the default branch, and keep the token in an environment that only the default branch can deploy to, as the PR Fixes Push workflow does.
 The token needs the Contents `write` permission, and also the Workflows `write` permission if the bundle changes a file in `.github/workflows`, such as `actions.lock`.
 
 ## Configuration

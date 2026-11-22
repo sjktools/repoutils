@@ -202,6 +202,7 @@ def rerun(repo: str, token: str, failed: list[Check]) -> bool:
             github.request("POST", f"{api}/runs/{run_id}/rerun-failed-jobs", token)
             print(f"Re-ran the failed jobs of https://github.com/{repo}/actions/runs/{run_id}")
     except urllib.error.HTTPError as e:
+        github.close_error(e)
         print(
             f"warning: couldn't re-run the failed jobs, which needs Actions write on {repo}: {e}",
             file=sys.stderr,

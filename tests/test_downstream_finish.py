@@ -1,3 +1,4 @@
+import io
 import urllib.error
 from email.message import Message
 from pathlib import Path
@@ -106,7 +107,7 @@ class FakeGitHub:
         if method != "GET":
             self.changes.append((method, path, json_body))
             if path in self.refuse:
-                raise urllib.error.HTTPError(url, 403, "Resource not accessible", Message(), None)
+                raise urllib.error.HTTPError(url, 403, "Resource not accessible", Message(), io.BytesIO(b"{}"))
             if path.endswith("/rerun-failed-jobs"):
                 self.reruns += 1
             return None

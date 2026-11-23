@@ -27,7 +27,8 @@ WHERE = "[tool.repoutils.doubled-spaces]"
 # Two or more spaces between two characters that aren't spaces.
 DOUBLED_RE = re.compile(r"(?<=\S) {2,}(?=\S)")
 # Inline markup that isn't shown as prose: a link's or image's destination and title, or an HTML tag or autolink.
-MARKUP_RE = re.compile(r"\]\([^)]*\)|</?[a-zA-Z][^>]*>")
+# A destination can be in angle brackets, escape a character, and hold balanced parentheses; a tag can span lines.
+MARKUP_RE = re.compile(r"\]\((?:<[^<>\n]*>|\\.|\([^()]*\)|[^()\\])*+\)|</?[a-zA-Z][^>]*>")
 # Text that ends with a sentence's closing punctuation, and any closing quotes, brackets or emphasis.
 SENTENCE_END_RE = re.compile(r"[.!?][\"')\]’”*_]*$")
 
@@ -40,9 +41,9 @@ def doubled_spaces(text: str, *, allow_after_sentence: bool = False) -> dict[int
     """Each doubled space in the document's prose, as its (start, end) columns, by line number (from 1)."""
     found: dict[int, list[tuple[int, int]]] = {}
     for block in prose_blocks(text):
-        # A code span can run over wrapped lines, so mask the spans in the block as a whole.
-        unspanned = WRAPPED_CODE_RE.sub(_mask, "\n".join(line.text for line in block)).split("\n")
-        for line, prose in zip(block, (MARKUP_RE.sub(_mask, text) for text in unspanned), strict=True):
+        # Code spans and markup can run over wrapped lines, so mask them in the block as a whole.
+        unspanned = WRAPPED_CODE_RE.sub(_mask, "\n".join(line.text for line in block))
+        for line, prose in zip(block, MARKUP_RE.sub(_mask, unspanned).split("\n"), strict=True):
             for match in DOUBLED_RE.finditer(prose):
                 if allow_after_sentence and len(match[0]) == 2 and SENTENCE_END_RE.search(prose, 0, match.start()):
                     continue

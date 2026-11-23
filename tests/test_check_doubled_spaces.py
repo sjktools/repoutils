@@ -76,6 +76,11 @@ def test_collapse_leaves_code_spans_comments_and_markup_alone() -> None:
     assert collapse(text) == ("A `a  b` <!-- c  d --> [e f](g  h) <img  alt='i  j'> k l.\n", 3)
 
 
+def test_collapse_leaves_whole_link_destinations_and_wrapped_tags_alone() -> None:
+    text = "[a  b](<c)d  e.png>) [f](g(h  i)) [j](k\\)l  m) <img\nsrc='n  o'> p  q.\n"
+    assert collapse(text) == ("[a b](<c)d  e.png>) [f](g(h  i)) [j](k\\)l  m) <img\nsrc='n  o'> p q.\n", 2)
+
+
 def test_a_comment_line_is_blank() -> None:
     # The comment line ends the paragraph, so the indented line after it is code.
     assert doubled_spaces("Text.\n<!-- c -->\n    code  block\n") == {}

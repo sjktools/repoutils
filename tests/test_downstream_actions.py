@@ -170,7 +170,14 @@ def test_lock(root: Path, monkeypatch: pytest.MonkeyPatch, changes: bool) -> Non
 def test_lock_relocks_when_verify_fails(root: Path, monkeypatch: pytest.MonkeyPatch, case: str) -> None:
     # What a plain run writes, what --relock writes, and whether the second --verify passes.
     plain, relocked, passes = {
-        "repaired": (LOCK.replace("x@v0.3.0", "x@v0.4.0"), LOCK.replace("x@v0.3.0", "x@v0.4.0") + "\n", True),
+        # The plain run leaves actions/checkout out of the new tag's entry, and --relock puts it back.
+        "repaired": (
+            LOCK.replace("x@v0.3.0", "x@v0.4.0").replace(
+                "        uses:\n            - 'actions/checkout@v7.0.1'\n", ""
+            ),
+            LOCK.replace("x@v0.3.0", "x@v0.4.0"),
+            True,
+        ),
         "moved": (LOCK, LOCK.replace("sha1-ccc", "sha1-new"), True),
         "still-failing": (LOCK, LOCK, False),
     }[case]
@@ -196,6 +203,7 @@ def test_lock_relocks_when_verify_fails(root: Path, monkeypatch: pytest.MonkeyPa
     if case == "repaired":
         assert downstream_actions.lock(root) is True
         assert ran == [plain_run, verify, relock, verify]
+        assert path.read_text() == relocked
     elif case == "moved":
         # It stops before checking the relocked file, which it won't use.
         with pytest.raises(RuntimeError, match=r"gh actions-lock --relock locks v/w@main at another commit than"):

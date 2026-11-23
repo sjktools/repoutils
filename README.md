@@ -769,7 +769,9 @@ That limit excludes list items, because short sentences are normal in lists.
 That limit also excludes sentences that end with a colon before a list or a code block.
 Treat all limits as maximum values rather than targets, and do not edit sentences when the file already passes.
 
-The command skips code blocks, headings, tables, block quotes, HTML comments, and lines that start with an HTML block tag.
+The command skips code blocks, headings, tables, block quotes, HTML comments, and HTML blocks.
+An HTML block starts with a line that starts with an HTML block tag, such as `<div>`, and ends at the next blank line.
+A block that starts with `<pre>`, `<script>`, `<style>` or `<textarea>` ends at the closing tag instead.
 A block quote continues until the next blank line, list item or heading.
 The command counts an inline code span as one word and a URL as one word.
 It ignores text that has no closing punctuation or has fewer than three words, such as a short list item.
@@ -817,10 +819,10 @@ A rewrite that removes words or commas often leaves them behind.
 The command lists each line that has them, with its line number.
 Pass `--fix` to make each of them one space, which the standard `doubled-spaces-fix` recipe does.
 
-The command skips the same parts of a file as `repoutils check-prose`, where extra spaces are often deliberate:
+The command skips the parts of a file where extra spaces are often deliberate, or change what a reader sees:
 
-- code blocks and inline code spans
-- tables, headings, block quotes, link definitions, HTML comments, and lines that start with an HTML block tag
+- the parts that `repoutils check-prose` skips, such as code blocks, tables, block quotes and HTML blocks (see [Prose](#prose))
+- link definitions, inline code spans, inline HTML tags, and the destinations of links and images
 
 The command ignores the indent and the list marker at the start of a line.
 By default, it also reports two spaces after the end of a sentence.

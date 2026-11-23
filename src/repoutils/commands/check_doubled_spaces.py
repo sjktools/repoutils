@@ -8,8 +8,9 @@ reported, and fails the check.
 
 It reports each line of prose that has two or more spaces between two
 characters that aren't spaces. Code blocks, tables, headings, block quotes,
-HTML blocks, link definitions, comments and code spans aren't prose, so a
-doubled space in them is left alone. With ``allow-after-sentence = true``,
+HTML blocks, link definitions, comments, code spans, inline HTML tags, and
+link and image destinations aren't prose, so a doubled space in them is left
+alone. With ``allow-after-sentence = true``,
 two spaces after a sentence's closing punctuation are allowed.
 """
 
@@ -25,6 +26,8 @@ DEFAULT_FILES = ["AGENTS.md", "README.md"]
 WHERE = "[tool.repoutils.doubled-spaces]"
 # Two or more spaces between two characters that aren't spaces.
 DOUBLED_RE = re.compile(r"(?<=\S) {2,}(?=\S)")
+# Inline markup that isn't shown as prose: a link's or image's destination and title, or an HTML tag or autolink.
+MARKUP_RE = re.compile(r"\]\([^)]*\)|</?[a-zA-Z][^>]*>")
 # Text that ends with a sentence's closing punctuation, and any closing quotes, brackets or emphasis.
 SENTENCE_END_RE = re.compile(r"[.!?][\"')\]’”*_]*$")
 
@@ -38,8 +41,8 @@ def doubled_spaces(text: str, *, allow_after_sentence: bool = False) -> dict[int
     found: dict[int, list[tuple[int, int]]] = {}
     for block in prose_blocks(text):
         # A code span can run over wrapped lines, so mask the spans in the block as a whole.
-        masked = WRAPPED_CODE_RE.sub(_mask, "\n".join(line.text for line in block)).split("\n")
-        for line, prose in zip(block, masked, strict=True):
+        unspanned = WRAPPED_CODE_RE.sub(_mask, "\n".join(line.text for line in block)).split("\n")
+        for line, prose in zip(block, (MARKUP_RE.sub(_mask, text) for text in unspanned), strict=True):
             for match in DOUBLED_RE.finditer(prose):
                 if allow_after_sentence and SENTENCE_END_RE.search(prose, 0, match.start()):
                     continue

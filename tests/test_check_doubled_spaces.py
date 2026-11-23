@@ -67,6 +67,29 @@ def test_collapse_keeps_everything_else() -> None:
     assert (fixed, count) == ("So run it.\r\n```\na  b\n```\nLast line", 3)
 
 
+def test_collapse_leaves_code_spans_comments_and_markup_alone() -> None:
+    text = "A  `a  b` <!-- c  d --> [e  f](g  h) <img  alt='i  j'> k  l.\n"
+    assert collapse(text) == ("A `a  b` <!-- c  d --> [e f](g  h) <img  alt='i  j'> k l.\n", 3)
+
+
+def test_a_comment_line_is_blank() -> None:
+    # The comment line ends the paragraph, so the indented line after it is code.
+    assert doubled_spaces("Text.\n<!-- c -->\n    code  block\n") == {}
+
+
+def test_an_html_block_runs_to_a_blank_line() -> None:
+    assert doubled_spaces("<div>\nin  the block\n\nafter  it\n") == {4: [(5, 7)]}
+
+
+def test_an_html_tag_in_indented_code_starts_no_html_block() -> None:
+    assert doubled_spaces("Text.\n\n    <div>\nafter  it\n") == {4: [(5, 7)]}
+
+
+def test_a_pre_block_runs_to_its_closing_tag() -> None:
+    text = "<pre>\nin  pre\n\nstill  in pre\n</pre>\nafter  it\n\n<pre>one  line</pre>\nnext  line\n"
+    assert doubled_spaces(text) == {6: [(5, 7)], 9: [(4, 6)]}
+
+
 def test_collapse_with_nothing_to_collapse() -> None:
     assert collapse("Fine.\n") == ("Fine.\n", 0)
 

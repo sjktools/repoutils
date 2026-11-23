@@ -32,6 +32,8 @@ _INLINE_TAGS = frozenset(
     "a abbr b bdi bdo big br cite code data del dfn em font i img ins kbd mark q s samp small span strike"
     " strong sub sup time tt u var wbr".split()
 )
+# Tags whose HTML block runs until its closing tag, even over blank lines; any other HTML block ends at a blank line.
+_RAW_TAGS = frozenset({"pre", "script", "style", "textarea"})
 _LINK_DEFINITION_RE = re.compile(r"\[[^\]]+\]:\s")
 _IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _LINK_RE = re.compile(r"\[([^\]]*)\](?:\([^)]*\)|\[[^\]]*\])")
@@ -144,6 +146,18 @@ def _skipped(stripped: str) -> bool:
     )
 
 
+def _html_end(stripped: str) -> str | None:
+    """What ends the HTML block that the line starts, after this line: its raw tag's name, ``""`` for a blank line,
+    or ``None`` if the line doesn't start an HTML block or ends one."""
+    tag = _HTML_RE.match(stripped)
+    name = tag[1].lower() if tag else ""
+    if not name or name in _INLINE_TAGS or stripped.startswith("</"):
+        return None
+    if name in _RAW_TAGS:
+        return None if f"</{name}>" in stripped.lower() else name
+    return ""
+
+
 def _list_item(stripped: str, *, in_paragraph: bool) -> re.Match[str] | None:
     """The line's match as the start of a list item, if it is one."""
     item = _LIST_ITEM_RE.match(stripped)
@@ -203,6 +217,8 @@ def _raw_blocks(text: str, *, keep_columns: bool = False) -> list[tuple[bool, li
     in_quote = False
     # The column an indented code block starts at: four past the text of the list item it's in, if any.
     code_indent = 4
+    # What ends the HTML block the lines are in, as `_html_end` gives it.
+    html_end: str | None = None
 
     def flush() -> None:
         nonlocal block
@@ -212,10 +228,18 @@ def _raw_blocks(text: str, *, keep_columns: bool = False) -> list[tuple[bool, li
 
     for number, line in _prose_lines(text, keep_columns=keep_columns):
         stripped = line.strip()
-        if not stripped or line == _FENCE:
+        if html_end:
+            if f"</{html_end}>" in stripped.lower():
+                html_end = None
+            continue
+        # A line that holds only a comment is blank, as it is where comments are removed.
+        if not stripped.strip(MASK) or line == _FENCE:
             flush()
             after_blank = True
             in_quote = False
+            html_end = None
+            continue
+        if html_end is not None:
             continue
         quoted = stripped.startswith(">")
         # A block quote's paragraph can go on without a ">" on each line, until a blank line or another kind of block.
@@ -224,9 +248,11 @@ def _raw_blocks(text: str, *, keep_columns: bool = False) -> list[tuple[bool, li
         in_quote = quoted
         indent = _indent(line)
         # Indented text after a blank line is a code block, unless it's a list item's own paragraph.
-        if _skipped(stripped) or (after_blank and indent >= code_indent):
+        code = after_blank and indent >= code_indent
+        if code or _skipped(stripped):
             flush()
             after_blank = indent >= code_indent
+            html_end = None if code else _html_end(stripped)
             continue
         after_blank = False
         start = len(line) - len(line.lstrip())
@@ -296,8 +322,9 @@ def _split(block: list[tuple[int, str]], in_list: bool) -> Iterator[Sentence]:
 def prose_sentences(text: str) -> list[Sentence]:
     """The document's prose sentences, in order.
 
-    Code blocks, headings, tables, block quotes, comments and lines that start
-    with an HTML block tag are left out. Inline
+    Code blocks, headings, tables, block quotes, comments and HTML blocks are
+    left out. An HTML block starts with a line that starts with a block tag, and
+    ends at a blank line, or for ``<pre>`` and the like, at its closing tag. Inline
     code becomes the single word ``CODE``, a link becomes its text, and a bare
     URL becomes ``URL``. A paragraph's wrapped lines are joined, and each list
     item is read on its own, and its sentences are marked. A sentence ends

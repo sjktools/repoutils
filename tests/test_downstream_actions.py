@@ -163,7 +163,56 @@ def test_lock(root: Path, monkeypatch: pytest.MonkeyPatch, changes: bool) -> Non
 
     monkeypatch.setattr(subprocess, "run", run)
     assert downstream_actions.lock(root) is changes
-    assert ran == [(["gh", "actions-lock"], root)]
+    assert ran == [(["gh", "actions-lock"], root), (["gh", "actions-lock", "--verify"], root)]
+
+
+@pytest.mark.parametrize("case", ["repaired", "moved", "still-failing"])
+def test_lock_relocks_when_verify_fails(root: Path, monkeypatch: pytest.MonkeyPatch, case: str) -> None:
+    # What a plain run writes, what --relock writes, and whether the second --verify passes.
+    plain, relocked, passes = {
+        # The plain run leaves actions/checkout out of the new tag's entry, and --relock puts it back.
+        "repaired": (
+            LOCK.replace("x@v0.3.0", "x@v0.4.0").replace(
+                "        uses:\n            - 'actions/checkout@v7.0.1'\n", ""
+            ),
+            LOCK.replace("x@v0.3.0", "x@v0.4.0"),
+            True,
+        ),
+        "moved": (LOCK, LOCK.replace("sha1-ccc", "sha1-new"), True),
+        "still-failing": (LOCK, LOCK, False),
+    }[case]
+    path = root / ".github/workflows/actions.lock"
+    path.write_text(LOCK)
+    ran: list[list[str]] = []
+
+    def run(command: list[str], *, cwd: Path, **kwargs: Any) -> None:
+        ran.append(command)
+        if command == ["gh", "actions-lock"]:
+            path.write_text(plain)
+        elif command == ["gh", "actions-lock", "--relock"]:
+            path.write_text(relocked)
+        elif command == ["gh", "actions-lock", "--verify"] and (ran.count(command) == 1 or not passes):
+            raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    plain_run, verify, relock = (
+        ["gh", "actions-lock"],
+        ["gh", "actions-lock", "--verify"],
+        ["gh", "actions-lock", "--relock"],
+    )
+    if case == "repaired":
+        assert downstream_actions.lock(root) is True
+        assert ran == [plain_run, verify, relock, verify]
+        assert path.read_text() == relocked
+    elif case == "moved":
+        # It stops before checking the relocked file, which it won't use.
+        with pytest.raises(RuntimeError, match=r"gh actions-lock --relock locks v/w@main at another commit than"):
+            downstream_actions.lock(root)
+        assert ran == [plain_run, verify, relock]
+    else:
+        with pytest.raises(subprocess.CalledProcessError):
+            downstream_actions.lock(root)
+        assert ran == [plain_run, verify, relock, verify]
 
 
 def test_verify(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:

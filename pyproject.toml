@@ -39,16 +39,16 @@ file = "src/repoutils/build_info.json"
 
 [dependency-groups]
 dev = [
-    "coverage>=7.17.2",
-    "diff-cover>=11.0.1",
+    "coverage>=7.17.3",
+    "diff-cover>=11.0.2",
     "hatchling>=1.33.0",
-    "jactionlint>=2.5.0",
+    "jactionlint>=2.6.0",
     "mypy>=2.4.1",
     "pyright>=1.1.414",
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0",
-    "ruff>=0.17.4",
+    "ruff>=0.17.5",
 ]
 
 # repoutils' own settings for repoutils (it dogfoods its checks).

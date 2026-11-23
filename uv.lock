@@ -470,16 +470,16 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "coverage", specifier = ">=7.17.2" },
-    { name = "diff-cover", specifier = ">=11.0.1" },
+    { name = "coverage", specifier = ">=7.17.3" },
+    { name = "diff-cover", specifier = ">=11.0.2" },
     { name = "hatchling", specifier = ">=1.33.0" },
-    { name = "jactionlint", specifier = ">=2.5.0" },
+    { name = "jactionlint", specifier = ">=2.6.0" },
     { name = "mypy", specifier = ">=2.4.1" },
     { name = "pyright", specifier = ">=1.1.414" },
     { name = "pytest", specifier = ">=9.2.0" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
-    { name = "ruff", specifier = ">=0.17.4" },
+    { name = "ruff", specifier = ">=0.17.5" },
 ]
 
 [[package]]

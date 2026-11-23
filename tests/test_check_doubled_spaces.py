@@ -54,6 +54,10 @@ def test_doubled_spaces_can_allow_two_spaces_after_a_sentence() -> None:
     assert sorted(found) == [3, 10, 12]
 
 
+def test_allow_after_sentence_allows_only_two_spaces() -> None:
+    assert doubled_spaces("One.   Two.\n", allow_after_sentence=True) == {1: [(4, 7)]}
+
+
 def test_a_comment_keeps_the_columns_after_it() -> None:
     assert doubled_spaces("Text <!-- a --> and  more.\n") == {1: [(19, 21)]}
 

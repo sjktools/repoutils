@@ -44,7 +44,7 @@ def doubled_spaces(text: str, *, allow_after_sentence: bool = False) -> dict[int
         unspanned = WRAPPED_CODE_RE.sub(_mask, "\n".join(line.text for line in block)).split("\n")
         for line, prose in zip(block, (MARKUP_RE.sub(_mask, text) for text in unspanned), strict=True):
             for match in DOUBLED_RE.finditer(prose):
-                if allow_after_sentence and SENTENCE_END_RE.search(prose, 0, match.start()):
+                if allow_after_sentence and len(match[0]) == 2 and SENTENCE_END_RE.search(prose, 0, match.start()):
                     continue
                 found.setdefault(line.number, []).append((line.start + match.start(), line.start + match.end()))
     return found

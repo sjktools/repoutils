@@ -28,7 +28,8 @@ BUILD_INFO = "build_info.json"
 _SECTION_RE = re.compile(r"^(?P<name>[a-z_]+):\s*(?P<empty>\{\}|\[\])?\s*$")
 _VERSION_RE = re.compile(r"^version:\s*'[^']*'\s*$")
 SECTIONS = ("workflows", "dependencies")
-_ENTRY_RE = re.compile(r"^ {4}'(?P<key>[^']+)':\s*$")
+# A workflow that uses no actions is written with an empty flow-style list.
+_ENTRY_RE = re.compile(r"^ {4}'(?P<key>[^']+)':\s*(?P<empty>\[\])?\s*$")
 _LIST_ITEM_RE = re.compile(r"^ {8}- '(?P<key>[^']+)'\s*$")
 _FIELD_RE = re.compile(r"^ {8}(?P<name>[a-z_]+):\s*'(?P<value>[^']*)'\s*$")
 # An action's key: owner/name, an optional path in the repository, and the ref.
@@ -73,10 +74,11 @@ def read_actions_lock(text: str, path: Path = ACTIONS_LOCK) -> list[LockedAction
             sections.add(section)
         elif _VERSION_RE.match(line):
             section = entry = None
-        elif match := _ENTRY_RE.match(line):
-            entry = match["key"]
+        elif (match := _ENTRY_RE.match(line)) and (section == "workflows" or not match["empty"]):
+            # A workflow with no actions has no list items to follow it.
+            entry = None if match["empty"] else match["key"]
             if section == "dependencies":
-                fields[entry] = {}
+                fields[match["key"]] = {}
         elif section == "workflows" and entry is not None and (match := _LIST_ITEM_RE.match(line)):
             direct.add(match["key"])
         elif section == "dependencies" and entry is not None and (match := _FIELD_RE.match(line)):

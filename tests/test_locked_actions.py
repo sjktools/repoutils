@@ -109,6 +109,15 @@ def test_read_actions_lock_accepts_empty_sections() -> None:
     assert read_actions_lock("version: 'v0.0.3'\nworkflows: {}\ndependencies: {}\n") == []
 
 
+def test_read_actions_lock_accepts_a_workflow_with_no_actions() -> None:
+    """Also an action that uses no actions, which isn't checked."""
+    text = ACTIONS_LOCK.replace("workflows:\n", "workflows:\n    '.github/workflows/empty.yml': []\n").replace(
+        f"        uses:\n            - 'example/tool@{OTHER}'\n", "        uses: []\n"
+    )
+    assert text.count("[]") == 2
+    assert [a.key for a in read_actions_lock(text)] == [a.key for a in read_actions_lock(ACTIONS_LOCK)]
+
+
 def test_read_actions_lock_takes_only_direct_actions() -> None:
     actions = read_actions_lock(ACTIONS_LOCK)
     assert [(a.key, a.repo, a.ref, a.commit) for a in actions] == [
@@ -123,6 +132,11 @@ def test_read_actions_lock_takes_only_direct_actions() -> None:
     [
         ("workflows:\n  '.github/workflows/a.yml':\n", r"actions\.lock:2: unexpected line"),
         ("version: 'v1'\nworkflows: [\ndependencies:\n", r"actions\.lock:2: unexpected line 'workflows: \['"),
+        (
+            "workflows:\n    'a.yml': []\n        - 'a/b@v1'\ndependencies: {}\n",
+            r"actions\.lock:3: unexpected line \"- 'a/b@v1'\"",
+        ),
+        ("workflows: {}\ndependencies:\n    'a/b@v1': []\n", r"actions\.lock:3: unexpected line \"'a/b@v1': \[\]\""),
         ("workflows:\n", "no dependencies section"),
         ("", "no workflows or dependencies section"),
         ("workflows:\n    'a.yml':\n        - 'nope'\ndependencies:\n", "'nope' isn't of the form"),

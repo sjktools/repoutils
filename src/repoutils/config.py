@@ -83,6 +83,14 @@ def integer(table: dict[str, Any], key: str, default: int, where: str) -> int:
     return value
 
 
+def boolean(table: dict[str, Any], key: str, default: bool, where: str) -> bool:
+    """``table[key]`` as ``true`` or ``false``, or ``default`` if it's missing."""
+    value = table.get(key, default)
+    if not isinstance(value, bool):
+        raise ConfigError(f"{where} {key} must be true or false")
+    return value
+
+
 def optional_number(table: dict[str, Any], key: str, default: float, where: str) -> float | None:
     """As ``number``, but ``None`` if ``table[key]`` is ``false``, which turns the setting off."""
     if table.get(key) is False:

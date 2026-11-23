@@ -32,6 +32,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | --- | --- |
 | `check-whitespace` | Fails on trailing whitespace, a leading blank line, or a missing or extra final newline in any Git-tracked text file. |
 | `check-sentence-per-line` | Fails if a Markdown file has two sentences on one line. It reads the files named on the command line, or else the configured files (by default `AGENTS.md` and `README.md`). |
+| `check-doubled-spaces` | Fails if the prose in a Markdown file has two or more spaces between words, and with `--fix`, makes each of them one space. It reads the files named on the command line, or else the configured files (by default `AGENTS.md` and `README.md`). |
 | `check-prose` | Fails if the prose in a configured Markdown file has long sentences, many joined clauses, or too many short sentences. |
 | `check-blame-ignore-revs` | Fails unless `.git-blame-ignore-revs` lists only full commit hashes that are ancestors of a target commit. |
 | `check-screenshots-dir` | Fails unless `.gitignore` is the only tracked file in the screenshots directory and ignores all other files in that directory. |
@@ -632,6 +633,11 @@ warn-patch-below = 1
 [tool.repoutils.sentence-per-line]
 files = ["AGENTS.md", "README.md"]
 
+# The files `repoutils check-doubled-spaces` checks; see below.
+[tool.repoutils.doubled-spaces]
+files = ["AGENTS.md", "README.md"]
+allow-after-sentence = false
+
 # The limits `repoutils check-prose` holds these files to; see below.
 [tool.repoutils.prose]
 files = ["AGENTS.md", "README.md"]
@@ -763,7 +769,9 @@ That limit excludes list items, because short sentences are normal in lists.
 That limit also excludes sentences that end with a colon before a list or a code block.
 Treat all limits as maximum values rather than targets, and do not edit sentences when the file already passes.
 
-The command skips code blocks, headings, tables, block quotes, HTML comments, and lines that start with an HTML block tag.
+The command skips code blocks, headings, tables, block quotes, HTML comments, and HTML blocks.
+An HTML block starts with a line that starts with an HTML block tag, such as `<div>`, and ends at the next blank line.
+A block that starts with `<pre>`, `<script>`, `<style>` or `<textarea>` ends at the closing tag instead.
 A block quote continues until the next blank line, list item or heading.
 The command counts an inline code span as one word and a URL as one word.
 It ignores text that has no closing punctuation or has fewer than three words, such as a short list item.
@@ -798,10 +806,27 @@ Pass `--stats` to print all rates for every file.
 
 When the command cannot read a file (for example, when the file is not valid UTF-8), it prints `<file>: cannot read (<reason>)`.
 The command still reads the remaining files, and exits with code `1` even when you pass `--exit-zero`.
-`repoutils check-sentence-per-line` handles unreadable files in the same way.
+`repoutils check-sentence-per-line` and `repoutils check-doubled-spaces` handle unreadable files in the same way.
 
 The default limits for long sentences come from a sample of 17 documents, both pre-LLM README files and recent machine-generated documents.
 The default limit for short sentences comes from a smaller sample of rewrites of this README, so adjust the limits to fit your project.
+
+### Doubled spaces
+
+`repoutils check-doubled-spaces` fails when the prose in a configured Markdown file has two or more spaces between two characters that are not spaces.
+Such spaces are easy to miss, as Markdown shows them as one space.
+A rewrite that removes words or commas often leaves them behind.
+The command lists each line that has them, with its line number.
+Pass `--fix` to make each of them one space, which the standard `doubled-spaces-fix` recipe does.
+
+The command skips the parts of a file where extra spaces are often deliberate, or change what a reader sees:
+
+- the parts that `repoutils check-prose` skips, such as code blocks, tables, block quotes and HTML blocks (see [Prose](#prose))
+- link definitions, inline code spans, inline HTML tags, and the destinations of links and images
+
+The command ignores the indent and the list marker at the start of a line.
+By default, it also reports two spaces after the end of a sentence.
+To allow them, set `allow-after-sentence` to `true`, or pass `--allow-after-sentence`.
 
 ### Justfile
 
@@ -816,7 +841,7 @@ The command fails in these cases:
 - A standard recipe is not in the justfile as a recipe or an alias.
 - `check`, `fix`, `ci` or `patch-coverage` does not run one of its standard dependencies, directly or through another recipe.
 - `fix` runs a recipe that fixes something, but `check` does not run the recipe that checks the same thing.
-  The pairs are `fmt` and `fmt-check`, `just-fmt` and `just-fmt-check`, `lint-fix` and `lint`, `actions-lock` and `actions-lock-check`, and `requirements-fix` and `requirements-check`.
+  The pairs are `fmt` and `fmt-check`, `just-fmt` and `just-fmt-check`, `lint-fix` and `lint`, `actions-lock` and `actions-lock-check`, `requirements-fix` and `requirements-check`, and `doubled-spaces-fix` and `doubled-spaces-check`.
 - The justfile has no `repoutils` variable.
 - No `eager` assignment in the justfile runs `repoutils git-config-setup` with `shell()`.
 - The directory of the justfile has no `.git-blame-ignore-revs` file.

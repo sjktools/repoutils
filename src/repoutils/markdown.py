@@ -1,5 +1,5 @@
 """Markdown reading the prose checks share: skipping code fences, and pulling
-the prose sentences out of a document.
+the prose sentences, or the prose lines, out of a document.
 
 It reads Markdown the way a README uses it, by line and by regular expression,
 not as a full CommonMark parser.
@@ -8,15 +8,17 @@ not as a full CommonMark parser.
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
 
 # A code span: a run of backticks, then the shortest text up to a run of the same length; an unmatched run is literal.
 INLINE_CODE_RE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
 # What a code span becomes in a sentence's text: one word, whatever the code was.
 CODE = "CODE"
 
+# What stands for each character of a comment when a line keeps its columns: not a space, and not ``_FENCE``.
+MASK = "\x01"
+
 # A code span that may run over a paragraph's wrapped lines.
-_WRAPPED_CODE_RE = re.compile(INLINE_CODE_RE.pattern, re.DOTALL)
+WRAPPED_CODE_RE = re.compile(INLINE_CODE_RE.pattern, re.DOTALL)
 # What stands for a code fence while a document's lines are read: no comment
 # runs over it, and it ends a paragraph.
 _FENCE = "\0"
@@ -30,6 +32,8 @@ _INLINE_TAGS = frozenset(
     "a abbr b bdi bdo big br cite code data del dfn em font i img ins kbd mark q s samp small span strike"
     " strong sub sup time tt u var wbr".split()
 )
+# Tags whose HTML block runs until its closing tag, even over blank lines; any other HTML block ends at a blank line.
+_RAW_TAGS = frozenset({"pre", "script", "style", "textarea"})
 _LINK_DEFINITION_RE = re.compile(r"\[[^\]]+\]:\s")
 _IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _LINK_RE = re.compile(r"\[([^\]]*)\](?:\([^)]*\)|\[[^\]]*\])")
@@ -53,6 +57,18 @@ MIN_WORDS = 3
 
 
 @dataclass(frozen=True)
+class ProseLine:
+    """A line of a paragraph or list item: its number, its prose ``text``, and the column that text starts at.
+
+    The ``text`` leaves out the line's indent, list marker and trailing whitespace.
+    """
+
+    number: int
+    start: int
+    text: str
+
+
+@dataclass(frozen=True)
 class Sentence:
     """A prose sentence, with the number of the line it starts on, and whether it's in a list item."""
 
@@ -65,10 +81,14 @@ class UnreadableError(Exception):
     """A file couldn't be read; its message is the line to report, ``<path>: cannot read (<reason>)``."""
 
 
-def read_text(path: str) -> str:
-    """The file's text, as UTF-8; raises `UnreadableError` if it can't be opened or isn't valid UTF-8."""
+def read_text(path: str, newline: str | None = None) -> str:
+    """The file's text, as UTF-8; raises `UnreadableError` if it can't be opened or isn't valid UTF-8.
+
+    ``newline`` is as for `open`: ``""`` keeps the file's line endings.
+    """
     try:
-        return Path(path).read_text(encoding="utf-8")
+        with open(path, encoding="utf-8", newline=newline) as file:
+            return file.read()
     except UnicodeDecodeError as error:
         raise UnreadableError(f"{path}: cannot read (not valid UTF-8)") from error
     except OSError as error:
@@ -126,6 +146,18 @@ def _skipped(stripped: str) -> bool:
     )
 
 
+def _html_end(stripped: str) -> str | None:
+    """What ends the HTML block that the line starts, after this line: its raw tag's name, ``""`` for a blank line,
+    or ``None`` if the line doesn't start an HTML block or ends one."""
+    tag = _HTML_RE.match(stripped)
+    name = tag[1].lower() if tag else ""
+    if not name or name in _INLINE_TAGS or stripped.startswith("</"):
+        return None
+    if name in _RAW_TAGS:
+        return None if f"</{name}>" in stripped.lower() else name
+    return ""
+
+
 def _list_item(stripped: str, *, in_paragraph: bool) -> re.Match[str] | None:
     """The line's match as the start of a list item, if it is one."""
     item = _LIST_ITEM_RE.match(stripped)
@@ -135,13 +167,23 @@ def _list_item(stripped: str, *, in_paragraph: bool) -> re.Match[str] | None:
     return item
 
 
-def _prose_lines(text: str) -> Iterator[tuple[int, str]]:
-    """Each line outside a code fence, with its number and without its comments; a fence is one ``_FENCE`` line."""
+def _prose_lines(text: str, *, keep_columns: bool = False) -> Iterator[tuple[int, str]]:
+    """Each line outside a code fence, with its number and without its comments; a fence is one ``_FENCE`` line.
+
+    With ``keep_columns``, each character of a comment but a newline becomes
+    ``MASK``, so the text after it keeps its columns.
+    """
     lines = [_FENCE] * len(text.splitlines())
     for number, line in unfenced_lines(text):
         lines[number - 1] = line
-    # Keep a comment's newlines, so the lines after it keep their numbers.
-    uncommented = _COMMENT_RE.sub(lambda match: "\n" * match[0].count("\n"), "\n".join(lines))
+
+    def uncomment(match: re.Match[str]) -> str:
+        # Keep a comment's newlines, so the lines after it keep their numbers.
+        if keep_columns:
+            return re.sub(r"[^\n]", MASK, match[0])
+        return "\n" * match[0].count("\n")
+
+    uncommented = _COMMENT_RE.sub(uncomment, "\n".join(lines))
     in_fence = False
     for number, line in enumerate(uncommented.split("\n"), 1):
         if line != _FENCE:
@@ -160,37 +202,44 @@ def _indent(line: str) -> int:
 def _cleaned(block: list[tuple[int, str]]) -> list[tuple[int, str]]:
     """The block's lines with their markup reduced to words, less the lines that leaves empty."""
     # A code span can run over wrapped lines: put ``CODE`` on its first line, and keep the line breaks.
-    masked = _WRAPPED_CODE_RE.sub(
-        lambda match: CODE + "\n" * match[0].count("\n"), "\n".join(line for _, line in block)
-    )
+    masked = WRAPPED_CODE_RE.sub(lambda match: CODE + "\n" * match[0].count("\n"), "\n".join(line for _, line in block))
     cleaned = [(number, _clean(line)) for (number, _), line in zip(block, masked.split("\n"), strict=True)]
     return [(number, line) for number, line in cleaned if line]
 
 
-def _blocks(text: str) -> list[tuple[bool, list[tuple[int, str]]]]:
-    """The paragraphs and list items, each as whether it's in a list item and its (line number, cleaned text) lines."""
-    blocks: list[tuple[bool, list[tuple[int, str]]]] = []
-    block: list[tuple[int, str]] = []
+def _raw_blocks(text: str, *, keep_columns: bool = False) -> list[tuple[bool, list[ProseLine]]]:
+    """The paragraphs and list items, each as whether it's in a list item and its lines."""
+    blocks: list[tuple[bool, list[ProseLine]]] = []
+    block: list[ProseLine] = []
     block_in_list = False
     after_blank = True
     in_list = False
     in_quote = False
     # The column an indented code block starts at: four past the text of the list item it's in, if any.
     code_indent = 4
+    # What ends the HTML block the lines are in, as `_html_end` gives it.
+    html_end: str | None = None
 
     def flush() -> None:
         nonlocal block
-        cleaned = _cleaned(block) if block else []
-        if cleaned:
-            blocks.append((block_in_list, cleaned))
+        if block:
+            blocks.append((block_in_list, block))
         block = []
 
-    for number, line in _prose_lines(text):
+    for number, line in _prose_lines(text, keep_columns=keep_columns):
         stripped = line.strip()
-        if not stripped or line == _FENCE:
+        if html_end:
+            if f"</{html_end}>" in stripped.lower():
+                html_end = None
+            continue
+        # A line that holds only a comment is blank, as it is where comments are removed.
+        if not stripped.replace(MASK, "").strip() or line == _FENCE:
             flush()
             after_blank = True
             in_quote = False
+            html_end = None
+            continue
+        if html_end is not None:
             continue
         quoted = stripped.startswith(">")
         # A block quote's paragraph can go on without a ">" on each line, until a blank line or another kind of block.
@@ -199,16 +248,20 @@ def _blocks(text: str) -> list[tuple[bool, list[tuple[int, str]]]]:
         in_quote = quoted
         indent = _indent(line)
         # Indented text after a blank line is a code block, unless it's a list item's own paragraph.
-        if _skipped(stripped) or (after_blank and indent >= code_indent):
+        code = after_blank and indent >= code_indent
+        if code or _skipped(stripped):
             flush()
             after_blank = indent >= code_indent
+            html_end = None if code else _html_end(stripped)
             continue
         after_blank = False
+        start = len(line) - len(line.lstrip())
         item = _list_item(stripped, in_paragraph=bool(block) and not block_in_list)
         if item:
             flush()
             in_list = True
             code_indent = indent + len(stripped) - len(item[2]) + 4
+            start += len(stripped) - len(item[2])
             stripped = item[2]
         elif not block and not indent:
             # A paragraph that isn't indented at all ends the list; a "- " item's own paragraphs have two spaces.
@@ -216,9 +269,29 @@ def _blocks(text: str) -> list[tuple[bool, list[tuple[int, str]]]]:
             code_indent = 4
         if not block:
             block_in_list = in_list
-        block.append((number, stripped))
+        block.append(ProseLine(number, start, stripped))
     flush()
     return blocks
+
+
+def _blocks(text: str) -> list[tuple[bool, list[tuple[int, str]]]]:
+    """The paragraphs and list items, each as whether it's in a list item and its (line number, cleaned text) lines."""
+    blocks: list[tuple[bool, list[tuple[int, str]]]] = []
+    for in_list, block in _raw_blocks(text):
+        cleaned = _cleaned([(line.number, line.text) for line in block])
+        if cleaned:
+            blocks.append((in_list, cleaned))
+    return blocks
+
+
+def prose_blocks(text: str) -> list[list[ProseLine]]:
+    """The document's paragraphs and list items, as their lines, with the same parts left out as `prose_sentences`.
+
+    Each character of a comment, other than a newline, is ``MASK`` in a
+    line's ``text``, so every column is the same as in the document.
+    Code spans are left in.
+    """
+    return [block for _, block in _raw_blocks(text, keep_columns=True)]
 
 
 def _split(block: list[tuple[int, str]], in_list: bool) -> Iterator[Sentence]:
@@ -249,8 +322,9 @@ def _split(block: list[tuple[int, str]], in_list: bool) -> Iterator[Sentence]:
 def prose_sentences(text: str) -> list[Sentence]:
     """The document's prose sentences, in order.
 
-    Code blocks, headings, tables, block quotes, comments and lines that start
-    with an HTML block tag are left out. Inline
+    Code blocks, headings, tables, block quotes, comments and HTML blocks are
+    left out. An HTML block starts with a line that starts with a block tag, and
+    ends at a blank line, or for ``<pre>`` and the like, at its closing tag. Inline
     code becomes the single word ``CODE``, a link becomes its text, and a bare
     URL becomes ``URL``. A paragraph's wrapped lines are joined, and each list
     item is read on its own, and its sentences are marked. A sentence ends

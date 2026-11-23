@@ -58,8 +58,8 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
 - `src/repoutils/workflows.py` reads the workflows in `.github/workflows` for the secrets and variables they use and each job's environment, without a YAML parser.
   `secrets check-workflows` and `variables check-workflows` use it.
 - `src/repoutils/commands/variables.py` shares its table format, and most of its workings, with `secrets.py`.
-- `src/repoutils/markdown.py` holds the Markdown reading that `check-sentence-per-line` and `check-prose` share.
-  It skips code fences and splits a document's prose into sentences.
+- `src/repoutils/markdown.py` holds the Markdown reading that `check-sentence-per-line`, `check-doubled-spaces` and `check-prose` share.
+  It skips code fences, and splits a document's prose into sentences or gives its prose lines.
 - `src/repoutils/checkout.py` gives the environment for the Git commands that `long-files` and `added-strings` run, and `head_commit`, which reads the commit a checkout has.
   It leaves out the Git variables (such as a hook's `GIT_DIR`) that would point them at another repository than the checkout they read.
 - `src/repoutils/build_info_hook.py` is a hatchling build hook that writes the commit a build comes from to `build_info.json`, which `repoutils version` reads with `src/repoutils/build_info.py`.
@@ -93,7 +93,7 @@ A command that posts a PR comment finds its earlier comment by a hidden marker, 
 CI (`.github/workflows/ci.yml`) delegates each step to the `justfile`.
 Run `just ci` to run everything CI's test, build and coverage jobs run, or `just --list` for the recipes.
 `just check` runs every check except `lock-check` (which `just ci` runs first) without fixing anything.
-`just fix` reformats, applies lint autofixes and regenerates `actions.lock`.
+`just fix` reformats, applies lint autofixes, collapses doubled spaces in prose and regenerates `actions.lock`.
 Both need `gh`, logged in, with the gh-actions-lock extension.
 By design, `just fix` fixes what `just check` finds, so whatever `just fix` fixes, `just check` must check.
 When you add a fix to `just fix`, add the check that goes with it to `just check`.

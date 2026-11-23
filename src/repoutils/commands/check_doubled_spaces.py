@@ -27,8 +27,9 @@ WHERE = "[tool.repoutils.doubled-spaces]"
 # Two or more spaces between two characters that aren't spaces.
 DOUBLED_RE = re.compile(r"(?<=\S) {2,}(?=\S)")
 # Inline markup that isn't shown as prose: a link's or image's destination and title, or an HTML tag or autolink.
-# A destination can be in angle brackets, escape a character, and hold balanced parentheses; a tag can span lines.
-MARKUP_RE = re.compile(r"\]\((?:<[^<>\n]*>|\\.|\([^()]*\)|[^()\\])*+\)|</?[a-zA-Z][^>]*>")
+# A destination can be in angle brackets, escape a character, and hold balanced parentheses; a tag can span lines,
+# and a quoted attribute value can hold a >.
+MARKUP_RE = re.compile(r"""\]\((?:<[^<>\n]*>|\\.|\([^()]*\)|[^()\\])*+\)|</?[a-zA-Z](?:"[^"]*"|'[^']*'|[^"'>])*+>""")
 # Text that ends with a sentence's closing punctuation, and any closing quotes, brackets or emphasis.
 SENTENCE_END_RE = re.compile(r"[.!?][\"')\]’”*_]*$")
 

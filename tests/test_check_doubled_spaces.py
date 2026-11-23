@@ -81,6 +81,10 @@ def test_collapse_leaves_whole_link_destinations_and_wrapped_tags_alone() -> Non
     assert collapse(text) == ("[a b](<c)d  e.png>) [f](g(h  i)) [j](k\\)l  m) <img\nsrc='n  o'> p q.\n", 2)
 
 
+def test_collapse_leaves_a_quoted_greater_than_sign_in_a_tag_alone() -> None:
+    assert collapse("<abbr title='a > b  c'>x</abbr> d  e.\n") == ("<abbr title='a > b  c'>x</abbr> d e.\n", 1)
+
+
 def test_a_comment_line_is_blank() -> None:
     # The comment line ends the paragraph, so the indented line after it is code.
     assert doubled_spaces("Text.\n<!-- c -->\n    code  block\n") == {}

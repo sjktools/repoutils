@@ -233,7 +233,7 @@ def _raw_blocks(text: str, *, keep_columns: bool = False) -> list[tuple[bool, li
                 html_end = None
             continue
         # A line that holds only a comment is blank, as it is where comments are removed.
-        if not stripped.strip(MASK) or line == _FENCE:
+        if not stripped.replace(MASK, "").strip() or line == _FENCE:
             flush()
             after_blank = True
             in_quote = False

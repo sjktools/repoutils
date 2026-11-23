@@ -79,6 +79,7 @@ def test_collapse_leaves_code_spans_comments_and_markup_alone() -> None:
 def test_a_comment_line_is_blank() -> None:
     # The comment line ends the paragraph, so the indented line after it is code.
     assert doubled_spaces("Text.\n<!-- c -->\n    code  block\n") == {}
+    assert doubled_spaces("Text.\n<!-- c --> <!-- d -->\n    code  block\n") == {}
 
 
 def test_an_html_block_runs_to_a_blank_line() -> None:

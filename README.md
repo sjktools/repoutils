@@ -283,6 +283,9 @@ That run publishes a dev version of `main` to TestPyPI.
   It changes nothing else in those files.
   It fails if a `uses:` of the upstream repository has a ref that is not a tag of the form `vX.Y.Z`, or has a newer tag.
 - If it moved a `uses:`, it then regenerates `.github/workflows/actions.lock` with `gh actions-lock`, which also locks the actions that the actions of the upstream use.
+  It then checks the file with `gh actions-lock --verify`.
+  If that check fails, it regenerates the file with `gh actions-lock --relock` and checks it again, as a plain `gh actions-lock` cannot repair a lock entry that leaves out an action that an action of the upstream uses.
+  It fails if the relocked file locks an action at another commit than `actions.lock` does, for an action whose ref the bump does not change.
   With `--actions-lock-file <file>`, it copies the file over `actions.lock` instead, and checks it with `gh actions-lock --verify`.
   It fails if the file locks an action at another commit than `actions.lock` does, for an action whose ref the bump does not change.
   Both need `gh` with the `gh-actions-lock` extension, and a token that can read the repositories of the actions.

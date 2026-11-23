@@ -8,7 +8,8 @@ the version it pins on PyPI. `move` sets the ref of each `uses:` that names
 the upstream's repository, in the workflows and local actions that check-pins
 reads, to `v<version>`, and changes nothing else in those files. `lock` then
 regenerates `.github/workflows/actions.lock` with `gh actions-lock`, which
-also locks the actions that the upstream's actions use in turn.
+also locks the actions that the upstream's actions use in turn, and checks it
+with `gh actions-lock --verify`, relocking it if that fails.
 
 A dev version, a test build on TestPyPI, has no tag, so for one, `move` sets
 the refs to the commit the build came from instead. Stdlib-only, like every
@@ -201,12 +202,26 @@ def _gh_actions_lock(root: Path, *args: str) -> None:
 
 def lock(root: Path) -> bool:
     """Regenerate root's actions.lock, if it has one, with `gh actions-lock`,
-    and say whether it changed."""
+    check it with `gh actions-lock --verify`, and say whether it changed.
+
+    A plain run can write an entry for the upstream's new tag that leaves out
+    an action that one of its actions uses, which `--verify` then rejects and
+    a plain run can't repair. So if `--verify` fails, it regenerates the lock
+    with `gh actions-lock --relock` and checks it again. `--relock` also moves
+    an action at a ref such as `v4` to the ref's current commit, so it raises
+    RuntimeError if the relocked file records another commit for an action
+    that the old one locked, as `check_kept` does."""
     path = root / ACTIONS_LOCK
     if not path.is_file():
         return False
     before = path.read_bytes()
     _gh_actions_lock(root)
+    try:
+        verify(root)
+    except subprocess.CalledProcessError:
+        _gh_actions_lock(root, "--relock")
+        check_kept(before, path.read_bytes(), "gh actions-lock --relock")
+        verify(root)
     return path.read_bytes() != before
 
 

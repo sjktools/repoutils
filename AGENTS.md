@@ -218,6 +218,7 @@ The actions find repoutils' source relative to `${{ github.action_path }}`, so o
 For the same reason, they run other files of this repository by that path, and never with `uses: ./`, which names the caller's repository.
 As in Bump uv, the `bump` job re-locks with no token that can write.
 It also moves each `uses:` of repoutils' actions to the release's tag, and regenerates `actions.lock` with `gh actions-lock`.
+If `gh actions-lock --verify` then fails, it relocks with `gh actions-lock --relock`, as a plain run can leave an action that repoutils' actions use out of their lock entry, and can't repair that.
 The `push` job opens the PR with the `DOWNSTREAM_TOKEN` secret, and takes `uv.lock` and `actions.lock` from the `bump` job as data.
 It moves the `uses:` again itself.
 Before it commits `actions.lock`, it checks the file with `gh actions-lock --verify`, and checks that no other action's commit changed.

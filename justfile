@@ -138,6 +138,14 @@ whitespace-check:
 sentence-per-line-check:
     uv run repoutils check-sentence-per-line
 
+# Check AGENTS.md and README.md prose for doubled spaces between words
+doubled-spaces-check:
+    uv run repoutils check-doubled-spaces
+
+# Collapse doubled spaces between words in AGENTS.md and README.md prose to one space
+doubled-spaces-fix:
+    uv run repoutils check-doubled-spaces --fix
+
 # Check AGENTS.md and README.md prose for long, clause-heavy sentences, or too many short ones
 prose-check:
     uv run repoutils check-prose
@@ -187,7 +195,7 @@ dependabot-relock base:
     {{ repoutils }} dependabot-relock {{ base }}
 
 # Run all checks, without fixing anything or running tests
-check: lint fmt-check just-fmt-check mypy pyright lint-workflows actions-lock-check whitespace-check sentence-per-line-check prose-check blame-ignore-revs-check check-pins check-checkout-credentials secrets-workflows-check variables-workflows-check check-justfile lock-platforms-check requirements-check
+check: lint fmt-check just-fmt-check mypy pyright lint-workflows actions-lock-check whitespace-check sentence-per-line-check doubled-spaces-check prose-check blame-ignore-revs-check check-pins check-checkout-credentials secrets-workflows-check variables-workflows-check check-justfile lock-platforms-check requirements-check
 
 # Check .github/workflows/actions.lock pins every action the workflows use, transitive ones included, to a commit that still verifies upstream (needs gh, logged in, with the github/gh-actions-lock extension)
 actions-lock-check:
@@ -200,8 +208,8 @@ actions-lock:
 # Formatting first fixes the long lines it can, so lint-fix stops only on
 # findings that need a hand edit.
 
-# Reformat code, autofix lint issues and update actions.lock
-fix: fmt just-fmt lint-fix actions-lock
+# Reformat code, autofix lint issues, collapse doubled spaces in prose and update actions.lock
+fix: fmt just-fmt lint-fix doubled-spaces-fix actions-lock
 
 # Run everything CI's build, test and coverage jobs run (except the PR-only patch coverage), on this machine's Python and OS
 ci: lock-check sync check coverage build smoke

@@ -25,6 +25,11 @@ GROUPS: dict[str, list[Command]] = {
             "check-sentence-per-line", "check_sentence_per_line", "Check Markdown files keep one sentence per line"
         ),
         Command(
+            "check-doubled-spaces",
+            "check_doubled_spaces",
+            "Check Markdown prose for doubled spaces between words, or collapse them",
+        ),
+        Command(
             "check-prose",
             "check_prose",
             "Check Markdown prose for long, clause-heavy sentences, or too many short ones",

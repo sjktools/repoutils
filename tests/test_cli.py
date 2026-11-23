@@ -94,6 +94,7 @@ def test_python_dash_m(tmp_path: Path) -> None:
         (["check-prose", "--exit-zero"], "sentences"),
         (["check-sentence-per-line"], "one-sentence-per-line"),
         (["check-sentence-per-line", "README.md"], "one-sentence-per-line"),
+        (["check-doubled-spaces"], "no doubled spaces"),
         (["check-whitespace"], "clean whitespace"),
         (["long-files", "--base", ""], "500 lines"),
         (["added-strings", "--base", "HEAD"], "Strings to double check"),
@@ -196,6 +197,12 @@ def test_comment_posters(
             False,
         ),
         (
+            ["check-doubled-spaces"],
+            "[tool.repoutils.doubled-spaces]\nfiles = 3\n",
+            "[tool.repoutils.doubled-spaces] files must be a list of strings",
+            False,
+        ),
+        (
             ["check-screenshots-dir"],
             "[tool.repoutils.screenshots]\ndir = 3\n",
             "[tool.repoutils.screenshots] dir must be a non-empty string",
@@ -275,6 +282,7 @@ def test_bad_pyproject_setting_prints_one_line_error(
         (["check-prose", "--exit-zero"], False),
         (["check-justfile", "--exit-zero"], False),
         (["check-sentence-per-line"], False),
+        (["check-doubled-spaces"], False),
         (["check-screenshots-dir"], False),
         (["check-lock-platforms"], True),
         (["post-comment", "1", "report.md", "--name", "x"], False),

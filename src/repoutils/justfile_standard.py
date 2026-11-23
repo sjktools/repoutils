@@ -280,6 +280,22 @@ sentence-per-line-check:
 """,
     ),
     _recipe(
+        "doubled-spaces-check",
+        """
+# Check AGENTS.md and README.md prose for doubled spaces between words
+doubled-spaces-check:
+    uv run repoutils check-doubled-spaces
+""",
+    ),
+    _recipe(
+        "doubled-spaces-fix",
+        """
+# Collapse doubled spaces between words in AGENTS.md and README.md prose to one space
+doubled-spaces-fix:
+    uv run repoutils check-doubled-spaces --fix
+""",
+    ),
+    _recipe(
         "prose-check",
         """
 # Check AGENTS.md and README.md prose for long, clause-heavy sentences, or too many short ones
@@ -379,7 +395,7 @@ dependabot-relock base:
         "check",
         "# Run all checks, without fixing anything or running tests",
         "lint fmt-check just-fmt-check mypy pyright lint-workflows actions-lock-check whitespace-check"
-        " sentence-per-line-check prose-check blame-ignore-revs-check check-pins check-checkout-credentials"
+        " sentence-per-line-check doubled-spaces-check prose-check blame-ignore-revs-check check-pins check-checkout-credentials"
         " secrets-workflows-check variables-workflows-check check-justfile lock-platforms-check requirements-check",
     ),
     _recipe(
@@ -399,7 +415,9 @@ actions-lock:
 """,
     ),
     _aggregate(
-        "fix", "# Reformat code, autofix lint issues and update actions.lock", "fmt just-fmt lint-fix actions-lock"
+        "fix",
+        "# Reformat code, autofix lint issues, collapse doubled spaces in prose and update actions.lock",
+        "fmt just-fmt lint-fix doubled-spaces-fix actions-lock",
     ),
     _aggregate(
         "ci",
@@ -419,6 +437,7 @@ FIX_CHECK_PAIRS = (
     ("lint-fix", "lint"),
     ("actions-lock", "actions-lock-check"),
     ("requirements-fix", "requirements-check"),
+    ("doubled-spaces-fix", "doubled-spaces-check"),
 )
 
 # The variable that the standard recipes run repoutils with.

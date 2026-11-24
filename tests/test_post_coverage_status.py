@@ -1,6 +1,7 @@
 import io
 import subprocess
 import urllib.error
+from collections.abc import Callable
 from email.message import Message
 from pathlib import Path
 from typing import Any
@@ -170,19 +171,23 @@ def test_bad_sha(
 
 
 @pytest.mark.parametrize(
-    ("error", "message"),
+    ("make_error", "message"),
     [
         (
-            urllib.error.HTTPError("https://x", 403, "Forbidden", Message(), io.BytesIO(b"nope")),
+            lambda: urllib.error.HTTPError("https://x", 403, "Forbidden", Message(), io.BytesIO(b"nope")),
             "HTTP 403 from https://x:\nnope",
         ),
-        (urllib.error.URLError("down"), "down"),
+        (lambda: urllib.error.URLError("down"), "down"),
     ],
 )
 def test_request_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: Exception, message: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    make_error: Callable[[], Exception],
+    message: str,
 ) -> None:
-    code, _ = _run(tmp_path, monkeypatch, error=error)
+    code, _ = _run(tmp_path, monkeypatch, error=make_error())
     assert code == 1
     assert message in capsys.readouterr().err
 

@@ -43,6 +43,7 @@ dev = [
     "diff-cover>=11.0.2",
     "hatchling>=1.33.0",
     "jactionlint>=2.6.0",
+    "mutmut>=3.8.1",
     "mypy>=2.4.1",
     "pyright>=1.1.414",
     "pytest>=9.2.0",
@@ -393,6 +394,7 @@ enable_error_code = [
 # mostly flag JSON values narrowed with isinstance, and code mypy infers fully,
 # such as `field(default_factory=list)` for a `list[str]`.
 [tool.pyright]
+include = ["src", "tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 # Not part of strict; matches mypy's explicit-override error code.
@@ -427,3 +429,17 @@ skip_empty = true
 
 [tool.coverage.xml]
 output = "coverage.xml"
+
+[tool.mutmut]
+also_copy = [
+    ".git-blame-ignore-revs",
+    ".github/",
+    "AGENTS.md",
+    "README.md",
+    "justfile",
+]
+# mutmut collects stats in-process and forks its own workers, so disable pytest-xdist.
+pytest_add_cli_args = ["-n", "0"]
+# test_version_from_an_installed_build builds a wheel in an isolated env and runs it
+# with `python -I -S`, neither of which has mutmut installed for mutated modules to import.
+pytest_add_cli_args_test_selection = ["-k", "not test_version_from_an_installed_build"]

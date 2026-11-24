@@ -8,3 +8,4 @@ __pycache__/
 coverage.xml
 patch-coverage.md
 junit.xml
+mutants/

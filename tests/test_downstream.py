@@ -5,6 +5,7 @@ import re
 import subprocess
 import urllib.error
 import urllib.parse
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -729,17 +730,23 @@ def test_bump_pr_keeps_a_branch_that_moved_on(
 
 
 @pytest.mark.parametrize(
-    ("error", "message"),
+    ("make_error", "message"),
     [
         (
-            urllib.error.HTTPError(f"{API}/issues/3/comments", 403, "no", email.message.Message(), io.BytesIO(b"no")),
+            lambda: urllib.error.HTTPError(
+                f"{API}/issues/3/comments", 403, "no", email.message.Message(), io.BytesIO(b"no")
+            ),
             f"HTTP 403 from {API}/issues/3/comments:\nno",
         ),
-        (json.JSONDecodeError("Expecting value", "<", 0), "Expecting value: line 1 column 1 (char 0)"),
+        (lambda: json.JSONDecodeError("Expecting value", "<", 0), "Expecting value: line 1 column 1 (char 0)"),
     ],
 )
 def test_bump_pr_reports_a_failed_request_on_an_earlier_pr(
-    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: Exception, message: str
+    upstream: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    make_error: Callable[[], Exception],
+    message: str,
 ) -> None:
     # The second is still handled.
     fakes = Fakes(
@@ -749,7 +756,7 @@ def test_bump_pr_reports_a_failed_request_on_an_earlier_pr(
 
     def failing(method: str, url: str, token: str, *, json_body: object = None) -> Any:
         if url.endswith("/issues/3/comments"):
-            raise error
+            raise make_error()
         return request(method, url, token, json_body=json_body)
 
     monkeypatch.setattr(github, "request", failing)
@@ -759,18 +766,22 @@ def test_bump_pr_reports_a_failed_request_on_an_earlier_pr(
 
 
 @pytest.mark.parametrize(
-    ("error", "message"),
+    ("make_error", "message"),
     [
         (
-            urllib.error.HTTPError(f"{API}/pulls/5", 403, "no", email.message.Message(), io.BytesIO(b"no")),
+            lambda: urllib.error.HTTPError(f"{API}/pulls/5", 403, "no", email.message.Message(), io.BytesIO(b"no")),
             "HTTP 403:\nno",
         ),
-        (json.JSONDecodeError("Expecting value", "<", 0), "Expecting value: line 1 column 1 (char 0)"),
-        (RuntimeError("too many redirects"), "too many redirects"),
+        (lambda: json.JSONDecodeError("Expecting value", "<", 0), "Expecting value: line 1 column 1 (char 0)"),
+        (lambda: RuntimeError("too many redirects"), "too many redirects"),
     ],
 )
 def test_bump_pr_rerun_still_handles_earlier_prs_if_linking_fails(
-    upstream: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: Exception, message: str
+    upstream: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    make_error: Callable[[], Exception],
+    message: str,
 ) -> None:
     sha = push_old(upstream)
     fakes = Fakes(
@@ -782,7 +793,7 @@ def test_bump_pr_rerun_still_handles_earlier_prs_if_linking_fails(
 
     def failing(method: str, url: str, token: str, *, json_body: object = None) -> Any:
         if (method, url) == ("PATCH", f"{API}/pulls/5"):
-            raise error
+            raise make_error()
         return request(method, url, token, json_body=json_body)
 
     monkeypatch.setattr(github, "request", failing)

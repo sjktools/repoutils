@@ -100,7 +100,7 @@ When you add a fix to `just fix`, add the check that goes with it to `just check
 `just test` runs the tests, and `just coverage` runs them with a coverage report and writes `coverage.xml`.
 Before opening a PR, run `just patch-coverage` too, which reports the changed lines the tests miss, and cover them where a test is worth it.
 `uv run --group mutation mutmut run` runs mutation testing with mutmut, which copies the project into `mutants/` and runs the tests there.
-A test that reads a file at the repository's root outside `src/` and `tests/` needs that file in `[tool.mutmut] also_copy`, or it fails under mutmut.
+mutmut copies only `src/`, `tests/`, `pyproject.toml` and `uv.lock`, so a test that reads any other file of the repository needs that file in `[tool.mutmut] also_copy`, or it fails under mutmut.
 
 The justfile runs repoutils' own checks (`whitespace-check`, `check-pins` and so on) from this checkout, so CI dogfoods them.
 Recipes that CI runs with a write-capable token or on a Dependabot branch use the justfile's `repoutils` variable.

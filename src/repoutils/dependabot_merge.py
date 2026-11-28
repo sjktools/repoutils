@@ -12,6 +12,7 @@ from typing import Any
 from repoutils import github
 from repoutils.pr_checks import HeadChanged
 
+DEPENDABOT = "dependabot[bot]"
 # How often, and how many times, it reads a pull request whose mergeability GitHub hasn't worked out yet.
 MERGEABLE_INTERVAL = 3.0
 MERGEABLE_READS = 10
@@ -20,9 +21,9 @@ _PULL = """
 query($owner: String!, $name: String!, $pr: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $pr) {
-      state isDraft mergeable headRefOid title body url
+      state isDraft mergeable headRefOid baseRefName title body url
       reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { url } } } pageInfo { hasNextPage } }
-      latestReviews(first: 100) { nodes { state author { login } } }
+      latestReviews(first: 100) { nodes { state author { login } } pageInfo { hasNextPage } }
     }
   }
 }"""
@@ -45,14 +46,16 @@ class Pull:
     title: str
     body: str
     head: str
+    base: str
     # OPEN, CLOSED or MERGED.
     state: str
     # MERGEABLE, CONFLICTING or UNKNOWN.
     mergeable: str
     # The URL of the first comment of each unresolved review thread, outdated ones included.
     unresolved: list[str]
-    # Whether it has more review threads than the query reads.
+    # Whether it has more review threads, or reviewers, than the query reads.
     more_threads: bool
+    more_reviews: bool
     # The reviewers whose latest review requests changes.
     changes_requested: list[str]
 
@@ -65,6 +68,8 @@ class Pull:
             return "over 100 review threads, more than it reads"
         if self.changes_requested:
             return f"changes requested by {', '.join(self.changes_requested)}"
+        if self.more_reviews:
+            return "over 100 reviewers, more than it reads"
         return None
 
 
@@ -86,6 +91,7 @@ def read(repo: str, token: str, number: int) -> Pull:
         title=node["title"],
         body=node["body"] or "",
         head=node["headRefOid"],
+        base=node["baseRefName"],
         state=node["state"],
         mergeable=node["mergeable"],
         unresolved=[
@@ -94,6 +100,7 @@ def read(repo: str, token: str, number: int) -> Pull:
             if not t["isResolved"]
         ],
         more_threads=threads["pageInfo"]["hasNextPage"],
+        more_reviews=node["latestReviews"]["pageInfo"]["hasNextPage"],
         # A deleted account's review has a null author.
         changes_requested=[
             (r["author"] or {}).get("login") or "a deleted account"
@@ -151,12 +158,15 @@ def sync(repo: str, token: str, pull: Pull, *, interval: float, deadline: float)
 
 def merge(repo: str, token: str, pull: Pull, sha: str, settings: dict[str, Any]) -> str:
     """Squash-merge pull, only if its head is still sha, the commit whose
-    checks passed, and return the merge's commit. Gives the commit's title
-    and message as the repository's settings (GET /repos/{repo}) say, as a
-    merge through the API might not follow them. Raises HeadChanged if the
-    head moved, and Refused, with GitHub's reason, if GitHub refuses the
-    merge for another reason."""
-    body: dict[str, Any] = {"merge_method": "squash", "sha": sha, "commit_title": f"{pull.title} (#{pull.number})"}
+    checks passed, and return the merge's commit. Where the repository's
+    settings (GET /repos/{repo}) give the commit's title and message from the
+    pull request alone, it gives them too, as a merge through the API might
+    not follow the settings, and leaves the rest to GitHub. Raises HeadChanged
+    if the head moved, and Refused, with GitHub's reason, if GitHub refuses
+    the merge for another reason."""
+    body: dict[str, Any] = {"merge_method": "squash", "sha": sha}
+    if settings.get("squash_merge_commit_title") == "PR_TITLE":
+        body["commit_title"] = f"{pull.title} (#{pull.number})"
     message = settings.get("squash_merge_commit_message")
     if message == "BLANK":
         body["commit_message"] = ""
@@ -182,13 +192,18 @@ def merge(repo: str, token: str, pull: Pull, sha: str, settings: dict[str, Any])
 
 
 def untouched(repo: str, token: str, number: int, author: str) -> bool:
-    """Whether author made every commit on pull request number, so that
-    Dependabot still rebases it by itself, and on request."""
+    """Whether author made, and committed, every commit on pull request
+    number, so that Dependabot still rebases it by itself, and on request.
+    GitHub itself (web-flow) commits the signed commits that Dependabot makes
+    through the API."""
     commits: list[dict[str, Any]] = github.request(
         "GET", f"{github.API_URL}/repos/{repo}/pulls/{number}/commits?per_page=100", token
     )
     # A commit by an email that no account has has a null author.
-    return len(commits) < 100 and all((c["author"] or {}).get("login") == author for c in commits)
+    return len(commits) < 100 and all(
+        (c["author"] or {}).get("login") == author and (c["committer"] or {}).get("login") in (author, "web-flow")
+        for c in commits
+    )
 
 
 def ask_rebase(repo: str, token: str, number: int) -> None:

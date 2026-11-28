@@ -147,7 +147,8 @@ The command repeats these steps:
 
 1. It waits until every check on the latest commit of the default branch has finished, and stops if a check fails.
 2. It takes the oldest open pull request by `dependabot[bot]` (or `--author`) that is not a draft.
-3. It skips the pull request if the pull request conflicts, has an unresolved review thread (outdated threads too), or has a reviewer whose latest review requests changes.
+3. It skips the pull request if the pull request no longer targets the default branch, conflicts, has an unresolved review thread (outdated threads too), or has a reviewer whose latest review requests changes.
+   It also skips a pull request with over 100 review threads or reviewers, as it reads only the first 100.
 4. It syncs the pull request with the default branch if the pull request is behind, with a merge, as the **Update branch** button does.
 5. It waits for every check on the pull request, not only the required checks, and skips the pull request if a check fails, or if the checks do not finish within `--timeout` seconds.
 6. It reads the reviews again, and squash-merges the pull request if nothing blocks it.
@@ -155,7 +156,8 @@ The command repeats these steps:
 GitHub cannot say which checks a commit will get, so the command waits until all of these are true:
 
 - Every check that the rulesets require on the default branch is there.
-- A check of each name that the commit before it had is there.
+- A check of each name that the commit before it had is there, for the default branch and for a pull request that the command synced.
+  For the default branch, the commit before is the parent commit, and for a synced pull request, it is the head before the sync.
 - No check is pending.
 - No check has appeared for `--quiet-period` seconds.
 
@@ -163,18 +165,22 @@ The command merges only the commit whose checks passed, so a push after the chec
 When the head of a pull request moves while the command works on it, the command starts on that pull request again, at most twice.
 A skipped pull request stays skipped until its head changes, for example when Dependabot rebases it.
 Before the command gives up on a conflicting pull request that only Dependabot has pushed to, it waits `--rebase-grace` seconds (default `180`) for Dependabot to rebase it.
-With `--ask-rebase`, it first comments `@dependabot rebase` on the pull request.
-With `--retries <N>`, it re-runs the failed GitHub Actions jobs of a pull request up to `N` times.
+With `--ask-rebase`, it first comments `@dependabot rebase` on the pull request, which needs the default `--author`.
+With `--retries <N>`, it re-runs the failed jobs of a pull request up to `N` times, but only when every failed check is a GitHub Actions job.
+The re-runs need the Actions `write` permission.
 With `--dry-run`, it syncs and merges nothing, and stops at the first pull request that it would sync or merge.
 
-The command exits `0` when no open Dependabot pull requests are left, and `1` when it stops with some left, with the reason for each.
+The command exits `0` when no open pull requests by the author are left, and `1` when it stops with some left, with the reason for each.
+With `--dry-run`, it exits `0` when it finds a pull request that it would sync or merge.
 It keeps no state outside GitHub, so you can stop it at any time and run it again.
 It stops with an error if the default branch requires a merge queue.
 
-Run the command on your own computer with the token of `gh`, which has the `workflow` scope.
-The token needs the Workflows `write` permission to sync or merge a pull request that changes a workflow file, which every GitHub Actions update does.
+Run the command on your own computer with the token of `gh`.
+The token of `gh` has the Workflows `write` permission only with the `workflow` scope, which `gh auth refresh --scopes workflow` adds.
+The token needs that permission to sync or merge a pull request that changes a workflow file, which every GitHub Actions update does.
 Do not run the command with the `GITHUB_TOKEN` of a workflow: that token cannot get the Workflows `write` permission, and a merge with that token starts no CI on the default branch.
 A token that can bypass the rulesets can merge a pull request that does not meet them, so the checks of the command are the only gate.
+In the squash commit, the command gives the title and message that the repository settings take from the pull request alone, and leaves the others to GitHub.
 
 ### Bumping pinned GitHub releases
 

@@ -30,7 +30,7 @@ def run(name: str, status: str = "completed", conclusion: str = "success", run_i
 
 
 # The checks that every commit gets, unless a test gives it others.
-PASSED = [run("test"), run("lint", run_id=2), run("CodeRabbit", run_id=3)]
+PASSED = [run("test"), run("lint", run_id=2), run("review", run_id=3)]
 
 
 @dataclass
@@ -49,6 +49,9 @@ class Fake:
     threads: list[list[str]] = field(default_factory=lambda: [[]])
     changes_requested: list[str] = field(default_factory=list[str])
     commit_authors: list[str] = field(default_factory=lambda: [BOT])
+    committer: str = "web-flow"
+    base: str = "main"
+    more_reviews: bool = False
     # Heads that someone else pushes, one on each read of the pull request.
     pushes: list[str] = field(default_factory=list[str])
     reads: int = 0
@@ -79,7 +82,11 @@ class FakeGitHub:
         self.merge_errors = merge_errors or []
         self.sync_errors = sync_errors or []
         self.sync_moves = sync_moves
-        self.settings = {"default_branch": "main", "squash_merge_commit_message": "BLANK"} | (settings or {})
+        self.settings = {
+            "default_branch": "main",
+            "squash_merge_commit_title": "PR_TITLE",
+            "squash_merge_commit_message": "BLANK",
+        } | (settings or {})
         self.main = "m1"
         self.parents = {"m1": "m0"}
         self.changes: list[tuple[str, str, Any]] = []
@@ -110,6 +117,7 @@ class FakeGitHub:
             "isDraft": pull.draft,
             "mergeable": pull.mergeable[min(index, len(pull.mergeable) - 1)],
             "headRefOid": pull.head,
+            "baseRefName": pull.base,
             "title": pull.title,
             "body": "Bumps x.",
             "url": f"https://github.com/o/r/pull/{pull.number}",
@@ -120,7 +128,8 @@ class FakeGitHub:
             },
             "latestReviews": {
                 "nodes": [{"state": "CHANGES_REQUESTED", "author": {"login": a}} for a in pull.changes_requested]
-                + [{"state": "APPROVED", "author": None}]
+                + [{"state": "APPROVED", "author": None}],
+                "pageInfo": {"hasNextPage": pull.more_reviews},
             },
         }
         return {"data": {"repository": {"pullRequest": node}}}
@@ -167,7 +176,10 @@ class FakeGitHub:
             return {"behind_by": 0 if head.endswith(f"+{base}") else 1}
         if path.endswith("/commits?per_page=100"):
             pull = self.pulls[int(path.split("/")[2])]
-            return [{"author": {"login": a} if a else None} for a in pull.commit_authors]
+            return [
+                {"author": {"login": a} if a else None, "committer": {"login": pull.committer}}
+                for a in pull.commit_authors
+            ]
         if path.startswith("/pulls/"):
             return self._pull(int(path.removeprefix("/pulls/")))
         raise AssertionError(f"unexpected {method} {url}")
@@ -277,7 +289,7 @@ def test_fails_if_the_default_branch_never_finishes(
 ) -> None:
     FakeGitHub(monkeypatch, [], polls={"m1": [[run("test")]]})
     assert merge("--main-timeout", "100") == 1
-    assert "gave up after 100 seconds waiting for CodeRabbit, lint on main at m1" in capsys.readouterr().err
+    assert "gave up after 100 seconds waiting for lint, review on main at m1" in capsys.readouterr().err
 
 
 def test_skips_a_pull_request_whose_checks_fail_and_merges_the_next(
@@ -314,7 +326,7 @@ def test_reruns_failed_jobs_with_retries(monkeypatch: pytest.MonkeyPatch) -> Non
     ("pull", "reason"),
     [
         (Fake(1, "h1", threads=[["https://github.com/o/r/pull/1#discussion_r1"]]), "1 unresolved review thread, "),
-        (Fake(1, "h1", changes_requested=["coderabbitai[bot]"]), "changes requested by coderabbitai[bot]"),
+        (Fake(1, "h1", changes_requested=["a-review-bot[bot]"]), "changes requested by a-review-bot[bot]"),
         (Fake(1, "h1", mergeable=["UNKNOWN"]), "GitHub didn't work out whether it conflicts"),
         (Fake(1, "h1", mergeable=["CONFLICTING"], commit_authors=[BOT, "me"]), "it conflicts with main"),
     ],
@@ -396,7 +408,7 @@ def test_skips_a_pull_request_whose_checks_time_out(
     assert merge("--timeout", "100") == 1
     assert [c[1] for c in merges(fake)] == ["/pulls/1/update-branch"]
     out = capsys.readouterr().out
-    assert "its checks didn't finish within 100 seconds: CodeRabbit, lint, test\n" in out
+    assert "its checks didn't finish within 100 seconds: lint, review, test\n" in out
 
 
 @pytest.mark.parametrize(
@@ -624,8 +636,9 @@ def test_waits_for_no_rebase_with_no_grace(monkeypatch: pytest.MonkeyPatch, caps
 
 
 def test_reads_every_page_of_pull_requests(monkeypatch: pytest.MonkeyPatch) -> None:
-    others = [Fake(n, f"h{n}", author="someone") for n in range(2, 102)]
-    fake = FakeGitHub(monkeypatch, [Fake(1, "h1+m1"), *others])
+    # The only pull request by Dependabot is on the second page.
+    others = [Fake(n, f"h{n}", author="someone") for n in range(1, 101)]
+    fake = FakeGitHub(monkeypatch, [*others, Fake(101, "h101+m1")])
     real = fake.request
 
     def paged(method: str, url: str, token: str, *, json_body: Any = None) -> Any:
@@ -636,4 +649,76 @@ def test_reads_every_page_of_pull_requests(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(github, "request", paged)
     assert merge() == 0
-    assert [c[1] for c in merges(fake)] == ["/pulls/1/merge"]
+    assert [c[1] for c in merges(fake)] == ["/pulls/101/merge"]
+
+
+def test_skips_a_pull_request_whose_base_changed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pull = Fake(1, "h1")
+    fake = FakeGitHub(monkeypatch, [pull])
+    real = fake._graphql
+
+    def retarget(variables: dict[str, Any]) -> dict[str, Any]:
+        # Someone retargets it while its checks run.
+        if pull.reads == 1:
+            pull.base = "other"
+        return real(variables)
+
+    monkeypatch.setattr(fake, "_graphql", retarget)
+    assert merge() == 1
+    assert [c[1] for c in merges(fake)] == ["/pulls/1/update-branch"]
+    assert "- https://github.com/o/r/pull/1: its base is now other, not main\n" in capsys.readouterr().out
+
+
+def test_skips_a_pull_request_retargeted_before_it_looked(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeGitHub(monkeypatch, [Fake(1, "h1", base="other")])
+    assert merge() == 1
+    assert fake.changes == []
+    assert "Skipped #1: its base is now other, not main\n" in capsys.readouterr().out
+
+
+def test_skips_a_pull_request_that_closes_after_timing_out(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pull = Fake(1, "h1")
+    FakeGitHub(monkeypatch, [pull])
+
+    def sync(*args: Any, **options: Any) -> str:
+        # It closes just as the wait for the sync gives up.
+        pull.state = "closed"
+        raise TimeoutError("no new head appeared")
+
+    monkeypatch.setattr(dependabot_merge, "sync", sync)
+    assert merge() == 0
+    assert "Skipped #1: https://github.com/o/r/pull/1 is no longer open\n" in capsys.readouterr().out
+
+
+def test_skips_a_pull_request_with_over_100_reviewers(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    FakeGitHub(monkeypatch, [Fake(1, "h1", more_reviews=True)])
+    assert merge() == 1
+    assert "- https://github.com/o/r/pull/1: over 100 reviewers, more than it reads\n" in capsys.readouterr().out
+
+
+def test_leaves_the_title_to_github_unless_the_repository_takes_the_pull_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeGitHub(monkeypatch, [Fake(1, "h1+m1")], settings={"squash_merge_commit_title": "COMMIT_OR_PR_TITLE"})
+    assert merge() == 0
+    assert merges(fake)[0][2] == {"merge_method": "squash", "sha": "h1+m1", "commit_message": ""}
+
+
+def test_waits_for_no_rebase_of_a_pull_request_someone_else_committed(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeGitHub(monkeypatch, [Fake(1, "h1", mergeable=["CONFLICTING"], committer="someone")])
+    assert merge() == 1
+    assert 180 not in fake.slept
+
+
+def test_refuses_to_ask_another_author_to_rebase(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        merge("--ask-rebase", "--author", "renovate[bot]")
+    assert "--ask-rebase asks Dependabot, so it needs --author dependabot[bot]" in capsys.readouterr().err

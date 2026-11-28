@@ -188,6 +188,8 @@ class Merger:
             return Skip(pull.head, "it conflicts with " + self.branch, rebasable)
         if pull.mergeable != "MERGEABLE":
             return Skip(pull.head, "GitHub didn't work out whether it conflicts")
+        if pull.base != self.branch:
+            return Skip(pull.head, f"its base is now {pull.base}, not {self.branch}")
         if blocker := pull.blocker():
             return Skip(pull.head, blocker)
         deadline = monotonic() + self.timeout
@@ -212,6 +214,8 @@ class Merger:
         pull = dependabot_merge.read(self.repo, self.token, number)
         if pull.head != sha:
             raise HeadChanged(f"the head moved from {sha} to {pull.head}")
+        if pull.base != self.branch:
+            return Skip(sha, f"its base is now {pull.base}, not {self.branch}")
         if blocker := pull.blocker():
             return Skip(sha, blocker)
         if self._commit(self.branch)["sha"] != base:
@@ -240,8 +244,15 @@ class Merger:
             except HeadChanged as e:
                 print(f"#{number}: {e}" + (", so it starts again" if restart < RESTARTS else ""))
             except TimeoutError as e:
-                return Skip(dependabot_merge.head(self.repo, self.token, number), str(e))
-        return Skip(dependabot_merge.head(self.repo, self.token, number), "its head kept moving")
+                return self._skip(number, str(e))
+        return self._skip(number, "its head kept moving")
+
+    def _skip(self, number: int, reason: str) -> Skip:
+        """Skip pull request number at its current head, for reason, or as closed if it closed."""
+        try:
+            return Skip(dependabot_merge.head(self.repo, self.token, number), reason)
+        except Closed as e:
+            return Skip("", str(e))
 
     def _grace(self, pulls: list[dict[str, Any]], graced: set[tuple[int, str]]) -> bool:
         """Wait for Dependabot to rebase the conflicting pull requests in pulls
@@ -324,18 +335,23 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="repoutils dependabot-merge",
         description=summary(__doc__),
-        epilog="It uses $GITHUB_TOKEN, defaulting to `gh auth token`, which needs Contents and Pull requests "
-        "write, and Workflows write to sync or merge a pull request that changes a file in .github/workflows; "
-        "`gh auth token`'s workflow scope gives it that. A GITHUB_TOKEN in Actions can't, and a merge made with "
-        "it starts no workflow on the default branch. With --retries, it also needs Actions write. A token that "
-        "can bypass the rulesets may merge despite unmet rules, so the command's own checks are the gate.",
+        epilog=(
+            "It uses $GITHUB_TOKEN, defaulting to `gh auth token`, which needs Contents and Pull requests write, "
+            "and Workflows write to sync or merge a pull request that changes a file in .github/workflows. "
+            "gh's token has that only with the workflow scope, which `gh auth refresh --scopes workflow` adds. "
+            "A GITHUB_TOKEN in Actions can't have it, and a merge made with one starts no workflow on the default "
+            "branch. With --retries, it also needs Actions write. A token that can bypass the rulesets may merge "
+            "despite unmet rules, so the command's own checks are the gate."
+        ),
     )
     parser.add_argument(
         "--repo",
         default=os.environ.get("GITHUB_REPOSITORY"),
         help="owner/name (default: $GITHUB_REPOSITORY, else gh's current repo)",
     )
-    parser.add_argument("--author", default="dependabot[bot]", help="the pull requests' author (default: %(default)s)")
+    parser.add_argument(
+        "--author", default=dependabot_merge.DEPENDABOT, help="the pull requests' author (default: %(default)s)"
+    )
     seconds = workflow_summaries.positive
     parser.add_argument(
         "--timeout",
@@ -392,6 +408,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
     if not args.rebase_grace >= 0:
         _parser().error("--rebase-grace must be 0 or more")
+    if args.ask_rebase and args.author != dependabot_merge.DEPENDABOT:
+        _parser().error(f"--ask-rebase asks Dependabot, so it needs --author {dependabot_merge.DEPENDABOT}")
 
     def go() -> int:
         repo = args.repo or github.gh_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")

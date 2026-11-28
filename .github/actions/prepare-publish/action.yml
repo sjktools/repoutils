@@ -23,7 +23,7 @@ inputs:
     required: false
     # Keep in step with pyproject.toml's [tool.uv] required-version, which
     # check-pins checks.
-    default: "0.13.6"
+    default: "0.13.7"
   just-version:
     description: The just to install, the project's justfile's minimum-version.
     required: false

@@ -350,7 +350,7 @@ description = "Dependabot's dependency updates"
 # Refuse uv versions older than CI's, which may resolve or write uv.lock differently.
 # Keep in step with the setup-uv `version` in .github/workflows.
 [tool.uv]
-required-version = ">=0.13.6"
+required-version = ">=0.13.7"
 # Development (the dev group's wheels in uv.lock) is supported on macOS and
 # Linux x86_64/aarch64 only; repoutils itself is pure Python and runs anywhere.
 # `repoutils check-lock-platforms` checks uv.lock keeps to these.

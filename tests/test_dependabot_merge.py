@@ -586,11 +586,11 @@ def test_refuses_a_merge_queue(monkeypatch: pytest.MonkeyPatch, capsys: pytest.C
     assert "main requires a merge queue" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("value", ["-1", "nan"])
+@pytest.mark.parametrize("value", ["-1", "nan", "inf"])
 def test_refuses_a_bad_rebase_grace(value: str, capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
         merge("--rebase-grace", value)
-    assert "--rebase-grace must be 0 or more" in capsys.readouterr().err
+    assert "--rebase-grace must be a number, 0 or more" in capsys.readouterr().err
 
 
 def test_skips_a_pull_request_that_closed_before_it_looked(
@@ -692,8 +692,9 @@ def test_skips_a_pull_request_that_closes_after_timing_out(
         raise TimeoutError("no new head appeared")
 
     monkeypatch.setattr(dependabot_merge, "sync", sync)
+    # It skips it at the head it synced, and then finds it closed.
     assert merge() == 0
-    assert "Skipped #1: https://github.com/o/r/pull/1 is no longer open\n" in capsys.readouterr().out
+    assert "Skipped #1: no new head appeared\n" in capsys.readouterr().out
 
 
 def test_skips_a_pull_request_with_over_100_reviewers(
@@ -722,3 +723,40 @@ def test_refuses_to_ask_another_author_to_rebase(capsys: pytest.CaptureFixture[s
     with pytest.raises(SystemExit):
         merge("--ask-rebase", "--author", "renovate[bot]")
     assert "--ask-rebase asks Dependabot, so it needs --author dependabot[bot]" in capsys.readouterr().err
+
+
+def test_dry_run_reruns_nothing(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    failed = [run("test", conclusion="failure", run_id=11), *PASSED[1:]]
+    FakeGitHub(monkeypatch, [Fake(1, "h1+m1")], polls={"h1+m1": [failed]})
+
+    def rerun(repo: str, token: str, checks: list[pr_checks.Check]) -> bool:
+        raise AssertionError("a dry run re-ran jobs")
+
+    monkeypatch.setattr(pr_checks, "rerun", rerun)
+    assert merge("--dry-run", "--retries", "1") == 1
+    assert "Skipped #1: checks failed: test\n" in capsys.readouterr().out
+
+
+def test_waits_for_no_pull_request_check_on_the_default_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A ruleset requires pr-only, which runs on pull requests only.
+    rules = [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "pr-only"}]}}]
+    FakeGitHub(monkeypatch, [], rules=rules)
+    assert merge() == 0
+
+
+def test_skips_a_pull_request_that_closes_while_its_head_keeps_moving(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pull = Fake(1, "h1")
+    FakeGitHub(monkeypatch, [pull])
+    calls: list[int] = []
+
+    def sync(*args: Any, **options: Any) -> str:
+        calls.append(1)
+        if len(calls) > command.RESTARTS:
+            pull.state = "closed"
+        raise pr_checks.HeadChanged("moved")
+
+    monkeypatch.setattr(dependabot_merge, "sync", sync)
+    assert merge() == 0
+    assert "Skipped #1: https://github.com/o/r/pull/1 is no longer open\n" in capsys.readouterr().out

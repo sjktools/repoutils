@@ -170,7 +170,7 @@ With `--retries <N>`, it re-runs the failed jobs of a pull request up to `N` tim
 The re-runs need the Actions `write` permission.
 With `--dry-run`, it syncs and merges nothing, and stops at the first pull request that it would sync or merge.
 
-The command exits `0` when no open pull requests by the author are left, and `1` when it stops with some left, with the reason for each.
+The command exits `0` when no open pull requests by the author are left that are not drafts, and `1` when it stops with some left, with the reason for each.
 With `--dry-run`, it exits `0` when it finds a pull request that it would sync or merge.
 It keeps no state outside GitHub, so you can stop it at any time and run it again.
 It stops with an error if the default branch requires a merge queue.

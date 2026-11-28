@@ -28,6 +28,7 @@ outside GitHub, so it can be stopped at any point and run again.
 Stdlib-only, like every repoutils module."""
 
 import argparse
+import math
 import os
 import sys
 import urllib.parse
@@ -97,14 +98,20 @@ class Merger:
         return {c.name for c in pr_checks.checks(self.repo, self.token, sha)}
 
     def _settle(
-        self, sha: str, head: Callable[[], str], expected: set[str], deadline: float, **options: Any
+        self,
+        sha: str,
+        head: Callable[[], str],
+        required: list[pr_checks.Required],
+        expected: set[str],
+        deadline: float,
+        **options: Any,
     ) -> pr_checks.Outcome:
         return pr_checks.settle(
             self.repo,
             self.token,
             sha,
             head,
-            required=self.required,
+            required=required,
             expected=expected,
             interval=self.poll,
             quiet=self.quiet,
@@ -124,7 +131,9 @@ class Merger:
             expected = self._names(commit["parents"][0]["sha"]) if commit["parents"] else set()
             print(f"Waiting for the checks on {self.branch} at {sha}")
             try:
-                outcome = self._settle(sha, lambda: str(self._commit(self.branch)["sha"]), expected, deadline)
+                # Not the rulesets' required checks, which are for pull requests, and some of which may run on
+                # pull requests only.
+                outcome = self._settle(sha, lambda: str(self._commit(self.branch)["sha"]), [], expected, deadline)
             except HeadChanged as e:
                 print(f"{self.branch} moved: {e}")
                 continue
@@ -157,13 +166,13 @@ class Merger:
     def _wait_pull(self, pull: Pull, sha: str, expected: set[str], deadline: float) -> pr_checks.Outcome:
         """The checks on pull at sha once they've finished, re-running failed
         GitHub Actions jobs up to retries times. It stops at the first
-        failure once it has no re-runs left."""
-        retries = self.retries
+        failure once it has no re-runs left. With --dry-run, it re-runs nothing."""
+        retries = 0 if self.dry_run else self.retries
 
         def head() -> str:
             return dependabot_merge.head(self.repo, self.token, pull.number)
 
-        outcome = self._settle(sha, head, expected, deadline, stop_on_failure=retries == 0)
+        outcome = self._settle(sha, head, self.required, expected, deadline, stop_on_failure=retries == 0)
         while (
             outcome.failed
             and not outcome.timed_out
@@ -172,7 +181,9 @@ class Merger:
         ):
             retries -= 1
             replaced = frozenset(c.id for c in outcome.failed)
-            outcome = self._settle(sha, head, expected, deadline, stop_on_failure=retries == 0, replaced=replaced)
+            outcome = self._settle(
+                sha, head, self.required, expected, deadline, stop_on_failure=retries == 0, replaced=replaced
+            )
         return outcome
 
     def attempt(self, number: int, base: str) -> Skip | Step | str:
@@ -199,7 +210,11 @@ class Merger:
                 print(f"Would sync {pull.url} with {self.branch}, wait for its checks, and merge it if they pass")
                 return Step.WOULD
             expected = self._names(sha)
-            sha = dependabot_merge.sync(self.repo, self.token, pull, interval=self.poll, deadline=deadline)
+            try:
+                sha = dependabot_merge.sync(self.repo, self.token, pull, interval=self.poll, deadline=deadline)
+            except TimeoutError as e:
+                # At the head it synced, so that a sync's head that appears late is one to look at.
+                return Skip(pull.head, str(e))
             print(f"Synced {pull.url} with {self.branch}, so its head is now {sha}")
         else:
             expected = set()
@@ -243,8 +258,6 @@ class Merger:
                 return Skip("", str(e))
             except HeadChanged as e:
                 print(f"#{number}: {e}" + (", so it starts again" if restart < RESTARTS else ""))
-            except TimeoutError as e:
-                return self._skip(number, str(e))
         return self._skip(number, "its head kept moving")
 
     def _skip(self, number: int, reason: str) -> Skip:
@@ -406,8 +419,8 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(sys.argv[1:] if argv is None else argv)
-    if not args.rebase_grace >= 0:
-        _parser().error("--rebase-grace must be 0 or more")
+    if not (0 <= args.rebase_grace < math.inf):
+        _parser().error("--rebase-grace must be a number, 0 or more")
     if args.ask_rebase and args.author != dependabot_merge.DEPENDABOT:
         _parser().error(f"--ask-rebase asks Dependabot, so it needs --author {dependabot_merge.DEPENDABOT}")
 

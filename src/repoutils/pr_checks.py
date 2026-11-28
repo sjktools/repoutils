@@ -8,7 +8,8 @@ import sys
 import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass
-from time import monotonic, sleep
+from datetime import datetime
+from time import monotonic, sleep, time
 from typing import Any
 
 from repoutils import github
@@ -41,6 +42,8 @@ class Check:
     url: str
     # The check run's or status's own ID, which a rerun's new check run doesn't share.
     id: int
+    # When the check run started or finished, or the status was posted, in seconds since the epoch.
+    since: float | None = None
 
 
 def branch_rules(repo: str, token: str, branch: str) -> list[dict[str, Any]]:
@@ -84,6 +87,16 @@ def _pages(url: str, token: str, key: str) -> list[dict[str, Any]]:
         page += 1
 
 
+def _when(timestamp: str | None) -> float | None:
+    return datetime.fromisoformat(timestamp).timestamp() if timestamp else None
+
+
+def _age(found: list[Check]) -> float:
+    """How long ago a check in found last started or finished, or 0 if none says."""
+    times = [c.since for c in found if c.since is not None]
+    return max(0.0, time() - max(times)) if times else 0.0
+
+
 def checks(repo: str, token: str, sha: str) -> list[Check]:
     """The latest check run of each name, and the latest commit status of
     each context, on commit sha in repo."""
@@ -96,12 +109,30 @@ def checks(repo: str, token: str, sha: str) -> list[Check]:
         else:
             state, detail = ("passed" if conclusion in _PASSING else "failed"), str(conclusion)
         app = (run.get("app") or {}).get("id")
-        found.append(Check(run["name"], app, state, detail, run.get("html_url") or "", run["id"]))
+        found.append(
+            Check(
+                run["name"],
+                app,
+                state,
+                detail,
+                run.get("html_url") or "",
+                run["id"],
+                _when(run.get("completed_at") or run.get("started_at")),
+            )
+        )
     # The combined status holds only the latest status of each context.
     for status in _pages(f"{commit}/status", token, "statuses"):
         state = {"success": "passed", "pending": "pending"}.get(status["state"], "failed")
         found.append(
-            Check(status["context"], None, state, status["state"], status.get("target_url") or "", status["id"])
+            Check(
+                status["context"],
+                None,
+                state,
+                status["state"],
+                status.get("target_url") or "",
+                status["id"],
+                _when(status.get("created_at")),
+            )
         )
     return found
 
@@ -180,13 +211,14 @@ def settle(
       earlier commit that ran the same workflows;
     - none is pending, nor has an ID in replaced (a failed check that a
       re-run will replace);
-    - no check has appeared, or been replaced, for quiet seconds.
+    - no check has appeared, finished or been replaced for quiet seconds,
+      counting from the last of those that GitHub gives a time for.
 
     With stop_on_failure, it returns as soon as a check fails, without
     waiting for the rest. It reads head() again after each read of the
     checks, and raises HeadChanged if it returns another commit. At deadline
     (from monotonic()), it returns what it was still waiting for."""
-    seen: frozenset[tuple[str, int]] | None = None
+    seen: frozenset[tuple[str, int, str]] | None = None
     changed = monotonic()
     while True:
         found = checks(repo, token, sha)
@@ -199,9 +231,11 @@ def settle(
         waiting = [r.context for r in missing(required, found)]
         waiting += sorted(expected - names - set(waiting))
         waiting += [c.name for c in found if c.state == "pending" or c.id in replaced]
-        # Whole IDs, so that a check run replaced by another of the same name counts as a change.
-        if (ids := frozenset((c.name, c.id) for c in found)) != seen:
-            seen, changed = ids, monotonic()
+        # Whole IDs, so that a check run replaced by another of the same name counts as a change, and states, so
+        # that a check finishing does too, as it can start others.
+        if (now_seen := frozenset((c.name, c.id, c.state) for c in found)) != seen:
+            # The time since the last change GitHub knows of counts, such as on a commit that's been there for hours.
+            seen, changed = now_seen, monotonic() - _age(found)
         quiet_left = changed + quiet - monotonic()
         if (found or allow_none) and not waiting and quiet_left <= 0:
             return Outcome(sha, found, failed, [])

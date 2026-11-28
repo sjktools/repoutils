@@ -71,3 +71,32 @@ def test_waits_for_a_check_unless_none_are_allowed(monkeypatch: pytest.MonkeyPat
     assert settle(allow_none=True).waiting == []
     # The quiet period only.
     assert clock.slept == [10, 10, 5]
+
+
+def test_counts_the_quiet_period_from_when_github_says_a_check_finished(monkeypatch: pytest.MonkeyPatch) -> None:
+    # It finished 20 seconds before the first read.
+    finished = run("a") | {"started_at": "2026-01-01T00:00:00Z", "completed_at": "2026-01-01T00:01:00Z"}
+    clock = Clock(monkeypatch, [[finished]])
+    monkeypatch.setattr(pr_checks, "time", lambda: 1767225680.0)
+    assert settle().waiting == []
+    assert clock.slept == [5]
+
+
+def test_a_check_finishing_restarts_the_quiet_period(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = Clock(monkeypatch, [[run("a", "in_progress")], [run("a", "in_progress")], [run("a")]])
+    assert settle().waiting == []
+    # It finished at 20, so it waits until 45.
+    assert clock.slept == [10, 10, 10, 10, 5]
+
+
+def test_reads_when_each_check_started_or_finished(monkeypatch: pytest.MonkeyPatch) -> None:
+    started = run("a", "in_progress") | {"started_at": "2026-01-01T00:00:00Z", "completed_at": None}
+    finished = run("b") | {"started_at": "2026-01-01T00:00:00Z", "completed_at": "2026-01-01T00:01:00+00:00"}
+
+    def request(method: str, url: str, token: str) -> Any:
+        if "/check-runs?" in url:
+            return {"check_runs": [started, finished]}
+        return {"statuses": [{"context": "c", "state": "success", "id": 3, "created_at": "2026-01-01T00:02:00Z"}]}
+
+    monkeypatch.setattr(github, "request", request)
+    assert [c.since for c in pr_checks.checks("o/r", "tok", "c")] == [1767225600.0, 1767225660.0, 1767225720.0]

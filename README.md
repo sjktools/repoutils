@@ -158,7 +158,8 @@ GitHub cannot say which checks a commit will get, so the command waits until all
 - For a pull request, every check that the rulesets require for a merge into the default branch is there.
 - For a pull request that the command synced, a check of each name that the head before the sync had is there.
 - No check is pending.
-- No check has appeared for `--quiet-period` seconds.
+- No check has appeared or finished for `--quiet-period` seconds.
+  The command counts from the times that GitHub gives, so it does not wait on a commit whose checks finished long ago.
 - For a pull request, at least one check is there.
   The default branch can have no checks, as some repositories run their checks on pull requests only.
 

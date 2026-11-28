@@ -390,7 +390,7 @@ def _parser() -> argparse.ArgumentParser:
         "--quiet-period",
         type=seconds,
         default=60,
-        help="seconds in which no new check may appear before the checks count as finished (default: %(default)s)",
+        help="seconds in which no check may appear or finish before the checks count as done (default: %(default)s)",
     )
     parser.add_argument(
         "--retries",

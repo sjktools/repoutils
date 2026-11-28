@@ -54,6 +54,9 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
   `src/repoutils/downstream_plan.py` is `downstream plan`, which works out the version a Bump downstream run bumps to from the event that started it.
   `src/repoutils/downstream_finish.py` is `downstream finish`, which waits for a bump PR's checks and re-runs failed jobs.
   `src/repoutils/pypi_provenance.py` checks that PyPI's provenance for a release, or TestPyPI's for a dev version, names the upstream's repository as its trusted publisher.
+- `src/repoutils/pr_checks.py` holds the check reading and waiting that `downstream finish` and `dependabot-merge` share.
+  It reads the checks that a branch's rulesets require, lists a commit's check runs and statuses, waits for them to settle, and re-runs failed Actions jobs.
+- `src/repoutils/dependabot_merge.py` is `dependabot-merge`'s reads and changes of one PR (its reviews, sync and squash merge), kept apart from the command for length.
 - `src/repoutils/release_pins.py` is the format of the pins file that `github-releases bump` writes, kept apart from the command for length.
 - `src/repoutils/workflows.py` reads the workflows in `.github/workflows` for the secrets and variables they use and each job's environment, without a YAML parser.
   `secrets check-workflows` and `variables check-workflows` use it.

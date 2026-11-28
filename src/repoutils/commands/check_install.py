@@ -410,7 +410,10 @@ def run(argv: list[str]) -> int:
     parser.add_argument(
         "--version-line",
         action="store_true",
-        help="require `<command> --version` to print `<name> <version> (<12-hex commit>)`, as repoutils does",
+        help=(
+            "require `<command> --version` to print `<name> <version> (<12-hex commit>[ with uncommitted changes]"
+            "[, <n> commits after <tag>])`, as repoutils does"
+        ),
     )
     parser.add_argument(
         "--run",

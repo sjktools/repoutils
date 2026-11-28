@@ -43,11 +43,12 @@ def head_commit(directory: Path, ignore_untracked: frozenset[str] = frozenset())
     None if Git isn't installed, or `directory` isn't in a repository with a commit."""
     try:
         commit = _git(directory, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
-        status = _git(directory, "status", "--porcelain", "-z", "--untracked-files=normal", "--", ".")
+        status = _git(directory, "status", "--porcelain", "--untracked-files=normal", "--", ".")
     except (FileNotFoundError, subprocess.CalledProcessError):
         return None
     ignored = {f"?? {path}" for path in ignore_untracked}
-    changes = [entry for entry in status.split("\0") if entry and entry not in ignored]
+    # Without -z, Git quotes a path that isn't plain ASCII, so the output decodes as text.
+    changes = [line for line in status.splitlines() if line and line not in ignored]
     return commit.strip(), bool(changes)
 
 

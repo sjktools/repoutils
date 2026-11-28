@@ -101,6 +101,8 @@ def test_wheel_with_uncommitted_changes(project: Path, monkeypatch: pytest.Monke
         ({"tag": "v1.1.0", "distance": 3}, ", 3 commits after v1.1.0"),
         ({"tag": "v1.2.0", "distance": 0}, ""),
         ({"tag": None, "distance": None}, ""),
+        # A file from an older hook, without either key.
+        ({}, ""),
     ],
 )
 def test_wheel_version_line_gives_the_distance_from_its_tag(project: Path, tag: dict[str, object], suffix: str) -> None:

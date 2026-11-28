@@ -50,7 +50,7 @@ def read() -> BuildInfo:
 def tag_and_distance(built: dict[str, object]) -> tuple[str | None, int | None]:
     """The tag and distance in build_info.json, which builds by older hooks lack."""
     tag, distance = built.get("tag"), built.get("distance")
-    if isinstance(tag, str) and isinstance(distance, int) and not isinstance(distance, bool):
+    if isinstance(tag, str) and isinstance(distance, int) and not isinstance(distance, bool) and distance >= 0:
         return tag, distance
     return None, None
 
@@ -81,7 +81,7 @@ def _installed_version() -> str | None:
 
 def is_release(info: BuildInfo) -> bool | None:
     """Whether the build is at a tag with no uncommitted changes, or None if that's unknown."""
-    if info.tag is None or info.distance is None or info.dirty is None:
+    if info.commit is None or info.tag is None or info.distance is None or info.dirty is None:
         return None
     return info.distance == 0 and not info.dirty
 

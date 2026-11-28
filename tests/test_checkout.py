@@ -57,6 +57,14 @@ class HeadCommitTests(TestCase):
         (repo / "new.txt").write_text("")
         self.assertEqual(head_commit(repo, frozenset({".ok"})), (head, True))
 
+    def test_a_file_name_that_is_not_utf_8(self) -> None:
+        repo = self.repo("a")
+        try:
+            (repo / os.fsdecode(b"\xff.txt")).write_text("")
+        except (OSError, UnicodeError):
+            self.skipTest("the file system can't hold the name")
+        self.assertEqual(head_commit(repo, frozenset({".ok"})), (self.head(repo).strip(), True))
+
     def test_ignoring_a_path_still_counts_its_changes_when_tracked(self) -> None:
         repo = self.repo("a")
         (repo / "file.txt").write_text("changed")

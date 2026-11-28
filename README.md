@@ -1693,7 +1693,7 @@ The file has four keys:
 - `commit` is the full hash of the commit that Git has checked out.
 - `dirty` is `true` if a file in the project differs from that commit, and `false` if no file differs.
   Untracked files count as differences, but files that `.gitignore` excludes do not.
-  An empty `.ok` file at the top of the project does not count either, because some versions of uv add one to their checkout of a Git dependency before they build it.
+  An empty, untracked `.ok` file at the top of the project does not count either, because some versions of uv add one to their checkout of a Git dependency before they build it.
 - `tag` is the nearest tag that `git describe --tags` finds whose name is the `tag-prefix` option followed by a digit.
   The default `tag-prefix` is `v`.
 - `distance` is the number of commits from `tag` to the commit.
@@ -1704,8 +1704,8 @@ The file has four keys:
 A build from a commit after a release has the version of that release, because the version comes from `pyproject.toml`.
 Only `distance` tells the two builds apart.
 `repoutils version` prints `Release: yes` only for a build with a `distance` of `0` and no uncommitted changes.
-For another build, it prints how many commits the build is after the tag.
-`repoutils --version` adds that number of commits after the commit, for example `repoutils 0.5.4 (1e38044def76, 3 commits after v0.5.4)`.
+For a build with a known `distance` above `0`, it prints how many commits the build is after the tag.
+`repoutils --version` adds that number of commits after the tag, for example `repoutils 0.5.4 (1e38044def76, 3 commits after v0.5.4)`.
 
 - A wheel that is built from an sdist gets the file from the sdist, and the hook does not run Git.
 - An editable install gets no file, because the commit would be out of date after the next commit.

@@ -35,7 +35,13 @@ def test_from_a_build_with_its_tag(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
 @pytest.mark.parametrize(
     "built",
-    [{}, {"tag": None, "distance": None}, {"tag": "v1", "distance": "3"}, {"tag": "v1", "distance": True}],
+    [
+        {},
+        {"tag": None, "distance": None},
+        {"tag": "v1", "distance": "3"},
+        {"tag": "v1", "distance": True},
+        {"tag": "v1", "distance": -1},
+    ],
 )
 def test_tag_and_distance_unknown(built: dict[str, object]) -> None:
     assert build_info.tag_and_distance(built) == (None, None)
@@ -117,6 +123,7 @@ def test_describe_a_build(dirty: bool | None, changes: str) -> None:
     [
         (BuildInfo("1.0", COMMIT, False, None), "unknown"),
         (BuildInfo("1.0", None, None, None), "unknown"),
+        (BuildInfo("1.0", None, False, None, "v1.0", 0), "unknown"),
         (BuildInfo("1.0", COMMIT, False, None, "v1.0", 0), "yes (v1.0)"),
         (BuildInfo("1.0", COMMIT, True, None, "v1.0", 0), "no, v1.0 with uncommitted changes"),
         (BuildInfo("1.0", COMMIT, False, None, "v1.0", 3), "no, 3 commits after v1.0"),

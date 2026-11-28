@@ -32,7 +32,7 @@ class Clock:
 
 def settle(head: Any = lambda: "c", **options: Any) -> pr_checks.Outcome:
     defaults: dict[str, Any] = {"required": [], "expected": set(), "interval": 10, "quiet": 25, "deadline": 100}
-    return pr_checks.settle("o/r", "tok", head, **(defaults | options))
+    return pr_checks.settle("o/r", "tok", "c", head, **(defaults | options))
 
 
 def test_waits_out_the_quiet_period_after_the_last_new_check(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -62,6 +62,5 @@ def test_waits_for_required_and_expected_checks(monkeypatch: pytest.MonkeyPatch)
 
 def test_raises_if_the_head_moves(monkeypatch: pytest.MonkeyPatch) -> None:
     Clock(monkeypatch, [[run("a")]])
-    heads = iter(["c", "d"])
     with pytest.raises(pr_checks.HeadChanged, match="the head moved from c to d"):
-        settle(lambda: next(heads))
+        settle(lambda: "d")

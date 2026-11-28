@@ -159,6 +159,7 @@ class Outcome:
 def settle(
     repo: str,
     token: str,
+    sha: str,
     head: Callable[[], str],
     *,
     required: list[Required],
@@ -169,8 +170,8 @@ def settle(
     stop_on_failure: bool = True,
     replaced: frozenset[int] = frozenset(),
 ) -> Outcome:
-    """Wait for the checks on the commit that head() returns to finish, as
-    GitHub can't say which checks a commit will get. They have finished once:
+    """Wait for the checks on commit sha, the commit that head() returns, to
+    finish, as GitHub can't say which checks a commit will get. They have finished once:
 
     - at least one check is there;
     - every check in required is there;
@@ -184,7 +185,6 @@ def settle(
     waiting for the rest. It reads head() again after each read of the
     checks, and raises HeadChanged if it returns another commit. At deadline
     (from monotonic()), it returns what it was still waiting for."""
-    sha = head()
     seen: frozenset[tuple[str, int]] | None = None
     changed = monotonic()
     while True:

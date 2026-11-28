@@ -31,6 +31,7 @@ import argparse
 import os
 import sys
 import urllib.parse
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from time import monotonic, sleep
@@ -95,10 +96,13 @@ class Merger:
     def _names(self, sha: str) -> set[str]:
         return {c.name for c in pr_checks.checks(self.repo, self.token, sha)}
 
-    def _settle(self, head: Any, expected: set[str], deadline: float, **options: Any) -> pr_checks.Outcome:
+    def _settle(
+        self, sha: str, head: Callable[[], str], expected: set[str], deadline: float, **options: Any
+    ) -> pr_checks.Outcome:
         return pr_checks.settle(
             self.repo,
             self.token,
+            sha,
             head,
             required=self.required,
             expected=expected,
@@ -120,7 +124,7 @@ class Merger:
             expected = self._names(commit["parents"][0]["sha"]) if commit["parents"] else set()
             print(f"Waiting for the checks on {self.branch} at {sha}")
             try:
-                outcome = self._settle(lambda: str(self._commit(self.branch)["sha"]), expected, deadline)
+                outcome = self._settle(sha, lambda: str(self._commit(self.branch)["sha"]), expected, deadline)
             except HeadChanged as e:
                 print(f"{self.branch} moved: {e}")
                 continue
@@ -159,7 +163,7 @@ class Merger:
         def head() -> str:
             return dependabot_merge.head(self.repo, self.token, pull.number)
 
-        outcome = self._settle(head, expected, deadline, stop_on_failure=retries == 0)
+        outcome = self._settle(sha, head, expected, deadline, stop_on_failure=retries == 0)
         while (
             outcome.failed
             and not outcome.timed_out
@@ -168,9 +172,7 @@ class Merger:
         ):
             retries -= 1
             replaced = frozenset(c.id for c in outcome.failed)
-            outcome = self._settle(head, expected, deadline, stop_on_failure=retries == 0, replaced=replaced)
-        if outcome.sha != sha:
-            raise HeadChanged(f"the head moved from {sha} to {outcome.sha}")
+            outcome = self._settle(sha, head, expected, deadline, stop_on_failure=retries == 0, replaced=replaced)
         return outcome
 
     def attempt(self, number: int, base: str) -> Skip | Step | str:
@@ -180,7 +182,7 @@ class Merger:
         pull = dependabot_merge.read(self.repo, self.token, number)
         print(f"Looking at {pull.url} ({pull.title}) at {pull.head}")
         if pull.state != "OPEN":
-            return Skip(pull.head, "it closed")
+            raise Closed(f"{pull.url} is no longer open")
         if pull.mergeable == "CONFLICTING":
             rebasable = dependabot_merge.untouched(self.repo, self.token, number, self.author)
             return Skip(pull.head, "it conflicts with " + self.branch, rebasable)
@@ -290,8 +292,11 @@ class Merger:
                 self.skipped[number] = outcome
             else:
                 pulls = self.open_pulls()
-                # A pull request that opened, or moved, since it listed them is one to look at.
-                if any((s := self.skipped.get(p["number"])) is None or s.head != p["head"]["sha"] for p in pulls):
+                # A pull request that opened, or moved, since it listed them is one to look at, and with
+                # none left, it exits 0 once it's back at the top.
+                if not pulls or any(
+                    (s := self.skipped.get(p["number"])) is None or s.head != p["head"]["sha"] for p in pulls
+                ):
                     continue
                 if self._grace(pulls, graced):
                     continue

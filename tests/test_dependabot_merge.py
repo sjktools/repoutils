@@ -66,13 +66,20 @@ class FakeGitHub:
         *,
         polls: dict[str, list[list[dict[str, Any]]]] | None = None,
         rules: list[dict[str, Any]] | None = None,
-        refuse_merge: bool = False,
+        merge_errors: list[tuple[int, bytes]] | None = None,
+        sync_errors: list[int] | None = None,
+        sync_moves: bool = True,
+        settings: dict[str, Any] | None = None,
     ) -> None:
         self.pulls = {p.number: p for p in pulls}
         self.polls = polls or {}
         self.check_reads: dict[str, int] = {}
         self.rules = RULES if rules is None else rules
-        self.refuse_merge = refuse_merge
+        # The HTTP errors that the first merges, or syncs, get.
+        self.merge_errors = merge_errors or []
+        self.sync_errors = sync_errors or []
+        self.sync_moves = sync_moves
+        self.settings = {"default_branch": "main", "squash_merge_commit_message": "BLANK"} | (settings or {})
         self.main = "m1"
         self.parents = {"m1": "m0"}
         self.changes: list[tuple[str, str, Any]] = []
@@ -140,7 +147,7 @@ class FakeGitHub:
             self.changes.append((method, path, json_body))
             return self._change(method, path, json_body)
         if path == "":
-            return {"default_branch": "main", "squash_merge_commit_message": "BLANK"}
+            return self.settings
         if path.startswith("/rules/branches/main?"):
             return self.rules if "page=1" in path else []
         if path.startswith("/commits/") and "/" not in path.removeprefix("/commits/"):
@@ -169,14 +176,16 @@ class FakeGitHub:
         if path.endswith("/update-branch"):
             pull = self.pulls[int(path.split("/")[2])]
             assert body == {"expected_head_sha": pull.head}
-            pull.head = f"{pull.head}+{self.main}"
+            if self.sync_errors:
+                raise urllib.error.HTTPError(path, self.sync_errors.pop(0), "No", Message(), io.BytesIO(b"{}"))
+            if self.sync_moves:
+                pull.head = f"{pull.head}+{self.main}"
             return {"message": "Updating pull request branch."}
         if path.endswith("/merge"):
             number = int(path.split("/")[2])
-            if self.refuse_merge:
-                raise urllib.error.HTTPError(
-                    path, 405, "Not Allowed", Message(), io.BytesIO(json.dumps({"message": "Base moved"}).encode())
-                )
+            if self.merge_errors:
+                code, detail = self.merge_errors.pop(0)
+                raise urllib.error.HTTPError(path, code, "No", Message(), io.BytesIO(detail))
             self.pulls[number].state = "closed"
             merged = f"m-{number}"
             self.parents[merged], self.main = self.main, merged
@@ -288,9 +297,15 @@ def test_skips_a_pull_request_whose_checks_fail_and_merges_the_next(
 
 def test_reruns_failed_jobs_with_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     failed = [run("test", conclusion="failure", run_id=11), *PASSED[1:]]
-    polls = {"h1+m1": [failed, [run("test", run_id=12), *PASSED[1:]]]}
-    fake = FakeGitHub(monkeypatch, [Fake(1, "h1")], polls=polls)
-    monkeypatch.setattr(pr_checks, "rerun", lambda repo, token, failed: [c.id for c in failed] == [11])
+    fake = FakeGitHub(monkeypatch, [Fake(1, "h1")], polls={"h1+m1": [failed]})
+
+    def rerun(repo: str, token: str, checks: list[pr_checks.Check]) -> bool:
+        assert [c.id for c in checks] == [11]
+        fake.polls["h1+m1"] = [failed, [run("test", run_id=12), *PASSED[1:]]]
+        fake.check_reads["h1+m1"] = 0
+        return True
+
+    monkeypatch.setattr(pr_checks, "rerun", rerun)
     assert merge("--retries", "1") == 0
     assert [c[1] for c in merges(fake)] == ["/pulls/1/update-branch", "/pulls/1/merge"]
 
@@ -384,12 +399,154 @@ def test_skips_a_pull_request_whose_checks_time_out(
     assert "its checks didn't finish within 100 seconds: CodeRabbit, lint, test\n" in out
 
 
+@pytest.mark.parametrize(
+    ("detail", "reason"),
+    [(json.dumps({"message": "Base moved"}).encode(), "Base moved"), (b"<html>", "<html>")],
+)
 def test_skips_a_pull_request_that_github_refuses_to_merge(
+    detail: bytes, reason: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    FakeGitHub(monkeypatch, [Fake(1, "h1")], merge_errors=[(405, detail)])
+    assert merge() == 1
+    assert f"- https://github.com/o/r/pull/1: GitHub refused to merge it: {reason}\n" in capsys.readouterr().out
+
+
+def test_starts_again_if_github_says_the_head_moved(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    FakeGitHub(monkeypatch, [Fake(1, "h1")], refuse_merge=True)
+    fake = FakeGitHub(monkeypatch, [Fake(1, "h1")], merge_errors=[(409, b"{}")], sync_errors=[422])
+    assert merge() == 0
+    assert [c[1] for c in merges(fake)] == [
+        "/pulls/1/update-branch",
+        "/pulls/1/update-branch",
+        "/pulls/1/merge",
+        "/pulls/1/merge",
+    ]
+    out = capsys.readouterr().out
+    assert "#1: GitHub didn't sync https://github.com/o/r/pull/1, whose head may have moved from h1, so it" in out
+    assert "#1: the head of https://github.com/o/r/pull/1 is no longer h1+m1, so it starts again\n" in out
+
+
+def test_skips_a_pull_request_whose_head_keeps_moving(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    FakeGitHub(monkeypatch, [Fake(1, "h1")], sync_errors=[422, 422, 422])
     assert merge() == 1
-    assert "- https://github.com/o/r/pull/1: GitHub refused to merge it: Base moved" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "may have moved from h1\n" in out
+    assert "- https://github.com/o/r/pull/1: its head kept moving\n" in out
+
+
+@pytest.mark.parametrize("on_merge", [False, True])
+def test_fails_on_another_http_error(
+    on_merge: bool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    if on_merge:
+        FakeGitHub(monkeypatch, [Fake(1, "h1")], merge_errors=[(500, b"{}")])
+    else:
+        FakeGitHub(monkeypatch, [Fake(1, "h1")], sync_errors=[500])
+    assert merge() == 1
+    assert "HTTP 500 from " in capsys.readouterr().err
+
+
+def test_skips_a_pull_request_whose_sync_never_shows(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    FakeGitHub(monkeypatch, [Fake(1, "h1")], sync_moves=False)
+    assert merge("--timeout", "50") == 1
+    assert (
+        "- https://github.com/o/r/pull/1: no new head appeared on https://github.com/o/r/pull/1 after syncing it"
+        in (capsys.readouterr().out)
+    )
+
+
+def test_gives_the_body_as_the_message_if_the_repository_does(monkeypatch: pytest.MonkeyPatch) -> None:
+    for message, body in (("PR_BODY", {"commit_message": "Bumps x."}), ("COMMIT_MESSAGES", {})):
+        fake = FakeGitHub(monkeypatch, [Fake(1, "h1+m1")], settings={"squash_merge_commit_message": message})
+        assert merge() == 0
+        assert merges(fake)[0][2] == {"merge_method": "squash", "sha": "h1+m1", "commit_title": "Bump x (#1)"} | body
+
+
+def test_skips_a_pull_request_that_closes(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    pull = Fake(1, "h1")
+    fake = FakeGitHub(monkeypatch, [pull, Fake(2, "h2+m1")])
+    real = fake._pull
+
+    def close(number: int) -> dict[str, Any]:
+        # Dependabot closes 1 as superseded while its checks run.
+        if pull.head == "h1+m1":
+            pull.state = "closed"
+        return real(number)
+
+    monkeypatch.setattr(fake, "_pull", close)
+    assert merge() == 0
+    assert [c[1] for c in merges(fake)] == ["/pulls/1/update-branch", "/pulls/2/merge"]
+    assert "Skipped #1: https://github.com/o/r/pull/1 is no longer open\n" in capsys.readouterr().out
+
+
+def test_starts_again_if_the_default_branch_moves(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pull = Fake(1, "h1")
+    fake = FakeGitHub(monkeypatch, [pull])
+    real = fake._checks
+
+    def moved(sha: str) -> list[dict[str, Any]]:
+        # Someone merges into main while the pull request's checks run.
+        if sha == "h1+m1" and fake.main == "m1":
+            fake.main, fake.parents["m2"] = "m2", "m1"
+        return real(sha)
+
+    monkeypatch.setattr(fake, "_checks", moved)
+    assert merge() == 0
+    assert merges(fake)[-1][2]["sha"] == "h1+m1+m2"
+    out = capsys.readouterr().out
+    assert "main moved while it waited, so it starts again\n" in out
+
+
+def test_waits_for_the_default_branchs_new_commit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeGitHub(monkeypatch, [])
+    real = fake._checks
+
+    def moved(sha: str) -> list[dict[str, Any]]:
+        if sha == "m1":
+            fake.main, fake.parents["m2"] = "m2", "m1"
+        return real(sha)
+
+    monkeypatch.setattr(fake, "_checks", moved)
+    assert merge() == 0
+    out = capsys.readouterr().out
+    assert "main moved: the head moved from m1 to m2\nWaiting for the checks on main at m2\n" in out
+
+
+def test_looks_again_at_a_pull_request_that_opened_while_it_worked(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = FakeGitHub(monkeypatch, [Fake(1, "h1", threads=[["https://x/1"]])])
+    real = fake._graphql
+
+    def opened(variables: dict[str, Any]) -> dict[str, Any]:
+        # Dependabot opens 2 while the command looks at 1.
+        fake.pulls.setdefault(2, Fake(2, "h2+m1"))
+        return real(variables)
+
+    monkeypatch.setattr(fake, "_graphql", opened)
+    assert merge() == 1
+    assert [c[1] for c in merges(fake)] == ["/pulls/2/merge"]
+
+
+def test_reads_at_most_100_review_threads(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    fake = FakeGitHub(monkeypatch, [Fake(1, "h1")])
+    real = fake._graphql
+
+    def many(variables: dict[str, Any]) -> dict[str, Any]:
+        data = real(variables)
+        data["data"]["repository"]["pullRequest"]["reviewThreads"]["pageInfo"]["hasNextPage"] = True
+        return data
+
+    monkeypatch.setattr(fake, "_graphql", many)
+    assert merge() == 1
+    assert "- https://github.com/o/r/pull/1: over 100 review threads, more than it reads\n" in capsys.readouterr().out
 
 
 def test_dry_run_syncs_and_merges_nothing(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -422,3 +579,61 @@ def test_refuses_a_bad_rebase_grace(value: str, capsys: pytest.CaptureFixture[st
     with pytest.raises(SystemExit):
         merge("--rebase-grace", value)
     assert "--rebase-grace must be 0 or more" in capsys.readouterr().err
+
+
+def test_skips_a_pull_request_that_closed_before_it_looked(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeGitHub(monkeypatch, [Fake(1, "h1")])
+    real = fake._graphql
+
+    def closed(variables: dict[str, Any]) -> dict[str, Any]:
+        fake.pulls[1].state = "closed"
+        return real(variables)
+
+    monkeypatch.setattr(fake, "_graphql", closed)
+    assert merge() == 0
+    assert fake.changes == []
+    assert "Skipped #1: https://github.com/o/r/pull/1 is no longer open\n" in capsys.readouterr().out
+
+
+def test_starts_again_if_the_head_moved_by_the_last_read(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pull = Fake(1, "h1")
+    fake = FakeGitHub(monkeypatch, [pull])
+    real = fake._graphql
+
+    def pushed(variables: dict[str, Any]) -> dict[str, Any]:
+        # Someone pushes just after its checks finish.
+        if pull.reads == 1:
+            pull.head = "h9"
+        return real(variables)
+
+    monkeypatch.setattr(fake, "_graphql", pushed)
+    assert merge() == 0
+    assert merges(fake)[-1][2]["sha"] == "h9+m1"
+    assert "#1: the head moved from h1+m1 to h9, so it starts again\n" in capsys.readouterr().out
+
+
+def test_waits_for_no_rebase_with_no_grace(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    fake = FakeGitHub(monkeypatch, [Fake(1, "h1", mergeable=["CONFLICTING"])])
+    assert merge("--rebase-grace", "0") == 1
+    assert fake.changes == []
+    assert "Dependabot to rebase" not in capsys.readouterr().out
+
+
+def test_reads_every_page_of_pull_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    others = [Fake(n, f"h{n}", author="someone") for n in range(2, 102)]
+    fake = FakeGitHub(monkeypatch, [Fake(1, "h1+m1"), *others])
+    real = fake.request
+
+    def paged(method: str, url: str, token: str, *, json_body: Any = None) -> Any:
+        if "/pulls?" in url:
+            pulls = [fake._pull(n) for n, p in sorted(fake.pulls.items()) if p.state == "open"]
+            return pulls[:100] if url.endswith("&page=1") else pulls[100:]
+        return real(method, url, token, json_body=json_body)
+
+    monkeypatch.setattr(github, "request", paged)
+    assert merge() == 0
+    assert [c[1] for c in merges(fake)] == ["/pulls/1/merge"]

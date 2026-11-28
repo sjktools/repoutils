@@ -35,17 +35,36 @@ def git_env() -> dict[str, str]:
     return {name: value for name, value in os.environ.items() if name not in REPOSITORY_VARIABLES}
 
 
-def head_commit(directory: Path) -> tuple[str, bool] | None:
+def head_commit(directory: Path, ignore_untracked: frozenset[str] = frozenset()) -> tuple[str, bool] | None:
     """The commit checked out in the Git repository that holds `directory`, and
-        whether anything under `directory` differs from it, untracked files included
-    (whatever the status.showUntrackedFiles setting).
-        None if Git isn't installed, or `directory` isn't in a repository with a commit."""
+    whether anything under `directory` differs from it, untracked files included
+    (whatever the status.showUntrackedFiles setting), except the untracked files
+    that `ignore_untracked` names by their paths in the repository.
+    None if Git isn't installed, or `directory` isn't in a repository with a commit."""
     try:
         commit = _git(directory, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
         status = _git(directory, "status", "--porcelain", "--untracked-files=normal", "--", ".")
     except (FileNotFoundError, subprocess.CalledProcessError):
         return None
-    return commit.strip(), bool(status.strip())
+    ignored = {f"?? {path}" for path in ignore_untracked}
+    # Without -z, Git quotes a path that isn't plain ASCII, so the output decodes as text.
+    changes = [line for line in status.splitlines() if line and line not in ignored]
+    return commit.strip(), bool(changes)
+
+
+def nearest_tag(directory: Path, prefix: str) -> tuple[str, int] | None:
+    """The nearest tag that starts with `prefix` and then a digit, among the
+    tags that the checked-out commit in `directory` comes from, and how many
+    commits that commit is after it, as `git describe` finds them.
+    None if no such tag can be reached, as in a shallow clone, or if Git isn't
+    installed, or `directory` isn't in a repository with a commit."""
+    try:
+        described = _git(directory, "describe", "--tags", "--long", "--match", f"{prefix}[0-9]*", "HEAD")
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+    # <tag>-<distance>-g<commit>, where the tag itself may contain "-".
+    tag, distance, _ = described.strip().rsplit("-", 2)
+    return tag, int(distance)
 
 
 def _git(directory: Path, *args: str) -> str:

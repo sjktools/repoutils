@@ -22,7 +22,29 @@ def _checkout_version() -> str:
 def test_from_this_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
     # The tests run repoutils editable, which has no build_info.json.
     monkeypatch.setattr(build_info, "head_commit", lambda root: (COMMIT, False) if root == ROOT else None)
-    assert build_info.read() == BuildInfo(_checkout_version(), COMMIT, False, ROOT)
+    monkeypatch.setattr(build_info, "nearest_tag", lambda root, prefix: ("v1.0", 3) if prefix == "v" else None)
+    assert build_info.read() == BuildInfo(_checkout_version(), COMMIT, False, ROOT, "v1.0", 3)
+
+
+def test_from_a_build_with_its_tag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / build_info.FILE).write_text(f'{{"commit": "{COMMIT}", "dirty": false, "tag": "v9.9", "distance": 0}}')
+    monkeypatch.setattr(build_info, "files", lambda package: tmp_path)
+    monkeypatch.setattr(build_info, "version", lambda name: "9.9")
+    assert build_info.read() == BuildInfo("9.9", COMMIT, False, None, "v9.9", 0)
+
+
+@pytest.mark.parametrize(
+    "built",
+    [
+        {},
+        {"tag": None, "distance": None},
+        {"tag": "v1", "distance": "3"},
+        {"tag": "v1", "distance": True},
+        {"tag": "v1", "distance": -1},
+    ],
+)
+def test_tag_and_distance_unknown(built: dict[str, object]) -> None:
+    assert build_info.tag_and_distance(built) == (None, None)
 
 
 def test_from_a_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -66,6 +88,12 @@ def test_installed_version_when_not_installed(monkeypatch: pytest.MonkeyPatch) -
         (BuildInfo("1.0", COMMIT, False, None), "repoutils 1.0 (0123456789ab)"),
         (BuildInfo("1.0", COMMIT, True, None), "repoutils 1.0 (0123456789ab with uncommitted changes)"),
         (BuildInfo(None, None, None, None), "repoutils unknown"),
+        (BuildInfo("1.0", COMMIT, False, None, "v1.0", 0), "repoutils 1.0 (0123456789ab)"),
+        (BuildInfo("1.0", COMMIT, False, None, "v1.0", 1), "repoutils 1.0 (0123456789ab, 1 commit after v1.0)"),
+        (
+            BuildInfo("1.0", COMMIT, True, None, "v1.0", 3),
+            "repoutils 1.0 (0123456789ab with uncommitted changes, 3 commits after v1.0)",
+        ),
     ],
 )
 def test_short(info: BuildInfo, line: str) -> None:
@@ -79,14 +107,31 @@ def test_short_with_another_name() -> None:
 @pytest.mark.parametrize(("dirty", "changes"), [(None, "unknown"), (True, "yes"), (False, "no")])
 def test_describe_a_build(dirty: bool | None, changes: str) -> None:
     lines = version.describe(BuildInfo("1.0", COMMIT if dirty is not None else None, dirty, None))
-    assert lines[:3] == [
+    assert lines[:4] == [
         "Version: 1.0",
         f"Commit: {COMMIT if dirty is not None else 'unknown'}",
         f"Uncommitted changes: {changes}",
+        "Release: unknown",
     ]
-    assert lines[3] == f"Installed in: {ROOT / 'src' / 'repoutils'}"
-    assert lines[4].startswith("Python: ") and sys.executable in lines[4]
-    assert len(lines) == 5
+    assert lines[4] == f"Installed in: {ROOT / 'src' / 'repoutils'}"
+    assert lines[5].startswith("Python: ") and sys.executable in lines[5]
+    assert len(lines) == 6
+
+
+@pytest.mark.parametrize(
+    ("info", "release"),
+    [
+        (BuildInfo("1.0", COMMIT, False, None), "unknown"),
+        (BuildInfo("1.0", None, None, None), "unknown"),
+        (BuildInfo("1.0", None, False, None, "v1.0", 0), "unknown"),
+        (BuildInfo("1.0", COMMIT, False, None, "v1.0", 0), "yes (v1.0)"),
+        (BuildInfo("1.0", COMMIT, True, None, "v1.0", 0), "no, v1.0 with uncommitted changes"),
+        (BuildInfo("1.0", COMMIT, False, None, "v1.0", 3), "no, 3 commits after v1.0"),
+        (BuildInfo("1.0", COMMIT, True, None, "v1.0", 1), "no, 1 commit after v1.0 and uncommitted changes"),
+    ],
+)
+def test_describe_whether_it_is_a_release(info: BuildInfo, release: str) -> None:
+    assert version.describe(info)[3] == f"Release: {release}"
 
 
 @pytest.mark.parametrize(("commit", "source"), [(COMMIT, "Git"), (None, "Git, which gave none")])
@@ -95,7 +140,7 @@ def test_describe_a_checkout(commit: str | None, source: str) -> None:
     assert lines[0] == "Version: unknown"
     assert lines[-1] == (
         f"Running from the source checkout in {ROOT},"
-        f" so the version is from its pyproject.toml and the commit from {source}."
+        f" so the version is from its pyproject.toml and the commit and tag from {source}."
     )
 
 
@@ -124,3 +169,4 @@ def test_version_from_an_installed_build(tmp_path: Path) -> None:
     assert f"Commit: {commit.strip()}\n" in result.stdout
     assert f"Version: {_checkout_version()}\n" in result.stdout
     assert "source checkout" not in result.stdout
+    assert "\nRelease: " in result.stdout

@@ -63,9 +63,10 @@ It supports Python 3.12 and later, so don't use newer syntax or `typing` feature
 - `src/repoutils/commands/variables.py` shares its table format, and most of its workings, with `secrets.py`.
 - `src/repoutils/markdown.py` holds the Markdown reading that `check-sentence-per-line`, `check-doubled-spaces` and `check-prose` share.
   It skips code fences, and splits a document's prose into sentences or gives its prose lines.
-- `src/repoutils/checkout.py` gives the environment for the Git commands that `long-files` and `added-strings` run, and `head_commit`, which reads the commit a checkout has.
+- `src/repoutils/checkout.py` gives the environment for the Git commands that `long-files` and `added-strings` run.
+  Its `head_commit` reads the commit a checkout has, and its `nearest_tag` reads the tag that commit comes from.
   It leaves out the Git variables (such as a hook's `GIT_DIR`) that would point them at another repository than the checkout they read.
-- `src/repoutils/build_info_hook.py` is a hatchling build hook that writes the commit a build comes from to `build_info.json`, which `repoutils version` reads with `src/repoutils/build_info.py`.
+- `src/repoutils/build_info_hook.py` is a hatchling build hook that writes the commit a build comes from, and its distance from the nearest tag, to `build_info.json`, which `repoutils version` reads with `src/repoutils/build_info.py`.
   Only hatchling and the hook's tests import it, so the runtime stays standard library only.
   repoutils' own build runs the file by path, and other projects use it through the `repoutils-build-info` entry point.
   As hatchling runs it by path, it loads `checkout.py` from beside itself rather than importing `repoutils`.

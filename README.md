@@ -74,7 +74,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `security-settings` | Checks or updates the security settings defined in `pyproject.toml` (such as secret protection), or prints the current security settings of the repository. |
 | `check-attestations` | Fails unless every distribution file in `dist/` has a PEP 740 publish attestation. |
 | `check-install` | Installs a wheel (`--wheel`) or a released version from an index (`--version`) in an isolated environment, and fails unless it has the `build_info.json` file that the `repoutils-build-info` hook writes, with a commit (see [Recording the build commit](#recording-the-commit-in-a-build)). For a wheel, the commit must be the commit of the checkout, and the file must say whether the checkout has uncommitted changes. For a released version, the command retries while the installation fails, such as while the index does not yet serve the version, and also while a command that it runs exits with a non-zero code, as each one installs the version again, unless another command gives the wrong output. The package needs no command, but for a package with one, `--version-line` requires its `--version` output to give the version and commit as `repoutils --version` does, each `--run` runs it, which must exit with code `0`, and each `--run-with-commit` also requires its output to give the whole commit. |
-| `version` | Prints the version of repoutils, the Git commit it was built from, where it is installed, and the Python version. When repoutils runs from a source checkout, it reads the version from `pyproject.toml` and the commit from Git. |
+| `version` | Prints the version of repoutils, the Git commit it was built from, whether that commit is a release, where it is installed, and the Python version. A build is a release only when its commit has a `v` tag and the build has no uncommitted changes. When repoutils runs from a source checkout, it reads the version from `pyproject.toml`, and the commit and the tag from Git. |
 
 These commands require a GitHub token:
 
@@ -1688,13 +1688,24 @@ file = "src/example/build_info.json"
 
 `file` is the path of the JSON file in the project.
 The project reads the file at runtime itself, for example with `importlib.resources`, as the hook only writes it.
-The file has two keys:
+The file has four keys:
 
 - `commit` is the full hash of the commit that Git has checked out.
 - `dirty` is `true` if a file in the project differs from that commit, and `false` if no file differs.
   Untracked files count as differences, but files that `.gitignore` excludes do not.
+  An empty, untracked `.ok` file at the top of the project does not count either, because some versions of uv add one to their checkout of a Git dependency before they build it.
+- `tag` is the nearest tag that `git describe --tags` finds whose name is the `tag-prefix` option followed by a digit.
+  The default `tag-prefix` is `v`.
+- `distance` is the number of commits from `tag` to the commit.
 
-Both values are `null` when the project is not in a Git repository with a commit, or when Git is not installed.
+`commit` and `dirty` are `null` when the project is not in a Git repository with a commit, or when Git is not installed.
+`tag` and `distance` are also `null` when Git can reach no such tag, for example in a shallow clone without tags.
+
+A build from a commit after a release has the version of that release, because the version comes from `pyproject.toml`.
+Only `distance` tells the two builds apart.
+`repoutils version` prints `Release: yes` only for a build with a `distance` of `0` and no uncommitted changes.
+For a build with a known `distance` above `0`, it prints how many commits the build is after the tag.
+`repoutils --version` adds that number of commits after the tag, for example `repoutils 0.5.4 (1e38044def76, 3 commits after v0.5.4)`.
 
 - A wheel that is built from an sdist gets the file from the sdist, and the hook does not run Git.
 - An editable install gets no file, because the commit would be out of date after the next commit.

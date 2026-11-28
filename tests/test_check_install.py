@@ -19,10 +19,14 @@ INDEX = "https://test.pypi.org/simple/"
 
 
 def probe(
-    version: str = "1.2.0", commit: str | None = COMMIT, dirty: bool | None = False, files: int = 1
+    version: str = "1.2.0",
+    commit: str | None = COMMIT,
+    dirty: bool | None = False,
+    files: int = 1,
+    tag: dict[str, object] | None = None,
 ) -> tuple[int, str]:
-    """What PROBE prints for an install whose build info records commit and dirty."""
-    text = json.dumps({"commit": commit, "dirty": dirty})
+    """What PROBE prints for an install whose build info records commit and dirty, and the tag if given."""
+    text = json.dumps({"commit": commit, "dirty": dirty} | (tag or {}))
     found = {f"my_pkg/build_info{n or ''}.json": text for n in range(files)}
     return 0, json.dumps({"version": version, "files": found, "commands": ["mp", "my-pkg"]})
 
@@ -89,6 +93,23 @@ def test_wheel_with_uncommitted_changes(project: Path, monkeypatch: pytest.Monke
     line = (0, "my-pkg 1.2.0 (0123456789ab with uncommitted changes)\n")
     assert check_install.main(Path("dist"), version_line=True, runner=FakeRunner(probe(dirty=True), line)) == 0
     assert check_install.main(Path("dist"), runner=FakeRunner(probe(dirty=False))) == 1
+
+
+@pytest.mark.parametrize(
+    ("tag", "suffix"),
+    [
+        ({"tag": "v1.1.0", "distance": 3}, ", 3 commits after v1.1.0"),
+        ({"tag": "v1.2.0", "distance": 0}, ""),
+        ({"tag": None, "distance": None}, ""),
+        # A file from an older hook, without either key.
+        ({}, ""),
+    ],
+)
+def test_wheel_version_line_gives_the_distance_from_its_tag(project: Path, tag: dict[str, object], suffix: str) -> None:
+    line = (0, f"my-pkg 1.2.0 (0123456789ab{suffix})\n")
+    assert check_install.main(Path("dist"), version_line=True, runner=FakeRunner(probe(tag=tag), line)) == 0
+    wrong = (0, "my-pkg 1.2.0 (0123456789ab, 9 commits after v0.1)\n")
+    assert check_install.main(Path("dist"), version_line=True, runner=FakeRunner(probe(tag=tag), wrong)) == 1
 
 
 def test_wheel_from_another_commit_fails(project: Path, capsys: pytest.CaptureFixture[str]) -> None:

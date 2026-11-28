@@ -21,8 +21,8 @@ HOOK = ROOT / "src" / "repoutils" / "build_info_hook.py"
 FILE = "src/example/build_info.json"
 
 
-def _project(directory: Path, file: str | None = FILE) -> Path:
-    option = f'file = "{file}"\n' if file is not None else ""
+def _project(directory: Path, file: str | None = FILE, extra: str = "") -> Path:
+    option = (f'file = "{file}"\n' if file is not None else "") + extra
     (directory / "src" / "example").mkdir(parents=True)
     (directory / "src" / "example" / "__init__.py").write_text("")
     (directory / "pyproject.toml").write_text(
@@ -70,11 +70,16 @@ def _from_wheel(wheel: Path) -> dict[str, Any] | None:
 def test_a_git_checkout_records_its_commit(tmp_path: Path) -> None:
     project = _repo(_project(tmp_path / "project"))
     head = _git(project, "rev-parse", "HEAD")
-    assert _from_wheel(_wheel(project, tmp_path / "dist")) == {"commit": head, "dirty": False}
+    assert _from_wheel(_wheel(project, tmp_path / "dist")) == {
+        "commit": head,
+        "dirty": False,
+        "tag": None,
+        "distance": None,
+    }
     with tarfile.open(_sdist(project, tmp_path / "dist")) as archive:
         member = archive.extractfile(f"example-1.0/{FILE}")
         assert member is not None
-        assert json.loads(member.read()) == {"commit": head, "dirty": False}
+        assert json.loads(member.read()) == {"commit": head, "dirty": False, "tag": None, "distance": None}
     # The hook wrote nothing into the project.
     assert not (project / FILE).exists()
     assert _git(project, "status", "--porcelain", "--ignored") == ""
@@ -95,6 +100,43 @@ def test_changes_outside_the_project_are_not(tmp_path: Path) -> None:
     assert info is not None and info["dirty"] is False
 
 
+def test_records_the_nearest_tag_and_the_distance_from_it(tmp_path: Path) -> None:
+    project = _repo(_project(tmp_path / "project"))
+    _git(project, "tag", "-a", "v1.0", "-m", "Release v1.0")
+    info = _from_wheel(_wheel(project, tmp_path / "dist"))
+    assert info is not None and (info["tag"], info["distance"]) == ("v1.0", 0)
+    _git(project, "commit", "-q", "--allow-empty", "-m", "later")
+    _git(project, "commit", "-q", "--allow-empty", "-m", "later")
+    _git(project, "tag", "other")
+    info = _from_wheel(_wheel(project, tmp_path / "dist"))
+    assert info is not None and (info["tag"], info["distance"]) == ("v1.0", 2)
+
+
+def test_the_tag_prefix_option(tmp_path: Path) -> None:
+    project = _repo(_project(tmp_path / "project", extra='tag-prefix = "release-"\n'))
+    _git(project, "tag", "v1.0")
+    _git(project, "commit", "-q", "--allow-empty", "-m", "later")
+    _git(project, "tag", "release-1.0")
+    info = _from_wheel(_wheel(project, tmp_path / "dist"))
+    assert info is not None and (info["tag"], info["distance"]) == ("release-1.0", 0)
+
+
+def test_the_tag_prefix_option_must_be_a_string(tmp_path: Path) -> None:
+    project = _repo(_project(tmp_path / "project", extra="tag-prefix = 1\n"))
+    with pytest.raises(ValueError, match=r"tag-prefix must be a string"):
+        _wheel(project, tmp_path / "dist")
+
+
+def test_uvs_empty_marker_is_not_a_change(tmp_path: Path) -> None:
+    project = _repo(_project(tmp_path / "project"))
+    (project / ".ok").write_text("")
+    info = _from_wheel(_wheel(project, tmp_path / "dist"))
+    assert info is not None and info["dirty"] is False
+    (project / ".ok").write_text("not uv's")
+    info = _from_wheel(_wheel(project, tmp_path / "dist"))
+    assert info is not None and info["dirty"] is True
+
+
 def test_an_unpacked_sdist_reuses_its_file_without_running_git(tmp_path: Path) -> None:
     project = _repo(_project(tmp_path / "project"))
     head = _git(project, "rev-parse", "HEAD")
@@ -106,7 +148,12 @@ def test_an_unpacked_sdist_reuses_its_file_without_running_git(tmp_path: Path) -
     with tarfile.open(sdist) as archive:
         archive.extractall(other / "unpacked", filter="data")
     unpacked = other / "unpacked" / "example-1.0"
-    assert _from_wheel(_wheel(unpacked, tmp_path / "wheel")) == {"commit": head, "dirty": False}
+    assert _from_wheel(_wheel(unpacked, tmp_path / "wheel")) == {
+        "commit": head,
+        "dirty": False,
+        "tag": None,
+        "distance": None,
+    }
 
 
 def test_an_unpacked_sdist_without_the_file_gets_none(tmp_path: Path) -> None:
@@ -124,7 +171,12 @@ def test_an_editable_build_gets_none(tmp_path: Path) -> None:
 
 def test_without_git_the_commit_is_unknown(tmp_path: Path) -> None:
     project = _project(tmp_path / "project")
-    assert _from_wheel(_wheel(project, tmp_path / "dist")) == {"commit": None, "dirty": None}
+    assert _from_wheel(_wheel(project, tmp_path / "dist")) == {
+        "commit": None,
+        "dirty": None,
+        "tag": None,
+        "distance": None,
+    }
 
 
 def test_the_hook_cleans_up_its_temporary_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,4 +214,9 @@ def test_another_project_enables_it_through_the_entry_point(tmp_path: Path) -> N
     )
     _repo(project)
     head = _git(project, "rev-parse", "HEAD")
-    assert _from_wheel(_wheel(project, tmp_path / "dist")) == {"commit": head, "dirty": False}
+    assert _from_wheel(_wheel(project, tmp_path / "dist")) == {
+        "commit": head,
+        "dirty": False,
+        "tag": None,
+        "distance": None,
+    }

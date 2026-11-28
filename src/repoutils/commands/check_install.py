@@ -21,8 +21,9 @@ Options for a package that installs a command (by default, named after the
 package):
 
 - `--version-line` requires `<command> --version` to print
-  `<name> <version> (<12-hex commit>[ with uncommitted changes])` exactly,
-  with the commit the file records, as `repoutils --version` does.
+  `<name> <version> (<12-hex commit>[ with uncommitted changes][, <n>
+  commits after <tag>])` exactly, with the commit, tag and distance the file
+  records, as `repoutils --version` does.
 - Each `--run` runs the command with those arguments, which must exit 0.
 - Each `--run-with-commit` does the same, and its output must also give the
   whole commit the file records.
@@ -115,6 +116,9 @@ class Installed:
     dirty: bool
     # The commands the distribution installs.
     commands: tuple[str, ...] = ()
+    # The nearest tag and the distance from it, if the file records them.
+    tag: str | None = None
+    distance: int | None = None
 
 
 def wheel_name(name: str) -> str:
@@ -221,7 +225,7 @@ def read_probe(name: str, source: str, stdout: str) -> tuple[Installed | None, l
         return None, [f"{path} in {source} is not the build info that the repoutils-build-info hook writes"]
     if not isinstance(commit, str) or COMMIT_RE.fullmatch(commit) is None or not isinstance(dirty, bool):
         return None, [f"{path} in {source} records no commit, as its build had no Git checkout: {text.strip()}"]
-    return Installed(version, commit, dirty, commands), []
+    return Installed(version, commit, dirty, commands, *build_info.tag_and_distance(info)), []
 
 
 def _probe_args(name: str, source: str, options: Options, index: str | None) -> list[str]:
@@ -242,7 +246,9 @@ def _check_command(
     exits = 0
     if options.version_line:
         args = uv_run(source, [options.command, "--version"], index)
-        info = build_info.BuildInfo(installed.version, installed.commit, installed.dirty, None)
+        info = build_info.BuildInfo(
+            installed.version, installed.commit, installed.dirty, None, installed.tag, installed.distance
+        )
         expected = build_info.short(info, name)
         result = _call(runner, args)
         if result.returncode != 0:
@@ -404,7 +410,10 @@ def run(argv: list[str]) -> int:
     parser.add_argument(
         "--version-line",
         action="store_true",
-        help="require `<command> --version` to print `<name> <version> (<12-hex commit>)`, as repoutils does",
+        help=(
+            "require `<command> --version` to print `<name> <version> (<12-hex commit>[ with uncommitted changes]"
+            "[, <n> commits after <tag>])`, as repoutils does"
+        ),
     )
     parser.add_argument(
         "--run",

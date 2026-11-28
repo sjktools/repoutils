@@ -60,6 +60,7 @@ GROUPS: dict[str, list[Command]] = {
         Command("dependabot-relock", "dependabot_relock", "Re-lock a Dependabot branch's uv.lock with this uv"),
         Command("check-lock-platforms", "check_lock_platforms", "Check uv.lock only has wheels for allowed platforms"),
         Command("dependabot-uv", "dependabot_uv", "Print, check or bump to Dependabot's uv version"),
+        Command("dependabot-merge", "dependabot_merge", "Sync and squash-merge clean Dependabot PRs, one at a time"),
         Command("downstream", "downstream", "List downstream repositories, or bump one to a release of this package"),
     ],
     "Pinned GitHub releases": [

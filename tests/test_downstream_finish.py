@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from repoutils import downstream_finish, github
+from repoutils import downstream_finish, github, pr_checks
 from repoutils.commands import downstream
 
 API = f"{github.API_URL}/repos/d/down"
@@ -473,14 +473,12 @@ def test_reads_every_page(monkeypatch: pytest.MonkeyPatch) -> None:
         return pages[url.removeprefix(API)]
 
     monkeypatch.setattr(github, "request", request)
-    required = downstream_finish.required_checks("d/down", "tok", "a/b")
-    assert required == [downstream_finish.Required("lint", None), downstream_finish.Required("test", 15368)]
-    found = downstream_finish.checks("d/down", "tok", "c")
+    required = pr_checks.required_checks("d/down", "tok", "a/b")
+    assert required == [pr_checks.Required("lint", None), pr_checks.Required("test", 15368)]
+    found = pr_checks.checks("d/down", "tok", "c")
     assert len(found) == 102
-    assert found[100] == downstream_finish.Check(
-        "test", 15368, "pending", "queued", "https://github.com/d/down/runs/test", 1
-    )
-    assert found[101] == downstream_finish.Check("cov", None, "failed", "failure", "", 2)
+    assert found[100] == pr_checks.Check("test", 15368, "pending", "queued", "https://github.com/d/down/runs/test", 1)
+    assert found[101] == pr_checks.Check("cov", None, "failed", "failure", "", 2)
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "nan"])

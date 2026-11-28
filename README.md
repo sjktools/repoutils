@@ -52,6 +52,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 | `dependabot-relock` | Re-locks `uv.lock` on a Dependabot branch with the current `uv` version, using the exact package versions from Dependabot. |
 | `check-lock-platforms` | Fails if `uv.lock` contains wheels for platforms that the project does not allow. |
 | `dependabot-uv` | `show` prints the `uv` version from the newest successful Dependabot `uv` update run, `check` fails unless the minimum in `[tool.uv] required-version` is that version, and `bump` changes the project to that `uv` version (with `--pr`, in a new pull request, unless one for that version is already open). |
+| `dependabot-merge` | Syncs the open Dependabot pull requests with the default branch and squash-merges them, one at a time, oldest first, but only a pull request that has no conflicts, no unresolved review thread, and no failed check (see [Merging Dependabot pull requests](#merging-dependabot-pull-requests)). |
 | `downstream` | `list` checks the downstream repositories that a variable names, and prints them as JSON for a job matrix. `plan` also works out the version that a run of the workflow bumps to, from the event that started the run. `bump` changes the pins of a downstream project to a release of this package, or to a dev version on TestPyPI, and re-locks it, and moves its uses of the actions of this package to the tag of the release, or for a dev version, to the commit that `--commit` names. With `--pr`, it opens a pull request (for a dev version, a draft test pull request), unless one for that release or a newer one is already open, and closes or comments on open pull requests for earlier versions of the same kind (releases, or dev versions), unless one for a newer version of that kind is open. `finish` waits for the checks on the pull request, and re-runs failed jobs. It closes the test pull request of a dev version if all its checks pass, and leaves the pull request of a release open. |
 | `github-releases` | `check` fails if a project whose release assets this project pins has a newer release, and `bump` pins the assets of that release (with `--pr`, in a new pull request, unless one for that release is already open). |
 | `post-comment` | Posts a Markdown file to a pull request, and edits the previous comment (posting nothing with `--update-only` when none exists) or hides it when you pass `--hide-previous`. |
@@ -78,7 +79,7 @@ Run `repoutils --help` to list all commands, and run `repoutils <command> --help
 These commands require a GitHub token:
 
 - any command that posts to a pull request, and `post-coverage-status`
-- the `github-settings`, `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys`, `security-settings`, `dependabot-uv`, `github-releases`, `autofix` and `testpypi` commands
+- the `github-settings`, `labels`, `repo-settings`, `actions-settings`, `rulesets`, `environments`, `secrets`, `variables`, `deploy-keys`, `security-settings`, `dependabot-uv`, `dependabot-merge`, `github-releases`, `autofix` and `testpypi` commands
 - `bump-version --pr` and `downstream bump --pr`
 - `release-tag release`
 
@@ -135,6 +136,45 @@ Copy it to another project, and change its `setup-uv` version and the way that i
 
 Do not run `dependabot-uv check` in pull request CI.
 A new `uv` version for Dependabot would then make unrelated pull requests fail.
+
+### Merging Dependabot pull requests
+
+`dependabot-merge` merges the open Dependabot pull requests one at a time.
+A ruleset that requires branches to be up to date leaves every other pull request behind after each merge.
+The auto-merge feature of GitHub does not sync a branch, and waits only for the required checks.
+
+The command repeats these steps:
+
+1. It waits until every check on the latest commit of the default branch has finished, and stops if a check fails.
+2. It takes the oldest open pull request by `dependabot[bot]` (or `--author`) that is not a draft.
+3. It skips the pull request if the pull request conflicts, has an unresolved review thread (outdated threads too), or has a reviewer whose latest review requests changes.
+4. It syncs the pull request with the default branch if the pull request is behind, with a merge, as the **Update branch** button does.
+5. It waits for every check on the pull request, not only the required checks, and skips the pull request if a check fails, or if the checks do not finish within `--timeout` seconds.
+6. It reads the reviews again, and squash-merges the pull request if nothing blocks it.
+
+GitHub cannot say which checks a commit will get, so the command waits until all of these are true:
+
+- Every check that the rulesets require on the default branch is there.
+- A check of each name that the commit before it had is there.
+- No check is pending.
+- No check has appeared for `--quiet-period` seconds.
+
+The command merges only the commit whose checks passed, so a push after the checks finished stops the merge.
+When the head of a pull request moves while the command works on it, the command starts on that pull request again, at most twice.
+A skipped pull request stays skipped until its head changes, for example when Dependabot rebases it.
+Before the command gives up on a conflicting pull request that only Dependabot has pushed to, it waits `--rebase-grace` seconds (default `180`) for Dependabot to rebase it.
+With `--ask-rebase`, it first comments `@dependabot rebase` on the pull request.
+With `--retries <N>`, it re-runs the failed GitHub Actions jobs of a pull request up to `N` times.
+With `--dry-run`, it syncs and merges nothing, and stops at the first pull request that it would sync or merge.
+
+The command exits `0` when no open Dependabot pull requests are left, and `1` when it stops with some left, with the reason for each.
+It keeps no state outside GitHub, so you can stop it at any time and run it again.
+It stops with an error if the default branch requires a merge queue.
+
+Run the command on your own computer with the token of `gh`, which has the `workflow` scope.
+The token needs the Workflows `write` permission to sync or merge a pull request that changes a workflow file, which every GitHub Actions update does.
+Do not run the command with the `GITHUB_TOKEN` of a workflow: that token cannot get the Workflows `write` permission, and a merge with that token starts no CI on the default branch.
+A token that can bypass the rulesets can merge a pull request that does not meet them, so the checks of the command are the only gate.
 
 ### Bumping pinned GitHub releases
 

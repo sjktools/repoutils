@@ -125,15 +125,13 @@ class Merger:
         waits, it waits for the new commit instead."""
         deadline = monotonic() + self.main_timeout
         while True:
-            commit = self._commit(self.branch)
-            sha: str = commit["sha"]
-            # The checks on its parent, which ran the same workflows, are the checks to expect on it.
-            expected = self._names(commit["parents"][0]["sha"]) if commit["parents"] else set()
+            sha: str = self._commit(self.branch)["sha"]
             print(f"Waiting for the checks on {self.branch} at {sha}")
             try:
                 # Not the rulesets' required checks, which are for pull requests, and some of which may run on
-                # pull requests only.
-                outcome = self._settle(sha, lambda: str(self._commit(self.branch)["sha"]), [], expected, deadline)
+                # pull requests only. Nor the parent's check names, as runs started by hand or on a schedule, or
+                # workflows with path filters, can give the parent checks that the commit never gets.
+                outcome = self._settle(sha, lambda: str(self._commit(self.branch)["sha"]), [], set(), deadline)
             except HeadChanged as e:
                 print(f"{self.branch} moved: {e}")
                 continue

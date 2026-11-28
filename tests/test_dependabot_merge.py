@@ -88,7 +88,6 @@ class FakeGitHub:
             "squash_merge_commit_message": "BLANK",
         } | (settings or {})
         self.main = "m1"
-        self.parents = {"m1": "m0"}
         self.changes: list[tuple[str, str, Any]] = []
         self.now = 0.0
         self.slept: list[float] = []
@@ -161,8 +160,7 @@ class FakeGitHub:
             return self.rules if "page=1" in path else []
         if path.startswith("/commits/") and "/" not in path.removeprefix("/commits/"):
             sha = self.main if path == "/commits/main" else path.removeprefix("/commits/")
-            parent = self.parents.get(sha)
-            return {"sha": sha, "parents": [{"sha": parent}] if parent else []}
+            return {"sha": sha}
         if "/check-runs?" in path:
             return {"check_runs": self._checks(path.split("/")[2])}
         if "/status?" in path:
@@ -200,7 +198,7 @@ class FakeGitHub:
                 raise urllib.error.HTTPError(path, code, "No", Message(), io.BytesIO(detail))
             self.pulls[number].state = "closed"
             merged = f"m-{number}"
-            self.parents[merged], self.main = self.main, merged
+            self.main = merged
             return {"sha": merged, "merged": True}
         if path.endswith("/rerun-failed-jobs"):
             return None
@@ -276,20 +274,28 @@ def test_stops_if_a_check_fails_on_the_default_branch(
     assert "Stopped, as these checks failed on main at m1:\n- test: failure https://github.com/o/r/runs/1\n" in err
 
 
-def test_waits_for_the_default_branch_to_get_its_parents_checks(monkeypatch: pytest.MonkeyPatch) -> None:
-    polls = {"m1": [[run("test")], [run("test"), run("lint", "queued", run_id=2)], PASSED]}
+def test_waits_for_the_default_branchs_checks_to_finish(monkeypatch: pytest.MonkeyPatch) -> None:
+    polls = {"m1": [[run("test", "queued")], [run("test"), run("lint", "queued", run_id=2)], PASSED]}
     fake = FakeGitHub(monkeypatch, [], polls=polls)
     assert merge() == 0
     # Three reads to see every check finish, then the quiet period.
     assert fake.slept == [20, 20, 20, 20, 20]
 
 
+def test_does_not_wait_for_the_default_branch_to_get_its_parents_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A run started by hand or on a schedule may have given the parent checks that this commit never gets.
+    fake = FakeGitHub(monkeypatch, [], polls={"m1": [[run("test")]]})
+    assert merge() == 0
+    # The quiet period only.
+    assert fake.slept == [20, 20, 20]
+
+
 def test_fails_if_the_default_branch_never_finishes(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    FakeGitHub(monkeypatch, [], polls={"m1": [[run("test")]]})
+    FakeGitHub(monkeypatch, [], polls={"m1": [[run("test", "queued")]]})
     assert merge("--main-timeout", "100") == 1
-    assert "gave up after 100 seconds waiting for lint, review on main at m1" in capsys.readouterr().err
+    assert "gave up after 100 seconds waiting for test on main at m1" in capsys.readouterr().err
 
 
 def test_skips_a_pull_request_whose_checks_fail_and_merges_the_next(
@@ -506,7 +512,7 @@ def test_starts_again_if_the_default_branch_moves(
     def moved(sha: str) -> list[dict[str, Any]]:
         # Someone merges into main while the pull request's checks run.
         if sha == "h1+m1" and fake.main == "m1":
-            fake.main, fake.parents["m2"] = "m2", "m1"
+            fake.main = "m2"
         return real(sha)
 
     monkeypatch.setattr(fake, "_checks", moved)
@@ -524,7 +530,7 @@ def test_waits_for_the_default_branchs_new_commit(
 
     def moved(sha: str) -> list[dict[str, Any]]:
         if sha == "m1":
-            fake.main, fake.parents["m2"] = "m2", "m1"
+            fake.main = "m2"
         return real(sha)
 
     monkeypatch.setattr(fake, "_checks", moved)

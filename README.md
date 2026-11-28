@@ -155,9 +155,8 @@ The command repeats these steps:
 
 GitHub cannot say which checks a commit will get, so the command waits until all of these are true:
 
-- Every check that the rulesets require on the default branch is there.
-- A check of each name that the commit before it had is there, for the default branch and for a pull request that the command synced.
-  For the default branch, the commit before is the parent commit, and for a synced pull request, it is the head before the sync.
+- For a pull request, every check that the rulesets require for a merge into the default branch is there.
+- For a pull request that the command synced, a check of each name that the head before the sync had is there.
 - No check is pending.
 - No check has appeared for `--quiet-period` seconds.
 

@@ -169,11 +169,12 @@ def settle(
     deadline: float,
     stop_on_failure: bool = True,
     replaced: frozenset[int] = frozenset(),
+    allow_none: bool = False,
 ) -> Outcome:
     """Wait for the checks on commit sha, the commit that head() returns, to
     finish, as GitHub can't say which checks a commit will get. They have finished once:
 
-    - at least one check is there;
+    - at least one check is there, unless allow_none;
     - every check in required is there;
     - a check of every name in expected is there, such as the names on an
       earlier commit that ran the same workflows;
@@ -202,14 +203,14 @@ def settle(
         if (ids := frozenset((c.name, c.id) for c in found)) != seen:
             seen, changed = ids, monotonic()
         quiet_left = changed + quiet - monotonic()
-        if found and not waiting and quiet_left <= 0:
+        if (found or allow_none) and not waiting and quiet_left <= 0:
             return Outcome(sha, found, failed, [])
         left = deadline - monotonic()
         if left <= 0:
-            if not found:
+            if not found and not allow_none:
                 waiting = ["any check to start"]
             elif not waiting:
                 waiting = [f"{quiet:g} seconds with no new check"]
             return Outcome(sha, found, failed, waiting)
         # Once only the quiet period is left, wait just until it ends.
-        sleep(min(interval, left) if waiting or not found else min(interval, left, quiet_left))
+        sleep(min(interval, left) if waiting or not (found or allow_none) else min(interval, left, quiet_left))

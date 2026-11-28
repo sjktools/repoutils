@@ -64,3 +64,10 @@ def test_raises_if_the_head_moves(monkeypatch: pytest.MonkeyPatch) -> None:
     Clock(monkeypatch, [[run("a")]])
     with pytest.raises(pr_checks.HeadChanged, match="the head moved from c to d"):
         settle(lambda: "d")
+
+
+def test_waits_for_a_check_unless_none_are_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = Clock(monkeypatch, [[]])
+    assert settle(allow_none=True).waiting == []
+    # The quiet period only.
+    assert clock.slept == [10, 10, 5]

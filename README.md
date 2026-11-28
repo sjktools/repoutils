@@ -159,6 +159,8 @@ GitHub cannot say which checks a commit will get, so the command waits until all
 - For a pull request that the command synced, a check of each name that the head before the sync had is there.
 - No check is pending.
 - No check has appeared for `--quiet-period` seconds.
+- For a pull request, at least one check is there.
+  The default branch can have no checks, as some repositories run their checks on pull requests only.
 
 The command merges only the commit whose checks passed, so a push after the checks finished stops the merge.
 When the head of a pull request moves while the command works on it, the command starts on that pull request again, at most twice.
@@ -169,7 +171,7 @@ With `--retries <N>`, it re-runs the failed jobs of a pull request up to `N` tim
 The re-runs need the Actions `write` permission.
 With `--dry-run`, it syncs and merges nothing, and stops at the first pull request that it would sync or merge.
 
-The command exits `0` when no open pull requests by the author are left that are not drafts, and `1` when it stops with some left, with the reason for each.
+The command exits `0` when no open pull requests by the author into the default branch are left that are not drafts, and `1` when it stops with some left, with the reason for each.
 With `--dry-run`, it exits `0` when it finds a pull request that it would sync or merge.
 It keeps no state outside GitHub, so you can stop it at any time and run it again.
 It stops with an error if the default branch requires a merge queue.

@@ -290,6 +290,16 @@ def test_does_not_wait_for_the_default_branch_to_get_its_parents_checks(monkeypa
     assert fake.slept == [20, 20, 20]
 
 
+def test_accepts_a_default_branch_commit_with_no_checks(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Some repositories run their checks on pull requests only.
+    fake = FakeGitHub(monkeypatch, [Fake(1, "h1")], polls={"m1": [[]]})
+    assert merge() == 0
+    assert merges(fake)[-1][1] == "/pulls/1/merge"
+    assert "No checks ran on main at m1\n" in capsys.readouterr().out
+
+
 def test_fails_if_the_default_branch_never_finishes(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

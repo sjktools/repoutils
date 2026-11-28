@@ -130,8 +130,11 @@ class Merger:
             try:
                 # Not the rulesets' required checks, which are for pull requests, and some of which may run on
                 # pull requests only. Nor the parent's check names, as runs started by hand or on a schedule, or
-                # workflows with path filters, can give the parent checks that the commit never gets.
-                outcome = self._settle(sha, lambda: str(self._commit(self.branch)["sha"]), [], set(), deadline)
+                # workflows with path filters, can give the parent checks that the commit never gets. And it may get
+                # no checks at all, if they run on pull requests only.
+                outcome = self._settle(
+                    sha, lambda: str(self._commit(self.branch)["sha"]), [], set(), deadline, allow_none=True
+                )
             except HeadChanged as e:
                 print(f"{self.branch} moved: {e}")
                 continue
@@ -144,7 +147,10 @@ class Merger:
                     f"gave up after {self.main_timeout:g} seconds waiting for "
                     f"{', '.join(outcome.waiting)} on {self.branch} at {sha}"
                 )
-            print(f"All {len(outcome.checks)} checks passed on {self.branch} at {sha}")
+            if outcome.checks:
+                print(f"All {len(outcome.checks)} checks passed on {self.branch} at {sha}")
+            else:
+                print(f"No checks ran on {self.branch} at {sha}")
             return sha
 
     def open_pulls(self) -> list[dict[str, Any]]:

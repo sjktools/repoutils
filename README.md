@@ -175,12 +175,16 @@ With `--dry-run`, it exits `0` when it finds a pull request that it would sync o
 It keeps no state outside GitHub, so you can stop it at any time and run it again.
 It stops with an error if the default branch requires a merge queue.
 
-Run the command on your own computer with the token of `gh`.
+Run the command on your own computer with the token of `gh`, which needs the Contents and Pull requests `write` permissions to sync and merge.
 The token of `gh` has the Workflows `write` permission only with the `workflow` scope, which `gh auth refresh --scopes workflow` adds.
 The token needs that permission to sync or merge a pull request that changes a workflow file, which every GitHub Actions update does.
 Do not run the command with the `GITHUB_TOKEN` of a workflow: that token cannot get the Workflows `write` permission, and a merge with that token starts no CI on the default branch.
 A token that can bypass the rulesets can merge a pull request that does not meet them, so the checks of the command are the only gate.
-In the squash commit, the command gives the title and message that the repository settings take from the pull request alone, and leaves the others to GitHub.
+In the squash commit, the command follows the repository settings:
+
+- It sets the title to `<title> (#<number>)` only when `squash_merge_commit_title` is `PR_TITLE`.
+- It sets the message to the body of the pull request when `squash_merge_commit_message` is `PR_BODY`, and to an empty message when it is `BLANK`.
+- It leaves the title and message of the other settings to GitHub.
 
 ### Bumping pinned GitHub releases
 
